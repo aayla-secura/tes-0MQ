@@ -22,8 +22,28 @@
 #define TICK_FL_LEN   2
 #define TR_FL_LEN     2
 #define MAX_FPGA_FRAME_LEN  1496
-#define MAX_MCA_FRAMES      45 /* will fit 2^14 4-byte bins + one MCA header */
-#define MAX_TRACE_FRAMES
+#define MAX_MCA_FRAMES      45 /* will fit MAX_MCA_BINS + one MCA header and
+				* some more*/
+// #define MAX_TRACE_FRAMES
+#define MAX_MCA_BINS_ALL    1 << 14
+#define MAX_MCA_BINS_HFR      ((MAX_FPGA_FRAME_LEN - MCA_HDR_LEN - \
+				FPGA_HDR_LEN) / BIN_LEN)
+#define MAX_MCA_BINS_SFR      ((MAX_FPGA_FRAME_LEN - \
+				FPGA_HDR_LEN) / BIN_LEN)
+#define MAX_PLS_PEAKS         ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				PLS_HDR_LEN) / PEAK_LEN)
+#define MAX_TR_SGL_PEAKS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN) / PEAK_LEN)
+#define MAX_TR_SGL_SMPLS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN) / SMPL_LEN)
+#define MAX_TR_AVG_SMPLS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_HDR_LEN) / SMPL_LEN)
+#define MAX_TR_DP_PEAKS_HFR   ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
+#define MAX_TR_DPTR_PEAKS_HFR ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
+#define MAX_TR_DPTR_SMPLS_HFR ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN - DP_LEN) / SMPL_LEN)
 
 #define ETH_EVT_TYPE     0x88B5
 #define ETH_MCA_TYPE     0x88B6
@@ -35,6 +55,8 @@
 #define EVT_TR_AVG_TYPE  0x010c
 #define EVT_TR_DP_TYPE   0x020c
 #define EVT_TR_DPTR_TYPE 0x030c
+
+int fpgaerrno;
 
 struct __mca_header
 {
@@ -170,24 +192,24 @@ struct __fpga_pkt
 #define FPGA_ECLASH   1 << 5 /* contradiction between fields (packet type
 			      * specific */
 static void
-__fpga_perror (int err, FILE* out, const char* desc)
+__fpga_perror (FILE* out, const char* desc)
 {
-	if (err & FPGA_EETHTYPE)
+	if (fpgaerrno & FPGA_EETHTYPE)
 		fprintf (out, "%s%sInvalid ethernet type\n",
 			desc, desc[0] ? ": " : "");
-	if (err & FPGA_EFLEN)
+	if (fpgaerrno & FPGA_EFLEN)
 		fprintf (out, "%s%sInvalid packet length\n",
 			desc, desc[0] ? ": " : "");
-	if (err & FPGA_ESIZE)
+	if (fpgaerrno & FPGA_ESIZE)
 		fprintf (out, "%s%sInvalid event size\n",
 			desc, desc[0] ? ": " : "");
-	if (err & FPGA_ETYPE)
+	if (fpgaerrno & FPGA_ETYPE)
 		fprintf (out, "%s%sInvalid event type\n",
 			desc, desc[0] ? ": " : "");
-	if (err & FPGA_EFLAG)
+	if (fpgaerrno & FPGA_EFLAG)
 		fprintf (out, "%s%sInvalid flags\n",
 			desc, desc[0] ? ": " : "");
-	if (err & FPGA_ECLASH)
+	if (fpgaerrno & FPGA_ECLASH)
 		fprintf (out, "%s%sContradicting fields\n",
 			desc, desc[0] ? ": " : "");
 }
