@@ -17,6 +17,8 @@
 // #define FPGA_USE_MACROS
 #include <net/fpga_user.h>
 
+#define UPDATE_INTERVAL 2
+
 #define NM_IFNAME "vale:fpga"
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
 			* signal handler */
@@ -47,21 +49,49 @@
 
 static struct
 {
-	struct timeval time_start;
-	struct timeval time_end;
-	struct timeval time_diff;
 	struct nm_desc* nmd;
+	struct {
+		struct timeval start;
+		struct timeval last_check;
+	} timers;
 	struct {
 		fpga_pkt* slots[MAX_PKTS];
 		int last;       /* highest allocated index */
 
 		int first_free; /* lowest unallocated index */
+		int cur;        /* used by next_pkt to walk through all created
+				 * in a circular fashion */
+		u_int created;  /* total number created, never decremented */
+		u_int last_sent;
+		u_int sent;
 	} pkts;
 	u_int loop;
 } gobj = { .pkts.last = -1 };
 
+static inline fpga_pkt* next_pkt (void)
+{
+	if (gobj.pkts.last == -1)
+		return NULL;
+
+	fpga_pkt* pkt;
+	do {
+		if (gobj.pkts.cur = gobj.pkts.last)
+			gobj.pkts.cur = -1;
+		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
+	} while (pkt == NULL);
+
+	return pkt;
+}
+
 static fpga_pkt* new_fpga_pkt (void)
 {
+	if (gobj.pkts.first_free == MAX_PKTS)
+	{
+		ERROR ("Reached maximum number of packets. "
+			"Start destroying.\n");
+		return NULL;
+	}
+
 	fpga_pkt* pkt = malloc (MAX_FPGA_FRAME_LEN);
 	if (pkt == NULL)
 	{
@@ -74,13 +104,13 @@ static fpga_pkt* new_fpga_pkt (void)
 	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETH_ALEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETH_ALEN);
-	pkt->fpga_hdr.frame_seq = gobj.nmd->st.ps_recv;
+	pkt->fpga_hdr.frame_seq = gobj.pkts.created++;
 	pkt->length = FPGA_HDR_LEN;
 
 	/* store a global pointer */
 	gobj.pkts.slots[gobj.pkts.first_free] = pkt;
 	assert (gobj.pkts.first_free != gobj.pkts.last);
-	INFO ("Creating packet #%d\n", gobj.pkts.first_free);
+	DEBUG ("Creating packet #%d\n", gobj.pkts.first_free);
 	if (gobj.pkts.first_free < gobj.pkts.last)
 	{
 		/* there were holes in the array, find the next freed slot */
@@ -107,6 +137,8 @@ static fpga_pkt* new_mca_pkt (int seq, int num_bins,
 			      u_int32_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return;
 	pkt->eth_hdr.ether_type = ETH_MCA_TYPE;
 	pkt->length += num_bins * BIN_LEN;
 
@@ -195,7 +227,8 @@ static fpga_pkt* new_area_pkt (u_int16_t flags)
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_AREA_TYPE;
 
-	struct __area_header* ah = (struct __area_header*) &pkt->body;
+	struct __area_header* ah =
+		(struct __area_header*) &pkt->body;
 	ah->area = (u_int32_t) random ();
 	ah->flags = flags;
 	ah->toff = (u_int16_t) random ();
@@ -203,18 +236,20 @@ static fpga_pkt* new_area_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt* new_trace_single_pkt (int num_peaks,
-				       int num_samples,
-				       u_int16_t tr_flags,
-				       u_int16_t flags)
+static fpga_pkt* new_trace_sgl_pkt (int num_peaks,
+				    int num_samples,
+				    u_int16_t tr_flags,
+				    u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += TR_FULL_HDR_LEN + num_peaks * PEAK_LEN + num_samples * SMPL_LEN;
+	pkt->length += TR_FULL_HDR_LEN + num_peaks *
+		PEAK_LEN + num_samples * SMPL_LEN;
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_TR_SGL_TYPE;
 
-	struct __trace_full_header* th = (struct __trace_full_header*) &pkt->body;
+	struct __trace_full_header* th =
+		(struct __trace_full_header*) &pkt->body;
 	th->trace.size = (u_int16_t) random ();
 	th->trace.tr_flags = tr_flags;
 	th->trace.flags = flags;
@@ -250,7 +285,8 @@ static fpga_pkt* new_trace_dp_pkt (int num_peaks,
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_TR_DP_TYPE;
 
-	struct __trace_full_header* th = (struct __trace_full_header*) &pkt->body;
+	struct __trace_full_header* th =
+		(struct __trace_full_header*) &pkt->body;
 	th->trace.size = (u_int16_t) random ();
 	th->trace.tr_flags = tr_flags;
 	th->trace.flags = flags;
@@ -263,7 +299,13 @@ static fpga_pkt* new_trace_dp_pkt (int num_peaks,
 
 	struct __dot_prod* dp = (struct __dot_prod*)(
 		(u_char*) pkt + pkt->length );
-	dp->dot_prod = random (); /* how to cast to 48 bit */
+	/* Don't know how to cast to 48-bit integer and don't want to write to
+	 * reserved bits, so write 64-bits to a temporary struct and copy only
+	 * the used field */
+	struct __dot_prod dptmp = {0,};
+	u_int64_t rand = random ();
+	memcpy (&dptmp, &random, DP_LEN);
+	dp->dot_prod = dptmp.dot_prod;
 	pkt->length += DP_LEN;
 
 	return pkt;
@@ -287,7 +329,7 @@ static void destroy_pkt (int id)
 	fpga_pkt* pkt = gobj.pkts.slots[id];
 	if (pkt)
 	{
-		INFO ("Destroying packet #%d\n", id);
+		DEBUG ("Destroying packet #%d\n", id);
 		free (pkt);
 		gobj.pkts.slots[id] = NULL;
 		if (id == gobj.pkts.last)
@@ -318,7 +360,7 @@ static void dump_pkt (fpga_pkt* _pkt)
 			sprintf (buf + 6 + b + 24, "%c",
 				isprint (pkt[b+f]) ? pkt[b+f] : '.');
 
-		printf ("%s\n", buf);
+		DEBUG ("%s\n", buf);
 	}
 	puts ("");
 }
@@ -353,33 +395,63 @@ static void print_desc_info (void)
 		);
 }
 
-static void print_stats (void)
+static void print_stats (int sig)
 {
-	if (gobj.time_start.tv_sec == 0)
+	if ( ! timerisset (&gobj.timers.start) )
 		return;
 
-	timersub (&gobj.time_end, &gobj.time_start, &gobj.time_diff);
-	double tdiff = gobj.time_diff.tv_sec + 1e-6 * gobj.time_diff.tv_usec;
+	struct timeval* tprev = &gobj.timers.last_check;
+	if ( ( ! timerisset (tprev) ) || sig == 0 )
+		tprev = &gobj.timers.start;
+
+	struct timeval tnow, tdiff;
+	gettimeofday (&tnow, NULL);
+
+	timersub (&tnow, tprev, &tdiff);
+	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
 	
-	INFO (
-		"looped:\t\t\t%u\n"
-		"sent:\t\t\t%u\n"
-		/* "dropped by OS:\t%u\n" */
-		/* "dropped by IF:\t%u\n" */
-		"avg pkts per loop:\t%u\n"
-		"avg bandwidth:\t\t%.3Le pps\n",
-		gobj.loop,
-		gobj.nmd->st.ps_recv,
-		/* gobj.nmd->st.ps_drop, */
-		/* gobj.nmd->st.ps_ifdrop, */
-		(gobj.loop > 0) ? gobj.nmd->st.ps_recv / gobj.loop : 0,
-		(long double) gobj.nmd->st.ps_recv / tdiff
-		);
+	if (sig)
+	{
+		assert (sig == SIGALRM);
+		/* Alarm went off, update stats */
+		u_int new_sent = gobj.pkts.sent - gobj.pkts.last_sent;
+		INFO (
+			"total sent: %10u   newly sent: %10u    "
+			"avg bandwidth: %10.3e pps\n",
+			gobj.pkts.sent,
+			new_sent,
+			(double) new_sent / tdelta
+			);
+
+		memcpy (&gobj.timers.last_check, &tnow,
+			sizeof (struct timeval));
+		gobj.pkts.last_sent = gobj.pkts.sent;
+
+		/* Set alarm again */
+		alarm (UPDATE_INTERVAL);
+	}
+	else
+	{
+		/* Called by cleanup, print final stats */
+		INFO (
+			"\n-----------------------------\n"
+			"looped:            %10u\n"
+			"packets sent:      %10u\n"
+			"avg pkts per loop: %10u\n"
+			"avg bandwidth:     %10.3e pps\n"
+			"-----------------------------\n",
+			gobj.loop,
+			gobj.pkts.sent,
+			(gobj.loop > 0) ? gobj.pkts.sent / gobj.loop : 0,
+			(double) gobj.pkts.sent / tdelta
+			);
+	}
 }
 
 static void cleanup (int sig)
 {
-	INFO ("Received %d\n", sig);
+	if (sig == SIGINT)
+		INFO ("Interrupted\n");
 
 	int rc = EXIT_SUCCESS;
 	if (errno)
@@ -387,11 +459,15 @@ static void cleanup (int sig)
 		perror ("");
 		rc = EXIT_FAILURE;
 	}
+	if (fpgaerrno)
+	{
+		__fpga_perror (stderr, "");
+		rc = EXIT_FAILURE;
+	}
 
 	if (gobj.nmd)
 	{
-		gettimeofday (&gobj.time_end, NULL);
-		print_stats ();
+		print_stats (0);
 		nm_close (gobj.nmd);
 	}
 
@@ -411,11 +487,20 @@ int main (void)
 
 	/* Signal handlers */
 	struct sigaction sigact;
+
 	sigact.sa_flags = 0;
 	sigact.sa_handler = cleanup;
 	sigemptyset (&sigact.sa_mask);
+	sigaddset (&sigact.sa_mask, SIGINT);
+	sigaddset (&sigact.sa_mask, SIGTERM);
+	sigaddset (&sigact.sa_mask, SIGALRM);
 	rc = sigaction (SIGINT, &sigact, NULL);
 	rc |= sigaction (SIGTERM, &sigact, NULL);
+
+	sigact.sa_handler = print_stats;
+	sigemptyset (&sigact.sa_mask);
+	rc |= sigaction (SIGALRM, &sigact, NULL);
+
 	if (rc == -1)
 	{
 		perror ("sigaction");
@@ -430,7 +515,7 @@ int main (void)
 	}
 	print_desc_info ();
 
-#if 1
+#if 0
 	fpga_pkt* pkt;
 	union mca_flags m_flags = {0,};
 	m_flags.C = 1;
@@ -440,14 +525,14 @@ int main (void)
 	puts ("\n--- MCA 0 ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	pkt = new_mca_pkt (1, 8, 16, 0);
 	puts ("\n--- MCA 1 ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	union tick_flags t_flags = {0,};
@@ -457,7 +542,7 @@ int main (void)
 	puts ("\n--- Tick ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	union event_flags evt_flags = {0,};
@@ -467,66 +552,98 @@ int main (void)
 	puts ("\n--- Peak ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	pkt = new_pulse_pkt (3, evt_flags.all);
 	puts ("\n--- Pulse ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	pkt = new_area_pkt (evt_flags.all);
 	puts ("\n--- Area ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	union trace_flags tr_flags = {0,};
 	tr_flags.OFF =  2;
 	tr_flags.STR = 15;
 	tr_flags.MP  =  1;
-	pkt = new_trace_single_pkt (2, 8, tr_flags.all, evt_flags.all);
+	pkt = new_trace_sgl_pkt (2, 8, tr_flags.all, evt_flags.all);
 	puts ("\n--- Trace (single) ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	/* pkt = new_trace_avg_pkt (2, tr_flags.all, evt_flags.all); */
 	/* puts ("\n--- Trace (dot prod) ---"); */
+	/* rc = __check_fpga_pkt (pkt); */
 	/* if (rc) */
-	/*         __fpga_perror (rc, stderr, "--- Error: "); */
+	/*         __fpga_perror (stderr, "--- Error: "); */
 	/* dump_pkt (pkt); */
 
 	pkt = new_trace_dp_pkt (2, tr_flags.all, evt_flags.all);
 	puts ("\n--- Trace (dot prod) ---");
 	rc = __check_fpga_pkt (pkt);
 	if (rc)
-		__fpga_perror (rc, stderr, "--- Error: ");
+		__fpga_perror (stderr, "--- Error: ");
 	dump_pkt (pkt);
 
 	/* pkt = new_trace_dptr_pkt (2, tr_flags.all, evt_flags.all); */
 	/* puts ("\n--- Trace (dot prod) ---"); */
+	/* rc = __check_fpga_pkt (pkt); */
 	/* if (rc) */
-	/*         __fpga_perror (rc, stderr, "--- Error: "); */
+	/*         __fpga_perror (stderr, "--- Error: "); */
 	/* dump_pkt (pkt); */
 
 #else
 	/* ------------------------------------------------------------ */
 
-	/* Create the packet */
-	fpga_pkt* pkt;
-	union mca_flags m_flags = {0,};
-	m_flags.C = 1;
-	m_flags.T = 2;
-	m_flags.Q = 3;
-	pkt = new_mca_pkt (0, 358, 358, m_flags.all); /* 358 bins + MCA header
-						    * fill up MAX_FPGA_FRAME_LEN */
-	puts ("Sending:\n");
-	dump_pkt (pkt);
+	/* Create some packets */
+	do
+	{
+		fpga_pkt* pkt; /* for checking is max is reached */
+
+		/* --------------- A full MCA histogram --------------- */
+		/* the header frame */
+		pkt = new_mca_pkt (0, MAX_MCA_BINS_HFR, MAX_MCA_BINS_ALL, 0);
+		if (pkt == NULL)
+			break; /* Reached max */
+		/* the rest of the frames */
+		for (int f = 1; f < MAX_MCA_FRAMES; f++)
+		{
+			fpga_pkt* pkt = new_mca_pkt (f, MAX_MCA_BINS_SFR,
+				MAX_MCA_BINS_ALL, 0);
+			if (pkt == NULL)
+				break; /* Reached max */
+		}
+
+		/* ---------------- Some event packets ---------------- */
+		pkt = new_tick_pkt (0);
+		if (pkt == NULL)
+			break; /* Reached max */
+		pkt = new_peak_pkt (0);
+		if (pkt == NULL)
+			break; /* Reached max */
+		pkt = new_pulse_pkt (MAX_PLS_PEAKS, 0);
+		if (pkt == NULL)
+			break; /* Reached max */
+		pkt = new_area_pkt (0);
+		if (pkt == NULL)
+			break; /* Reached max */
+		pkt = new_trace_sgl_pkt (MAX_TR_SGL_PEAKS_HFR / 2,
+			MAX_TR_SGL_SMPLS_HFR / 2, 0, 0);
+		if (pkt == NULL)
+			break; /* Reached max */
+		pkt = new_trace_dp_pkt (MAX_TR_DP_PEAKS_HFR, 0, 0);
+		if (pkt == NULL)
+			break; /* Reached max */
+	} while (0);
 
 	/* Get the ring (we only use one) */
 	assert (gobj.nmd->first_tx_ring == gobj.nmd->last_tx_ring);
@@ -534,52 +651,65 @@ int main (void)
 			gobj.nmd->nifp, gobj.nmd->cur_tx_ring);
 
 	/* Start the clock */
-	rc = gettimeofday (&gobj.time_start, NULL);
+	rc = gettimeofday (&gobj.timers.start, NULL);
 	if (rc == -1)
 	{
 		perror ("gettimeofday");
 		exit (EXIT_FAILURE);
 	}
 
+	/* Set the alarm */
+	alarm (UPDATE_INTERVAL);
+
+	/* Set insert mode */
+
 	/* Poll */
 	struct pollfd pfd;
 	pfd.fd = gobj.nmd->fd;
 	pfd.events = POLLOUT;
-	DEBUG ("Starting poll\n");
+	INFO ("\nStarting poll\n");
 
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
 		rc = poll (&pfd, 1, 1000);
-		if (rc == -1)
+		if (rc == -1 && errno != EINTR)
 		{
 			perror ("poll");
 			break;
 		}
 		if (rc == 0)
 		{
-			INFO ("poll timed out\n");
+			DEBUG ("poll timed out\n");
 			continue;
 		}
 
-		do
+		while ( ! nm_ring_empty (txring) )
 		{
-			struct netmap_slot* cur_slot = &txring->slot[ txring->cur ];
+			fpga_pkt* pkt = next_pkt ();
+			assert (pkt);
+			rc = __check_fpga_pkt (pkt);
+			if (rc)
+				raise (SIGTERM);
+
+			struct netmap_slot* cur_slot =
+				&txring->slot[ txring->cur ];
 			nm_pkt_copy (pkt,
 				     NETMAP_BUF (txring, cur_slot->buf_idx),
 				     pkt->length);
 		
 			cur_slot->len = pkt->length;
-			txring->head = txring->cur = nm_ring_next(txring, txring->cur);
-			gobj.nmd->st.ps_recv++; /* sent, not received */
-			if (gobj.nmd->st.ps_recv + 1 == 0)
+			txring->head = txring->cur =
+				nm_ring_next (txring, txring->cur);
+			gobj.pkts.sent++; /* sent, not received */
+			if (gobj.pkts.sent + 1 == 0)
 			{
 				errno = EOVERFLOW;
 				raise (SIGINT);
 			}
-		} while ( ! nm_ring_empty (txring) );
+		}
 	}
-
 #endif
+
 	errno = 0;
 	raise (SIGTERM); /*cleanup*/
 	return 0; /*never reached, suppress gcc warning*/
