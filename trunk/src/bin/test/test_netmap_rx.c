@@ -100,6 +100,19 @@ static void cleanup (int sig)
 	exit (rc);
 }
 
+void rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
+{
+	
+	/* ----------------------------------------------------------------- */
+
+	gobj.nmd->st.ps_recv++;
+	if (gobj.nmd->st.ps_recv + 1 == 0)
+	{
+		errno = EOVERFLOW;
+		raise (SIGINT);
+	}
+}
+
 int main (void)
 {
 	int rc;
@@ -154,16 +167,21 @@ int main (void)
 		}
 		if (rc == 0)
 		{
-			INFO ("poll timed out\n");
-			break;
+			/* INFO ("poll timed out\n"); */
+			continue;
+			/* break; */
 		}
 
-		/* nm_dispatch (gobj.nmd, -1, rx_handler, NULL); */
+#ifdef USE_DISPATCH
+		nm_dispatch (gobj.nmd, -1, rx_handler, NULL);
+#else
 		do
 		{
-			/* rc = nm_inject (gobj.nmd, gobj.pkt, gobj.pkt->length); */
 			u_int32_t cur_bufid = rxring->slot[ rxring->cur ].buf_idx;
 			char* cur_buf = NETMAP_BUF (rxring, cur_bufid);
+
+			/* analyze packet */
+
 
 			rxring->head = rxring->cur = nm_ring_next(rxring, rxring->cur);
 			gobj.nmd->st.ps_recv++;
@@ -173,6 +191,7 @@ int main (void)
 				raise (SIGINT);
 			}
 		} while ( ! nm_ring_empty (rxring) );
+#endif
 	}
 
 	errno = 0;

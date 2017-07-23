@@ -4,9 +4,10 @@
 #include <syslog.h>
 #include <errno.h>
 
+/* Check the system logger to confirm all is ok */
 int main(void)
 {
-	int rc = daemonize();
+	int rc = daemonize("/tmp/test.pid");
 	if (rc != 0)
 	{
 		puts("Couldn't go into background");

@@ -40,6 +40,7 @@
  *   - use BSD's closefrom () if available 
  *   - method for finding highest fd number is not portable, see
  *     https://stackoverflow.com/questions/899038/getting-the-highest-allocated-file-descriptor/918469#918469
+ *   - implement optional dropping of privileges
  * 
  * NOTES:
  *   - valgrind temporarily increases the current soft limit and opens some file
@@ -189,7 +190,7 @@ s_close_nonstd_fds (void)
 /* If we fail, we return -1 from the parent (i.e. in foreground) to the caller,
  * otherwise parent exits with 0 and the daemon returns 0 to caller. */
 int
-daemonize (void)
+daemonize (const char* pidfile)
 {
 	int rc;
 	int sig;
@@ -200,10 +201,14 @@ daemonize (void)
 	s_close_nonstd_fds ();
 
 	/* Reset signal handlers and masks */
+	struct sigaction sa = {0,};
+	sigemptyset (&sa.sa_mask);
+	sigprocmask (SIG_UNBLOCK, &sa.sa_mask, NULL);
+	sa.sa_handler = SIG_DFL;
 	for ( sig = 1; sig < NSIG ; sig++ )
 	{
 		errno = 0;
-		signal (sig, SIG_DFL);
+		sigaction (sig, &sa, NULL);
 		if (errno)
 			DEBUG ("signal (%d, SIG_DFL): %m", sig);
 	}
@@ -354,7 +359,27 @@ daemonize (void)
 			}
 
 			/* Write pid to a file */
+			if (pidfile)
+			{
+				int fd = open (pidfile, O_CREAT | O_WRONLY,
+					S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+				if (fd == -1)
+				{
+					ERROR ("Failed to open pidfile %s: %m",
+						pidfile);
+					rc = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+					close (pipe_fds[1]);
 
+					_exit (EXIT_FAILURE);
+				}
+				
+				char pid_s[12];
+				pid = getpid();
+				int pid_l = snprintf (pid_s, 12, "%u", pid);
+				rc = write (fd, pid_s, pid_l);
+				DEBUG ("Wrote pid (%u) to pidfile (%s)",
+					pid, pidfile);
+			}
 
 			/* Done, signal parent */
 			rc = write (pipe_fds[1], DAEMON_OK_MSG, 1);
