@@ -55,6 +55,8 @@
 #define EVT_TR_AVG_TYPE  0x010c
 #define EVT_TR_DP_TYPE   0x020c
 #define EVT_TR_DPTR_TYPE 0x030c
+#define __EVT_TR_TYPE_MASK 0x000f /* the first 4 bits give the packet type */
+#define __EVT_TR_TYPE    0x000c
 
 int fpgaerrno;
 

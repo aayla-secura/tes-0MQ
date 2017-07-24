@@ -114,17 +114,54 @@ union trace_flags
 
 #ifdef FPGA_USE_MACROS
 
-#define is_mca_hfr(pkt) ( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_MCA_TYPE && \
-		((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq == 0 )
-#define get_mca_bin(pkt, bin) ( (u_int32_t) ((struct __fpga_pkt*)pkt)->body[ (bin*BIN_LEN) + \
-		( ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq ? 0 : MCA_HDR_LEN ) ] )
-#define get_mca_flags(pkt) ( (u_int32_t) ((struct __mca_header*) \
+#define is_mca_hfr(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_MCA_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq == 0 )
+#define is_mca_sfr(pkt)  \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_MCA_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq > 0 )
+#define is_tick(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TICK_TYPE )
+#define is_peak(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+		((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_PEAK_TYPE )
+#define is_pulse(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+		((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_PLS_TYPE )
+#define is_area(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+		((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_AREA_TYPE )
+#define is_trace(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+	( ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type  & \
+		__EVT_TR_TYPE_MASK ) = __EVT_TR_TYPE )
+#define is_trace_sgl(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_SGL_TYPE )
+#define is_trace_avg(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_AVG_TYPE )
+#define is_trace_dp(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_DP_TYPE )
+#define is_trace_dptr(pkt) \
+	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
+	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_DPTR_TYPE )
+#define get_mca_bin(pkt, bin) \
+	( (u_int32_t) ((struct __fpga_pkt*)pkt)->body[ (bin*BIN_LEN) + \
+	( ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq ? 0 : MCA_HDR_LEN ) ] )
+#define get_mca_flags(pkt) \
+	( (u_int32_t) ((struct __mca_header*) \
 		&((struct __fpga_pkt*)pkt)->body)->flags )
-#define get_evt_flags(pkt) ( (u_int16_t) ((struct __evt_header*) \
+#define get_evt_flags(pkt) \
+	( (u_int16_t) ((struct __evt_header*) \
 		&((struct __fpga_pkt*)pkt)->body)->flags )
-#define get_trace_flags(pkt) ( (u_int16_t) ((struct __trace_header*) \
+#define get_trace_flags(pkt) \
+	( (u_int16_t) ((struct __trace_header*) \
 		&((struct __fpga_pkt*)pkt)->body)->tr_flags )
-#define get_evt_toff(pkt) ( (u_int16_t) ((struct __evt_header*) \
+#define get_evt_toff(pkt) \
+	( (u_int16_t) ((struct __evt_header*) \
 		&((struct __fpga_pkt*)pkt)->body)->toff )
 /*
  * Convert between event types and linear indices, and back:
@@ -159,6 +196,77 @@ is_mca_hfr (fpga_pkt* pkt)
 {
 	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE &&
 		 pkt->fpga_hdr.proto_seq == 0 );
+}
+
+static inline int
+is_mca_sfr (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE &&
+		 pkt->fpga_hdr.proto_seq > 0 );
+}
+
+static inline int
+is_tick (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_TICK_TYPE );
+}
+
+static inline int
+is_peak (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_PEAK_TYPE );
+}
+
+static inline int
+is_pulse (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_PLS_TYPE );
+}
+
+static inline int
+is_area (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_AREA_TYPE );
+}
+
+static inline int
+is_trace (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & __EVT_TR_TYPE_MASK)
+		 		       == __EVT_TR_TYPE );
+}
+
+static inline int
+is_trace_sgl (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_TR_SGL_TYPE );
+}
+
+static inline int
+is_trace_avg (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_TR_AVG_TYPE );
+}
+
+static inline int
+is_trace_dp (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_TR_DP_TYPE );
+}
+
+static inline int
+is_trace_dptr (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type == EVT_TR_DPTR_TYPE );
 }
 
 static inline u_int32_t
