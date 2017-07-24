@@ -69,7 +69,8 @@ static struct
 	u_int loop;
 } gobj = { .pkts.last = -1, .pkts.cur = -1 };
 
-static inline fpga_pkt* next_pkt (void)
+static inline
+fpga_pkt* next_pkt (void)
 {
 	if (gobj.pkts.last == -1)
 		return NULL;
@@ -84,7 +85,8 @@ static inline fpga_pkt* next_pkt (void)
 	return pkt;
 }
 
-static fpga_pkt* new_fpga_pkt (void)
+static fpga_pkt*
+new_fpga_pkt (void)
 {
 	if (gobj.pkts.first_free == MAX_PKTS)
 	{
@@ -133,7 +135,8 @@ static fpga_pkt* new_fpga_pkt (void)
 	return pkt;
 }
 
-static fpga_pkt* new_mca_pkt (int seq, int num_bins,
+static fpga_pkt*
+new_mca_pkt (int seq, int num_bins,
 			      int num_all_bins,
 			      u_int32_t flags)
 {
@@ -161,7 +164,8 @@ static fpga_pkt* new_mca_pkt (int seq, int num_bins,
 	return pkt;
 }
 
-static fpga_pkt* new_tick_pkt (u_int16_t flags)
+static fpga_pkt*
+new_tick_pkt (u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
@@ -184,7 +188,8 @@ static fpga_pkt* new_tick_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt* new_peak_pkt (u_int16_t flags)
+static fpga_pkt*
+new_peak_pkt (u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
@@ -203,7 +208,8 @@ static fpga_pkt* new_peak_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt* new_pulse_pkt (int num_peaks, u_int16_t flags)
+static fpga_pkt*
+new_pulse_pkt (int num_peaks, u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
@@ -226,7 +232,8 @@ static fpga_pkt* new_pulse_pkt (int num_peaks, u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt* new_area_pkt (u_int16_t flags)
+static fpga_pkt*
+new_area_pkt (u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
@@ -245,7 +252,8 @@ static fpga_pkt* new_area_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt* new_trace_sgl_pkt (int num_peaks,
+static fpga_pkt*
+new_trace_sgl_pkt (int num_peaks,
 				    int num_samples,
 				    u_int16_t tr_flags,
 				    u_int16_t flags)
@@ -276,7 +284,8 @@ static fpga_pkt* new_trace_sgl_pkt (int num_peaks,
 	return pkt;
 }
 
-static fpga_pkt* new_trace_avg_pkt (int num_samples,
+static fpga_pkt*
+new_trace_avg_pkt (int num_samples,
 				    u_int16_t tr_flags,
 				    u_int16_t flags)
 {
@@ -288,7 +297,8 @@ static fpga_pkt* new_trace_avg_pkt (int num_samples,
 	return pkt;
 }
 
-static fpga_pkt* new_trace_dp_pkt (int num_peaks,
+static fpga_pkt*
+new_trace_dp_pkt (int num_peaks,
 				   u_int16_t tr_flags,
 				   u_int16_t flags)
 {
@@ -326,7 +336,8 @@ static fpga_pkt* new_trace_dp_pkt (int num_peaks,
 	return pkt;
 }
 
-static fpga_pkt* new_trace_dptr_pkt (int num_peaks,
+static fpga_pkt*
+new_trace_dptr_pkt (int num_peaks,
 				     int num_samples,
 				     u_int16_t tr_flags,
 				     u_int16_t flags)
@@ -339,7 +350,8 @@ static fpga_pkt* new_trace_dptr_pkt (int num_peaks,
 	return pkt;
 }
 
-static void destroy_pkt (int id)
+static void
+destroy_pkt (int id)
 {
 	assert (id >= 0);
 	assert (id <= gobj.pkts.last);
@@ -357,7 +369,8 @@ static void destroy_pkt (int id)
 	}
 }
 
-static void dump_pkt (fpga_pkt* _pkt)
+static void
+dump_pkt (fpga_pkt* _pkt)
 {
 	u_int16_t len = _pkt->length;
 	const char* pkt = (const char*)_pkt;
@@ -382,7 +395,8 @@ static void dump_pkt (fpga_pkt* _pkt)
 	puts ("");
 }
 
-static void print_desc_info (void)
+static void
+print_desc_info (void)
 {
 	INFO (
 		"ringid: %hu, flags: %u, cmd: %hu\n"
@@ -412,7 +426,8 @@ static void print_desc_info (void)
 		);
 }
 
-static void print_stats (int sig)
+static void
+print_stats (int sig)
 {
 	if ( ! timerisset (&gobj.timers.start) )
 		return;
@@ -465,7 +480,8 @@ static void print_stats (int sig)
 	}
 }
 
-static void cleanup (int sig)
+static void
+cleanup (int sig)
 {
 	if (sig == SIGINT)
 		INFO ("Interrupted\n");
@@ -494,7 +510,8 @@ static void cleanup (int sig)
 	exit (rc);
 }
 
-int main (void)
+int
+main (void)
 {
 	/* Debugging */
 	__fpga_self_test ();

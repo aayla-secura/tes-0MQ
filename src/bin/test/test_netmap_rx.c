@@ -1,5 +1,3 @@
-#define NETMAP_WITH_LIBS
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -7,10 +5,10 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/mman.h>
 #include <errno.h>
 #include <assert.h>
 #include <poll.h>
-#include <net/netmap_user.h>
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
@@ -19,9 +17,10 @@
 // #define FPGA_USE_MACROS
 #include <net/fpga_user.h>
 
+#define MAX_FSIZE  5ULL << 32 /* 20GB */
 #define SAVE_FILE  "/media/nm_test"
 #define UPDATE_INTERVAL 1
-#define SAVE_TICKS 100000
+#define SAVE_TICKS 1000000
 
 #define NM_IFNAME "vale:fpga"
 
@@ -29,10 +28,15 @@
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
+#define USE_MMAP
+// #define USE_DISPATCH
+
 static struct
 {
 	struct nm_desc* nmd;
 	int save_fd;
+	u_int64_t b_written;
+	void* save_map;
 	struct {
 		struct timeval start;
 		struct timeval last_check;
@@ -45,7 +49,8 @@ static struct
 	u_int loop;
 } gobj;
 
-static void print_desc_info (void)
+static void
+print_desc_info (void)
 {
 	INFO (
 		"ringid: %hu, flags: %u, cmd: %hu\n"
@@ -75,7 +80,8 @@ static void print_desc_info (void)
 		);
 }
 
-static void print_stats (int sig)
+static void
+print_stats (int sig)
 {
 	if ( ! timerisset (&gobj.timers.start) )
 		return;
@@ -128,7 +134,8 @@ static void print_stats (int sig)
 	}
 }
 
-static void cleanup (int sig)
+static void
+cleanup (int sig)
 {
 	if (sig == SIGINT)
 		INFO ("Interrupted\n");
@@ -145,24 +152,35 @@ static void cleanup (int sig)
 		rc = EXIT_FAILURE;
 	}
 
-	if (gobj.nmd)
+	if (gobj.nmd != NULL)
 	{
 		print_stats (0);
 		nm_close (gobj.nmd);
 	}
 
-	if (gobj.pkts.cur_mca)
+	if (gobj.pkts.cur_mca != NULL)
 	{
 		free (gobj.pkts.cur_mca);
 		gobj.pkts.cur_mca = NULL;
 	}
 
+	if ( gobj.save_map != NULL && gobj.save_map != (void*)-1)
+		munmap (gobj.save_map, MAX_FSIZE);
+
+	if (gobj.b_written)
+	{
+		errno = 0;
+		ftruncate (gobj.save_fd, gobj.b_written);
+		if (errno)
+			perror (""); /* non-fatal, but print info */
+	}
 	close (gobj.save_fd);
 
 	exit (rc);
 }
 
-void rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
+static void
+rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 {
 	
 	/* ----------------------------------------------------------------- */
@@ -175,7 +193,8 @@ void rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 	}
 }
 
-int main (void)
+int
+main (void)
 {
 	int rc;
 
@@ -216,10 +235,23 @@ int main (void)
 			gobj.nmd->nifp, gobj.nmd->cur_rx_ring);
 
 	/* Open the file */
-	gobj.save_fd = open (SAVE_FILE, O_CREAT | O_WRONLY,
+	gobj.save_fd = open (SAVE_FILE, O_CREAT | O_RDWR,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (gobj.save_fd == -1)
 		raise (SIGTERM);
+	rc = posix_fallocate (gobj.save_fd, 0, MAX_FSIZE);
+	if (rc)
+	{
+		errno = rc;
+		raise (SIGTERM);
+	}
+
+#ifdef USE_MMAP
+	gobj.save_map = mmap (NULL, MAX_FSIZE, PROT_WRITE,
+		MAP_SHARED, gobj.save_fd, 0);
+	if (gobj.save_map == (void*)-1)
+		raise (SIGTERM);
+#endif
 
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
@@ -261,7 +293,14 @@ int main (void)
 
 			/* ------------------------------------------------- */
 			/* ------------------ save packet ------------------ */
+#ifdef USE_MMAP
+			memcpy ((char*)gobj.save_map + gobj.b_written, pkt,
+				pkt->length);
+#else
 			rc = write (gobj.save_fd, pkt, pkt->length);
+#endif
+			gobj.b_written += pkt->length;
+
 			if (rc == -1)
 				raise (SIGTERM);
 			/* ------------------------------------------------- */
@@ -281,7 +320,8 @@ int main (void)
 				DEBUG ("Received tick #%d\n", cur_tick);
 				cur_tick++;
 			}
-			if (cur_tick == SAVE_TICKS)
+			if (gobj.b_written + MAX_FPGA_FRAME_LEN > MAX_FSIZE
+				|| cur_tick == SAVE_TICKS)
 				raise (SIGTERM); /* done */
 		} while ( ! nm_ring_empty (rxring) );
 #endif
