@@ -12,24 +12,40 @@
 #include <poll.h>
 #include <net/netmap_user.h>
 
+#define NETMAP_WITH_LIBS
+#include <net/netmap_user.h>
+
+#define FPGA_DEBUG
+// #define FPGA_USE_MACROS
+#include <net/fpga_user.h>
+
+#define SAVE_FILE  "/media/nm_test"
+#define UPDATE_INTERVAL 1
+#define SAVE_TICKS 100000
+
 #define NM_IFNAME "vale:fpga"
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
-#define PERROR(msg) perror (msg)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
-#define INFO(...) fprintf (stdout, __VA_ARGS__)
+#define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
 static struct
 {
-	struct timeval time_start;
-	struct timeval time_end;
-	struct timeval time_diff;
 	struct nm_desc* nmd;
-	/* fpga_pkt* pkt; */
+	int save_fd;
+	struct {
+		struct timeval start;
+		struct timeval last_check;
+	} timers;
+	struct {
+		fpga_pkt* cur_mca;
+		u_int last_rcvd;
+		u_int rcvd;
+	} pkts;
 	u_int loop;
 } gobj;
 
-static void print_desc_info ()
+static void print_desc_info (void)
 {
 	INFO (
 		"ringid: %hu, flags: %u, cmd: %hu\n"
@@ -59,44 +75,90 @@ static void print_desc_info ()
 		);
 }
 
-static void print_stats (void)
+static void print_stats (int sig)
 {
-	if (gobj.time_start.tv_sec == 0)
+	if ( ! timerisset (&gobj.timers.start) )
 		return;
 
-	timersub (&gobj.time_end, &gobj.time_start, &gobj.time_diff);
-	double tdiff = gobj.time_diff.tv_sec + 1e-6 * gobj.time_diff.tv_usec;
+	struct timeval* tprev = &gobj.timers.last_check;
+	if ( ( ! timerisset (tprev) ) || sig == 0 )
+		tprev = &gobj.timers.start;
+
+	struct timeval tnow, tdiff;
+	gettimeofday (&tnow, NULL);
+
+	timersub (&tnow, tprev, &tdiff);
+	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
 	
-	INFO (
-		"looped:\t\t\t%u\n"
-		"received:\t\t%u\n"
-		/* "dropped by OS:\t%u\n" */
-		/* "dropped by IF:\t%u\n" */
-		"avg pkts per loop:\t%u\n"
-		"avg bandwidth:\t\t%.3Le pps\n",
-		gobj.loop,
-		gobj.nmd->st.ps_recv,
-		/* gobj.nmd->st.ps_drop, */
-		/* gobj.nmd->st.ps_ifdrop, */
-		(gobj.loop > 0) ? gobj.nmd->st.ps_recv / gobj.loop : 0,
-		(long double) gobj.nmd->st.ps_recv / tdiff
-		);
+	if (sig)
+	{
+		assert (sig == SIGALRM);
+		/* Alarm went off, update stats */
+		u_int new_rcvd = gobj.pkts.rcvd - gobj.pkts.last_rcvd;
+		INFO (
+			"total received: %10u   newly received: %10u    "
+			"avg bandwidth: %10.3e pps\n",
+			gobj.pkts.rcvd,
+			new_rcvd,
+			(double) new_rcvd / tdelta
+			);
+
+		memcpy (&gobj.timers.last_check, &tnow,
+			sizeof (struct timeval));
+		gobj.pkts.last_rcvd = gobj.pkts.rcvd;
+
+		/* Set alarm again */
+		alarm (UPDATE_INTERVAL);
+	}
+	else
+	{
+		/* Called by cleanup, print final stats */
+		INFO (
+			"\n-----------------------------\n"
+			"looped:            %10u\n"
+			"packets received:  %10u\n"
+			"avg pkts per loop: %10u\n"
+			"avg bandwidth:     %10.3e pps\n"
+			"-----------------------------\n",
+			gobj.loop,
+			gobj.pkts.rcvd,
+			(gobj.loop > 0) ? gobj.pkts.rcvd / gobj.loop : 0,
+			(double) gobj.pkts.rcvd / tdelta
+			);
+	}
 }
 
 static void cleanup (int sig)
 {
-	INFO ("Received %d\n", sig);
+	if (sig == SIGINT)
+		INFO ("Interrupted\n");
 
 	int rc = EXIT_SUCCESS;
 	if (errno)
 	{
-		PERROR ("");
+		perror ("");
+		rc = EXIT_FAILURE;
+	}
+	if (fpgaerrno)
+	{
+		__fpga_perror (stderr, "");
 		rc = EXIT_FAILURE;
 	}
 
-	gettimeofday (&gobj.time_end, NULL);
-	print_stats ();
-	nm_close (gobj.nmd);
+	if (gobj.nmd)
+	{
+		print_stats (0);
+		nm_close (gobj.nmd);
+	}
+
+	if (gobj.pkts.cur_mca)
+	{
+		free (gobj.pkts.cur_mca);
+		gobj.pkts.cur_mca = NULL;
+	}
+
+	close (gobj.save_fd);
+
 	exit (rc);
 }
 
@@ -105,11 +167,11 @@ void rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 	
 	/* ----------------------------------------------------------------- */
 
-	gobj.nmd->st.ps_recv++;
-	if (gobj.nmd->st.ps_recv + 1 == 0)
+	gobj.pkts.rcvd++;
+	if (gobj.pkts.rcvd + 1 == 0)
 	{
 		errno = EOVERFLOW;
-		raise (SIGINT);
+		raise (SIGTERM);
 	}
 }
 
@@ -119,23 +181,33 @@ int main (void)
 
 	/* Signal handlers */
 	struct sigaction sigact;
+
 	sigact.sa_flags = 0;
 	sigact.sa_handler = cleanup;
+	sigemptyset (&sigact.sa_mask);
+	sigaddset (&sigact.sa_mask, SIGINT);
+	sigaddset (&sigact.sa_mask, SIGTERM);
+	sigaddset (&sigact.sa_mask, SIGALRM);
 	rc = sigaction (SIGINT, &sigact, NULL);
 	rc |= sigaction (SIGTERM, &sigact, NULL);
+
+	sigact.sa_handler = print_stats;
+	sigemptyset (&sigact.sa_mask);
+	rc |= sigaction (SIGALRM, &sigact, NULL);
+
 	if (rc == -1)
 	{
-		PERROR ("sigaction");
+		perror ("sigaction");
 		exit (EXIT_FAILURE);
 	}
 
 	/* Open the interface */
 	gobj.nmd = nm_open(NM_IFNAME"}1", NULL, 0, 0);
-	if (gobj.nmd == NULL) {
+	if (gobj.nmd == NULL)
+	{
 		ERROR ("Could not open interface %s\n", NM_IFNAME);
 		exit (EXIT_FAILURE);
 	}
-
 	print_desc_info ();
 
 	/* Get the ring (we only use one) */
@@ -143,33 +215,38 @@ int main (void)
 	struct netmap_ring* rxring = NETMAP_RXRING (
 			gobj.nmd->nifp, gobj.nmd->cur_rx_ring);
 
+	/* Open the file */
+	gobj.save_fd = open (SAVE_FILE, O_CREAT | O_WRONLY,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (gobj.save_fd == -1)
+		raise (SIGTERM);
+
 	/* Start the clock */
-	rc = gettimeofday (&gobj.time_start, NULL);
+	rc = gettimeofday (&gobj.timers.start, NULL);
 	if (rc == -1)
-	{
-		PERROR ("gettimeofday");
-		exit (EXIT_FAILURE);
-	}
+		raise (SIGTERM);
+
+	/* Set the alarm */
+	alarm (UPDATE_INTERVAL);
 
 	/* Poll */
 	struct pollfd pfd;
 	pfd.fd = gobj.nmd->fd;
 	pfd.events = POLLIN;
-	DEBUG ("Starting poll\n");
+	INFO ("Starting poll\n");
 
+	int cur_tick = 0;
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
-		rc = poll (&pfd, 1, 100);
-		if (rc == -1)
+		rc = poll (&pfd, 1, 1000);
+		if (rc == -1 && errno == EINTR)
+			errno = 0;
+		else if (rc == -1)
+			raise (SIGTERM);
+		else if (rc == 0)
 		{
-			PERROR ("poll");
-			break;
-		}
-		if (rc == 0)
-		{
-			/* INFO ("poll timed out\n"); */
+			DEBUG ("poll timed out\n"); 
 			continue;
-			/* break; */
 		}
 
 #ifdef USE_DISPATCH
@@ -177,23 +254,40 @@ int main (void)
 #else
 		do
 		{
-			u_int32_t cur_bufid = rxring->slot[ rxring->cur ].buf_idx;
-			char* cur_buf = NETMAP_BUF (rxring, cur_bufid);
+			u_int32_t cur_bufid =
+				rxring->slot[ rxring->cur ].buf_idx;
+			fpga_pkt* pkt =
+				(fpga_pkt*) NETMAP_BUF (rxring, cur_bufid);
 
-			/* analyze packet */
+			/* ------------------------------------------------- */
+			/* ------------------ save packet ------------------ */
+			rc = write (gobj.save_fd, pkt, pkt->length);
+			if (rc == -1)
+				raise (SIGTERM);
+			/* ------------------------------------------------- */
 
+			rxring->head = rxring->cur =
+				nm_ring_next(rxring, rxring->cur);
 
-			rxring->head = rxring->cur = nm_ring_next(rxring, rxring->cur);
-			gobj.nmd->st.ps_recv++;
-			if (gobj.nmd->st.ps_recv + 1 == 0)
+			gobj.pkts.rcvd++;
+			if (gobj.pkts.rcvd + 1 == 0)
 			{
 				errno = EOVERFLOW;
-				raise (SIGINT);
+				raise (SIGTERM);
 			}
+
+			if (is_tick (pkt))
+			{
+				DEBUG ("Received tick #%d\n", cur_tick);
+				cur_tick++;
+			}
+			if (cur_tick == SAVE_TICKS)
+				raise (SIGTERM); /* done */
 		} while ( ! nm_ring_empty (rxring) );
 #endif
 	}
 
 	errno = 0;
 	raise (SIGTERM); /* cleanup */
+	return 0; /*never reached, suppress gcc warning*/
 }

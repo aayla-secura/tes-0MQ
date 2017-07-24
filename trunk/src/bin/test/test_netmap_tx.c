@@ -17,7 +17,9 @@
 // #define FPGA_USE_MACROS
 #include <net/fpga_user.h>
 
-#define UPDATE_INTERVAL 2
+#define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
+#define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
+#define UPDATE_INTERVAL 1
 
 #define NM_IFNAME "vale:fpga"
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
@@ -46,7 +48,6 @@
  *   check if passing pointer to flag union is faster than passing it as int
  */
 
-
 static struct
 {
 	struct nm_desc* nmd;
@@ -66,7 +67,7 @@ static struct
 		u_int sent;
 	} pkts;
 	u_int loop;
-} gobj = { .pkts.last = -1 };
+} gobj = { .pkts.last = -1, .pkts.cur = -1 };
 
 static inline fpga_pkt* next_pkt (void)
 {
@@ -75,7 +76,7 @@ static inline fpga_pkt* next_pkt (void)
 
 	fpga_pkt* pkt;
 	do {
-		if (gobj.pkts.cur = gobj.pkts.last)
+		if (gobj.pkts.cur == gobj.pkts.last)
 			gobj.pkts.cur = -1;
 		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
 	} while (pkt == NULL);
@@ -138,7 +139,7 @@ static fpga_pkt* new_mca_pkt (int seq, int num_bins,
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
-		return;
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_MCA_TYPE;
 	pkt->length += num_bins * BIN_LEN;
 
@@ -163,6 +164,8 @@ static fpga_pkt* new_mca_pkt (int seq, int num_bins,
 static fpga_pkt* new_tick_pkt (u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 	pkt->length += TICK_HDR_LEN;
 	pkt->fpga_hdr.evt_size = 3;
@@ -184,6 +187,8 @@ static fpga_pkt* new_tick_pkt (u_int16_t flags)
 static fpga_pkt* new_peak_pkt (u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 	pkt->length += PEAK_HDR_LEN;
 	pkt->fpga_hdr.evt_size = 1;
@@ -201,6 +206,8 @@ static fpga_pkt* new_peak_pkt (u_int16_t flags)
 static fpga_pkt* new_pulse_pkt (int num_peaks, u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 	pkt->length += PLS_HDR_LEN + num_peaks * PEAK_LEN;
 	pkt->fpga_hdr.evt_size = num_peaks; /* is it?? */
@@ -222,6 +229,8 @@ static fpga_pkt* new_pulse_pkt (int num_peaks, u_int16_t flags)
 static fpga_pkt* new_area_pkt (u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 	pkt->length += AREA_HDR_LEN;
 	pkt->fpga_hdr.evt_size = 1;
@@ -242,6 +251,8 @@ static fpga_pkt* new_trace_sgl_pkt (int num_peaks,
 				    u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 	pkt->length += TR_FULL_HDR_LEN + num_peaks *
 		PEAK_LEN + num_samples * SMPL_LEN;
@@ -270,6 +281,8 @@ static fpga_pkt* new_trace_avg_pkt (int num_samples,
 				    u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 
 	return pkt;
@@ -280,6 +293,8 @@ static fpga_pkt* new_trace_dp_pkt (int num_peaks,
 				   u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 	pkt->length += TR_FULL_HDR_LEN + num_peaks * PEAK_LEN;
 	pkt->fpga_hdr.evt_size = 1;
@@ -304,7 +319,7 @@ static fpga_pkt* new_trace_dp_pkt (int num_peaks,
 	 * the used field */
 	struct __dot_prod dptmp = {0,};
 	u_int64_t rand = random ();
-	memcpy (&dptmp, &random, DP_LEN);
+	memcpy (&dptmp, &rand, DP_LEN);
 	dp->dot_prod = dptmp.dot_prod;
 	pkt->length += DP_LEN;
 
@@ -317,6 +332,8 @@ static fpga_pkt* new_trace_dptr_pkt (int num_peaks,
 				     u_int16_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
+	if (pkt == NULL)
+		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
 
 	return pkt;
@@ -343,22 +360,22 @@ static void destroy_pkt (int id)
 static void dump_pkt (fpga_pkt* _pkt)
 {
 	u_int16_t len = _pkt->length;
-	const u_char* pkt = (const u_char*)_pkt;
-	char buf[48];
-	memset (buf, 0, 48);
+	const char* pkt = (const char*)_pkt;
+	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
 
-	for (int f = 0; f < len; f += 8) {
-		sprintf (buf, "%04x: ", f);
+	memset (buf, 0, sizeof (buf));
+	for (int r = 0; r < len; r += DUMP_ROW_LEN) {
+		sprintf (buf, "%0*x: ", DUMP_OFF_LEN, r);
 
 		/* hexdump */
-		for (int b = 0; b < 8 && b+f < len; b++)
-			sprintf (buf + 6 + b*3, "%02x ",
-				(u_int8_t)(pkt[b+f]));
+		for (int b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
+			sprintf (buf + DUMP_OFF_LEN + 2 + 3*b, "%02x ",
+				(u_int8_t)(pkt[b+r]));
 
 		/* ASCII dump */
-		for (int b = 0; b < 8 && b+f < len; b++)
-			sprintf (buf + 6 + b + 24, "%c",
-				isprint (pkt[b+f]) ? pkt[b+f] : '.');
+		for (int b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
+			sprintf (buf + DUMP_OFF_LEN + 2 + b + 3*DUMP_ROW_LEN,
+				"%c", isprint (pkt[b+r]) ? pkt[b+r] : '.');
 
 		DEBUG ("%s\n", buf);
 	}
@@ -509,7 +526,8 @@ int main (void)
 
 	/* Open the interface */
 	gobj.nmd = nm_open (NM_IFNAME"{1", NULL, 0, 0);
-	if (gobj.nmd == NULL) {
+	if (gobj.nmd == NULL)
+	{
 		ERROR ("Could not open interface %s\n", NM_IFNAME);
 		exit (EXIT_FAILURE);
 	}
@@ -614,6 +632,7 @@ int main (void)
 		pkt = new_mca_pkt (0, MAX_MCA_BINS_HFR, MAX_MCA_BINS_ALL, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 		/* the rest of the frames */
 		for (int f = 1; f < MAX_MCA_FRAMES; f++)
 		{
@@ -621,28 +640,35 @@ int main (void)
 				MAX_MCA_BINS_ALL, 0);
 			if (pkt == NULL)
 				break; /* Reached max */
+			dump_pkt (pkt);
 		}
 
 		/* ---------------- Some event packets ---------------- */
 		pkt = new_tick_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 		pkt = new_peak_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 		pkt = new_pulse_pkt (MAX_PLS_PEAKS, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 		pkt = new_area_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 		pkt = new_trace_sgl_pkt (MAX_TR_SGL_PEAKS_HFR / 2,
 			MAX_TR_SGL_SMPLS_HFR / 2, 0, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 		pkt = new_trace_dp_pkt (MAX_TR_DP_PEAKS_HFR, 0, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
+		dump_pkt (pkt);
 	} while (0);
 
 	/* Get the ring (we only use one) */
@@ -653,10 +679,7 @@ int main (void)
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
 	if (rc == -1)
-	{
-		perror ("gettimeofday");
-		exit (EXIT_FAILURE);
-	}
+		raise (SIGTERM);
 
 	/* Set the alarm */
 	alarm (UPDATE_INTERVAL);
@@ -672,12 +695,11 @@ int main (void)
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
 		rc = poll (&pfd, 1, 1000);
-		if (rc == -1 && errno != EINTR)
-		{
-			perror ("poll");
-			break;
-		}
-		if (rc == 0)
+		if (rc == -1 && errno == EINTR)
+			errno = 0;
+		else if (rc == -1)
+			raise (SIGTERM);
+		else if (rc == 0)
 		{
 			DEBUG ("poll timed out\n");
 			continue;
@@ -700,7 +722,7 @@ int main (void)
 			cur_slot->len = pkt->length;
 			txring->head = txring->cur =
 				nm_ring_next (txring, txring->cur);
-			gobj.pkts.sent++; /* sent, not received */
+			gobj.pkts.sent++;
 			if (gobj.pkts.sent + 1 == 0)
 			{
 				errno = EOVERFLOW;
