@@ -448,10 +448,11 @@ print_stats (int sig)
 		/* Alarm went off, update stats */
 		u_int new_sent = gobj.pkts.sent - gobj.pkts.last_sent;
 		INFO (
-			"total sent: %10u   newly sent: %10u    "
+			"total pkts sent: %10u ; "
+			/* "new pkts sent: %10u ; " */
 			"avg bandwidth: %10.3e pps\n",
 			gobj.pkts.sent,
-			new_sent,
+			/* new_sent, */
 			(double) new_sent / tdelta
 			);
 
