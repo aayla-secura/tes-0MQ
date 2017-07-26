@@ -18,9 +18,9 @@
 #include <net/fpga_user.h>
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
-#define SAVE_FILE  "/media/nm_test"
+// #define SAVE_FILE  "/media/nm_test"
 #define UPDATE_INTERVAL 1
-#define SAVE_TICKS 1000000
+#define MAX_TICKS 10000000 /* Set to 0 for unlimited */
 
 #define NM_IFNAME "vale:fpga"
 
@@ -34,9 +34,11 @@
 static struct
 {
 	struct nm_desc* nmd;
+#ifdef SAVE_FILE
 	int save_fd;
-	u_int64_t b_written;
 	void* save_map;
+	u_int64_t b_written;
+#endif /* SAVE_FILE */
 	struct {
 		struct timeval start;
 		struct timeval last_check;
@@ -45,6 +47,7 @@ static struct
 		fpga_pkt* cur_mca;
 		u_int last_rcvd;
 		u_int rcvd;
+		u_int ticks;
 	} pkts;
 	u_int loop;
 } gobj;
@@ -102,10 +105,12 @@ print_stats (int sig)
 		/* Alarm went off, update stats */
 		u_int new_rcvd = gobj.pkts.rcvd - gobj.pkts.last_rcvd;
 		INFO (
-			"total received: %10u   newly received: %10u    "
+			"ticks: %10u ; total pkts received: %10u ; "
+			/* "new pkts received: %10u ; " */
 			"avg bandwidth: %10.3e pps\n",
+			gobj.pkts.ticks,
 			gobj.pkts.rcvd,
-			new_rcvd,
+			/* new_rcvd, */
 			(double) new_rcvd / tdelta
 			);
 
@@ -122,11 +127,13 @@ print_stats (int sig)
 		INFO (
 			"\n-----------------------------\n"
 			"looped:            %10u\n"
+			"ticks:             %10u\n"
 			"packets received:  %10u\n"
 			"avg pkts per loop: %10u\n"
 			"avg bandwidth:     %10.3e pps\n"
 			"-----------------------------\n",
 			gobj.loop,
+			gobj.pkts.ticks,
 			gobj.pkts.rcvd,
 			(gobj.loop > 0) ? gobj.pkts.rcvd / gobj.loop : 0,
 			(double) gobj.pkts.rcvd / tdelta
@@ -164,6 +171,7 @@ cleanup (int sig)
 		gobj.pkts.cur_mca = NULL;
 	}
 
+#ifdef SAVE_FILE
 	if ( gobj.save_map != NULL && gobj.save_map != (void*)-1)
 		munmap (gobj.save_map, MAX_FSIZE);
 
@@ -175,6 +183,7 @@ cleanup (int sig)
 			perror (""); /* non-fatal, but print info */
 	}
 	close (gobj.save_fd);
+#endif /* SAVE_FILE */
 
 	exit (rc);
 }
@@ -234,6 +243,7 @@ main (void)
 	struct netmap_ring* rxring = NETMAP_RXRING (
 			gobj.nmd->nifp, gobj.nmd->cur_rx_ring);
 
+#ifdef SAVE_FILE
 	/* Open the file */
 	gobj.save_fd = open (SAVE_FILE, O_CREAT | O_RDWR,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -251,7 +261,8 @@ main (void)
 		MAP_SHARED, gobj.save_fd, 0);
 	if (gobj.save_map == (void*)-1)
 		raise (SIGTERM);
-#endif
+#endif /* USE_MMAP */
+#endif /* SAVE_FILE */
 
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
@@ -267,7 +278,6 @@ main (void)
 	pfd.events = POLLIN;
 	INFO ("Starting poll\n");
 
-	int cur_tick = 0;
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
 		rc = poll (&pfd, 1, 1000);
@@ -291,19 +301,21 @@ main (void)
 			fpga_pkt* pkt =
 				(fpga_pkt*) NETMAP_BUF (rxring, cur_bufid);
 
+#ifdef SAVE_FILE
 			/* ------------------------------------------------- */
 			/* ------------------ save packet ------------------ */
 #ifdef USE_MMAP
 			memcpy ((char*)gobj.save_map + gobj.b_written, pkt,
 				pkt->length);
-#else
+#else /* USE_MMAP */
 			rc = write (gobj.save_fd, pkt, pkt->length);
-#endif
+#endif /* USE_MMAP */
 			gobj.b_written += pkt->length;
 
 			if (rc == -1)
 				raise (SIGTERM);
 			/* ------------------------------------------------- */
+#endif /* SAVE_FILE */
 
 			rxring->head = rxring->cur =
 				nm_ring_next(rxring, rxring->cur);
@@ -317,14 +329,18 @@ main (void)
 
 			if (is_tick (pkt))
 			{
-				DEBUG ("Received tick #%d\n", cur_tick);
-				cur_tick++;
+				gobj.pkts.ticks++;
+				DEBUG ("Received tick #%d\n", gobj.pkts.ticks);
 			}
-			if (gobj.b_written + MAX_FPGA_FRAME_LEN > MAX_FSIZE
-				|| cur_tick == SAVE_TICKS)
+			if (MAX_TICKS > 0 && gobj.pkts.ticks == MAX_TICKS)
 				raise (SIGTERM); /* done */
+
+#ifdef SAVE_FILE
+			if (gobj.b_written + MAX_FPGA_FRAME_LEN > MAX_FSIZE)
+				raise (SIGTERM); /* done */
+#endif /* SAVE_FILE */
 		} while ( ! nm_ring_empty (rxring) );
-#endif
+#endif /* USE_DISPATCH */
 	}
 
 	errno = 0;
