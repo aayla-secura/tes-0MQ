@@ -45,11 +45,12 @@ static struct
 	} timers;
 	struct {
 		fpga_pkt* cur_mca;
-		u_int last_rcvd;
-		u_int rcvd;
-		u_int ticks;
+		u_int32_t last_rcvd;
+		u_int32_t rcvd;
+		u_int32_t ticks;
+		u_int32_t missed;
 	} pkts;
-	u_int loop;
+	u_int32_t loop;
 } gobj;
 
 static void
@@ -59,8 +60,8 @@ print_desc_info (void)
 		"ringid: %hu, flags: %u, cmd: %hu\n"
 		"extra rings: %hu, extra buffers: %u\n"
 		"done_mmap: %d\n"
-		"rx rings: %d, rx slots: %d\n"
-		"tx rings: %d, tx slots: %d\n"
+		"rx rings: %hu, rx slots: %u\n"
+		"tx rings: %hu, tx slots: %u\n"
 		"first rx: %hu, last rx: %hu\n"
 		"first tx: %hu, last tx: %hu\n"
 		"snaplen: %d\npromisc: %d\n",
@@ -103,7 +104,7 @@ print_stats (int sig)
 	{
 		assert (sig == SIGALRM);
 		/* Alarm went off, update stats */
-		u_int new_rcvd = gobj.pkts.rcvd - gobj.pkts.last_rcvd;
+		u_int32_t new_rcvd = gobj.pkts.rcvd - gobj.pkts.last_rcvd;
 		INFO (
 			"ticks: %10u ; total pkts received: %10u ; "
 			/* "new pkts received: %10u ; " */
@@ -129,12 +130,14 @@ print_stats (int sig)
 			"looped:            %10u\n"
 			"ticks:             %10u\n"
 			"packets received:  %10u\n"
+			"packets missed:    %10u\n"
 			"avg pkts per loop: %10u\n"
 			"avg bandwidth:     %10.3e pps\n"
 			"-----------------------------\n",
 			gobj.loop,
 			gobj.pkts.ticks,
 			gobj.pkts.rcvd,
+			gobj.pkts.missed,
 			(gobj.loop > 0) ? gobj.pkts.rcvd / gobj.loop : 0,
 			(double) gobj.pkts.rcvd / tdelta
 			);
@@ -278,11 +281,15 @@ main (void)
 	pfd.events = POLLIN;
 	INFO ("Starting poll\n");
 
+	uint16_t cur_frame = -1;
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
 		rc = poll (&pfd, 1, 1000);
 		if (rc == -1 && errno == EINTR)
+		{
 			errno = 0;
+			continue;
+		}
 		else if (rc == -1)
 			raise (SIGTERM);
 		else if (rc == 0)
@@ -319,6 +326,19 @@ main (void)
 
 			rxring->head = rxring->cur =
 				nm_ring_next(rxring, rxring->cur);
+
+			if (gobj.pkts.rcvd > 0)
+			{
+				uint16_t prev_frame = cur_frame;
+				cur_frame = pkt->fpga_hdr.frame_seq;
+				gobj.pkts.missed += (u_int32_t) (
+					(uint16_t)(cur_frame - prev_frame) - 1);
+			}
+			else
+			{
+				cur_frame = pkt->fpga_hdr.frame_seq;
+				INFO ("First received frame is #%hu\n", cur_frame);
+			}
 
 			gobj.pkts.rcvd++;
 			if (gobj.pkts.rcvd + 1 == 0)

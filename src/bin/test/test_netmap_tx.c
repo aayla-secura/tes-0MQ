@@ -62,11 +62,10 @@ static struct
 		int first_free; /* lowest unallocated index */
 		int cur;        /* used by next_pkt to walk through all created
 				 * in a circular fashion */
-		u_int created;  /* total number created, never decremented */
-		u_int last_sent;
-		u_int sent;
+		u_int32_t last_sent;
+		u_int32_t sent;
 	} pkts;
-	u_int loop;
+	u_int32_t loop;
 } gobj = { .pkts.last = -1, .pkts.cur = -1 };
 
 static inline
@@ -82,6 +81,8 @@ fpga_pkt* next_pkt (void)
 		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
 	} while (pkt == NULL);
 
+	pkt->fpga_hdr.frame_seq = gobj.pkts.sent; /* .sent is incremented
+						   * before sending */
 	return pkt;
 }
 
@@ -107,7 +108,7 @@ new_fpga_pkt (void)
 	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETH_ALEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETH_ALEN);
-	pkt->fpga_hdr.frame_seq = gobj.pkts.created++;
+	pkt->fpga_hdr.frame_seq = 0; /* incremented as we send them */
 	pkt->length = FPGA_HDR_LEN;
 
 	/* store a global pointer */
@@ -402,8 +403,8 @@ print_desc_info (void)
 		"ringid: %hu, flags: %u, cmd: %hu\n"
 		"extra rings: %hu, extra buffers: %u\n"
 		"done_mmap: %d\n"
-		"rx rings: %d, rx slots: %d\n"
-		"tx rings: %d, tx slots: %d\n"
+		"rx rings: %hu, rx slots: %u\n"
+		"tx rings: %hu, tx slots: %u\n"
 		"first rx: %hu, last rx: %hu\n"
 		"first tx: %hu, last tx: %hu\n"
 		"snaplen: %d\npromisc: %d\n",
@@ -446,7 +447,7 @@ print_stats (int sig)
 	{
 		assert (sig == SIGALRM);
 		/* Alarm went off, update stats */
-		u_int new_sent = gobj.pkts.sent - gobj.pkts.last_sent;
+		u_int32_t new_sent = gobj.pkts.sent - gobj.pkts.last_sent;
 		INFO (
 			"total pkts sent: %10u ; "
 			/* "new pkts sent: %10u ; " */
@@ -640,7 +641,8 @@ main (void)
 #else
 	/* ------------------------------------------------------------ */
 
-	/* Create some packets */
+	/* Create some packets before starting and only increment frame_seq
+	 * while sending */
 	do
 	{
 		fpga_pkt* pkt; /* for checking is max is reached */
@@ -701,8 +703,6 @@ main (void)
 
 	/* Set the alarm */
 	alarm (UPDATE_INTERVAL);
-
-	/* Set insert mode */
 
 	/* Poll */
 	struct pollfd pfd;
