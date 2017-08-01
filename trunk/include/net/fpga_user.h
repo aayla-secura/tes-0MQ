@@ -110,86 +110,6 @@ union trace_flags
 };
 
 /* ------------------------------------------------------------------------- */
-/* Let's see if there's a difference in performance */
-
-#ifdef FPGA_USE_MACROS
-
-#define is_mca_hfr(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_MCA_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq == 0 )
-#define is_mca_sfr(pkt)  \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_MCA_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq > 0 )
-#define is_tick(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TICK_TYPE )
-#define is_peak(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-		((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_PEAK_TYPE )
-#define is_pulse(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-		((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_PLS_TYPE )
-#define is_area(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-		((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_AREA_TYPE )
-#define is_trace(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-	( ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type  & \
-		__EVT_TR_TYPE_MASK ) = __EVT_TR_TYPE )
-#define is_trace_sgl(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_SGL_TYPE )
-#define is_trace_avg(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_AVG_TYPE )
-#define is_trace_dp(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_DP_TYPE )
-#define is_trace_dptr(pkt) \
-	( ((struct __fpga_pkt*)pkt)->eth_hdr.ether_type == ETH_EVT_TYPE && \
-	  ((struct __fpga_pkt*)pkt)->fpga_hdr.evt_type == EVT_TR_DPTR_TYPE )
-#define get_mca_bin(pkt, bin) \
-	( (u_int32_t) ((struct __fpga_pkt*)pkt)->body[ (bin*BIN_LEN) + \
-	( ((struct __fpga_pkt*)pkt)->fpga_hdr.proto_seq ? 0 : MCA_HDR_LEN ) ] )
-#define get_mca_flags(pkt) \
-	( (u_int32_t) ((struct __mca_header*) \
-		&((struct __fpga_pkt*)pkt)->body)->flags )
-#define get_evt_flags(pkt) \
-	( (u_int16_t) ((struct __evt_header*) \
-		&((struct __fpga_pkt*)pkt)->body)->flags )
-#define get_trace_flags(pkt) \
-	( (u_int16_t) ((struct __trace_header*) \
-		&((struct __fpga_pkt*)pkt)->body)->tr_flags )
-#define get_evt_toff(pkt) \
-	( (u_int16_t) ((struct __evt_header*) \
-		&((struct __fpga_pkt*)pkt)->body)->toff )
-/*
- * Convert between event types and linear indices, and back:
- * EVT_TICK_TYPE    0
- * EVT_PEAK_TYPE    1
- * EVT_PLS_TYPE     2
- * EVT_AREA_TYPE    3
- * EVT_TR_SGL_TYPE  4
- * EVT_TR_AVG_TYPE  5
- * EVT_TR_DP_TYPE   6
- * EVT_TR_DPTR_TYPE 7
- * Use it to create and access arrays holding event specific data
- */
-#define __is_not_tick(type)       (((type >> 1) & 1) ^ 1)
-#define __meas_type_to_idx(type)  ((type >> 2) & 3) /* bits 3 and 4  */
-#define __trace_type_to_idx(type) ((type >> 8) & 3) /* bits 9 and 10 */
-#define __evt_type_to_idx_2(type) \
-	__is_not_tick(type) + \
- 	__meas_type_to_idx(type) + \
-	__trace_type_to_idx(type)
-#define evt_type_to_idx(type)     __evt_type_to_idx_2(type)
-
-/* #define __evt_idx_to_type_2(idx) \ */
-	
-/* #define evt_idx_to_type(idx)     __evt_idx_to_type_2(idx) */
-
-/* ------------------------------------------------------------------------- */
-#else  /* FPGA_USE_MACROS */
 
 static inline int
 is_mca_hfr (fpga_pkt* pkt)
@@ -281,25 +201,33 @@ get_mca_bin (fpga_pkt* pkt, u_int16_t bin)
 static inline u_int32_t
 get_mca_flags (fpga_pkt* pkt)
 {
-	return ((struct __mca_header*) &pkt->body)->flags;
+	// struct __mca_header* mh = (struct __mca_header*)(void*) &pkt->body;
+	// return mh->flags;
+	return ((struct __mca_header*)(void*) &pkt->body)->flags;
 }
 
 static inline u_int16_t
 get_evt_flags (fpga_pkt* pkt)
 {
-	return ((struct __evt_header*) &pkt->body)->flags;
+	// struct __evt_header* eh = (struct __evt_header*)(void*) &pkt->body;
+	// return eh->flags;
+	return ((struct __evt_header*)(void*) &pkt->body)->flags;
 }
 
 static inline u_int16_t
 get_trace_flags (fpga_pkt* pkt)
 {
-	return ((struct __trace_header*) &pkt->body)->tr_flags;
+	// struct __trace_header* th = (struct __trace_header*)(void*) &pkt->body;
+	// return th->tr_flags;
+	return ((struct __trace_header*)(void*) &pkt->body)->tr_flags;
 }
 
 static inline u_int16_t
 get_evt_toff (fpga_pkt* pkt)
 {
-	return ((struct __evt_header*) &pkt->body)->toff;
+	// struct __evt_header* eh = (struct __evt_header*)(void*) &pkt->body;
+	// return eh->toff;
+	return ((struct __evt_header*)(void*) &pkt->body)->toff;
 }
 
 /*
@@ -321,8 +249,6 @@ evt_type_to_idx (u_int16_t evtype)
 		((evtype >> 2) & 3) +       /* bits 3 and 4  */
 		((evtype >> 8) & 3);        /* bits 9 and 10 */
 }
-
-#endif /* FPGA_USE_MACROS */
 
 #ifdef FPGA_DEBUG
 #include <assert.h>
