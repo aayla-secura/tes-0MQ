@@ -231,7 +231,7 @@ __check_fpga_pkt (struct __fpga_pkt* pkt)
 
 	switch (pkt->eth_hdr.ether_type)
 	{
-	/* ------------------------------------ MCA -------------------------------- */
+	/* -------------------------------- MCA ---------------------------- */
 		case ETH_MCA_TYPE:
 			if ( pkt->length < FPGA_HDR_LEN + BIN_LEN +
 				(pkt->fpga_hdr.proto_seq ? 0 : MCA_HDR_LEN) )
@@ -240,7 +240,8 @@ __check_fpga_pkt (struct __fpga_pkt* pkt)
 			if (pkt->fpga_hdr.proto_seq == 0)
 			{
 				struct __mca_header* mca_h =
-					(struct __mca_header*) &pkt->body;
+					(struct __mca_header*)(void*)
+						&pkt->body;
 
 				if ( mca_h->flags & ~MCA_FL_MASK )
 					rc |= FPGA_EFLAG;
@@ -259,7 +260,7 @@ __check_fpga_pkt (struct __fpga_pkt* pkt)
 
 			break;
 
-	/* ----------------------------------- Event ------------------------------- */
+	/* ------------------------------- Event --------------------------- */
 		case ETH_EVT_TYPE:
 			;
 			/*
@@ -285,10 +286,11 @@ __check_fpga_pkt (struct __fpga_pkt* pkt)
 				case EVT_TR_DP_TYPE:
 				case EVT_TR_DPTR_TYPE:
 					if (minflen == FPGA_HDR_LEN)
-						minflen += TR_FULL_HDR_LEN + DP_LEN;
+						minflen += TR_FULL_HDR_LEN
+							+ DP_LEN;
 
 					trflags = ((struct __trace_header*)
-						&pkt->body)->tr_flags;
+						(void*) &pkt->body)->tr_flags;
 				/* ------------------- traces end ------------------ */
 				case EVT_PLS_TYPE:
 					if (minflen == FPGA_HDR_LEN)
@@ -315,9 +317,11 @@ __check_fpga_pkt (struct __fpga_pkt* pkt)
 						evflag_mask = TICK_FL_MASK;
 
 			/* ------------------------- Checks ------------------------ */
-					if (pkt->length < minflen || pkt->length > maxflen)
+					if (pkt->length < minflen ||
+						pkt->length > maxflen)
 						rc |= FPGA_EFLEN;
-					if ( ((struct __evt_header*) &pkt->body)->flags
+					if ( ((struct __evt_header*)(void*)
+						&pkt->body)->flags
 						& ~evflag_mask )
 						rc |= FPGA_EFLAG;
 					if ( trflags & ~TR_FL_MASK )
@@ -498,18 +502,18 @@ __check_fpga_pkt (struct __fpga_pkt* pkt)
 	if ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE &&
 		pkt->fpga_hdr.proto_seq == 0 )
 	{
-		if ( ((struct __mca_header*) &pkt->body)->flags
+		if ( ((struct __mca_header*)(void*) &pkt->body)->flags
 			& ~cur_desc->flmask.mca )
 			rc |= FPGA_EFLAG;
 	}
 	else if (pkt->eth_hdr.ether_type == ETH_EVT_TYPE )
 	{
-		if ( ((struct __evt_header*) &pkt->body)->flags
+		if ( ((struct __evt_header*)(void*) &pkt->body)->flags
 			& ~cur_desc->flmask.event )
 			rc |= FPGA_EFLAG;
 		/* No problem to check trace flags even for non-trace events,
 		 * since the mask will be set to 0xffff in this case */
-		if ( ((struct __trace_header*) &pkt->body)->tr_flags
+		if ( ((struct __trace_header*)(void*) &pkt->body)->tr_flags
 			& ~cur_desc->flmask.trace )
 			rc |= FPGA_EFLAG;
 	}
