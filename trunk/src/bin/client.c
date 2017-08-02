@@ -90,17 +90,21 @@ main (int argc, char **argv)
 	printf ("\nProceed (y/n)? ");
 	do
 	{
-		char rep;
-		int rc = fread (&rep, 1, 1, stdin);
-		if (rc != 1)
-			exit (EXIT_FAILURE);
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t rlen = getline (&line, &len, stdin);
 
-		if (rep == 'n' || rep == 'N')
-			exit (EXIT_SUCCESS);
-		if (rep == 'y' || rep == 'Y')
-			break;
-		if (rep == '\n')
-			continue;
+		if (line == NULL || rlen == -1)
+			exit (EXIT_FAILURE);
+		char rep = line[0];
+		free (line);
+		if (rlen == 2)
+		{
+			if (rep == 'n' || rep == 'N')
+				exit (EXIT_SUCCESS);
+			if (rep == 'y' || rep == 'Y')
+				break;
+		}
 
 		printf ("Reply with 'y' or 'n': ");
 	} while (1);
@@ -117,7 +121,13 @@ main (int argc, char **argv)
 
 	u_int8_t fstat;
 	u_int64_t ticks, size, frames, missed;
-	zsock_recv (server, REP_PIC, &fstat, &ticks, &size, &frames, &missed); 
+	int rc = zsock_recv (server, REP_PIC, &fstat, &ticks, &size, &frames, &missed); 
+	if (rc == -1)
+	{
+		zsock_destroy (&server);
+		exit (EXIT_FAILURE);
+	}
+
 	if (!fstat)
 	{
 		printf ("File %s\n", status ?
