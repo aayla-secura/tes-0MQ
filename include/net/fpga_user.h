@@ -112,17 +112,15 @@ union trace_flags
 /* ------------------------------------------------------------------------- */
 
 static inline int
-is_mca_hfr (fpga_pkt* pkt)
+is_header (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE &&
-		 pkt->fpga_hdr.proto_seq == 0 );
+	return ( pkt->fpga_hdr.proto_seq == 0 );
 }
 
 static inline int
-is_mca_sfr (fpga_pkt* pkt)
+is_mca (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE &&
-		 pkt->fpga_hdr.proto_seq > 0 );
+	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE );
 }
 
 static inline int
@@ -189,10 +187,28 @@ is_trace_dptr (fpga_pkt* pkt)
 		 pkt->fpga_hdr.evt_type == EVT_TR_DPTR_TYPE );
 }
 
+static inline u_int16_t
+pkt_len (fpga_pkt* pkt)
+{
+	return pkt->length;
+}
+
+static inline u_int16_t
+frame_seq (fpga_pkt* pkt)
+{
+	return pkt->fpga_hdr.frame_seq;
+}
+
+static inline u_int16_t
+proto_seq (fpga_pkt* pkt)
+{
+	return pkt->fpga_hdr.proto_seq;
+}
+
 static inline u_int32_t
 get_mca_bin (fpga_pkt* pkt, u_int16_t bin)
 {
-	if (is_mca_hfr (pkt))
+	if (is_header (pkt))
 		return (u_int32_t) pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ];
 	else
 		return (u_int32_t) pkt->body[ bin*BIN_LEN ];

@@ -13,9 +13,8 @@
  *            below) or
  *       N > 1: no. of ticks (NOTE it's read as unsigned int)
  *   Frame 3 (uint8_t): (ignored if Frame 2 == 0)
- *       0: create (error if it exists),
+ *       0: create but do not overwrite or
  *       1: create or overwrite,
- *       2: append or
  * As a consequence of how zsock_recv parses arguments, the client may omit
  * frames corresponding to ignored arguments or arguments = 0. Therefore to get
  * a status of a file, only the filename is required.
@@ -24,7 +23,7 @@
  *   Frame 1 (uint8_t):
  *       0: request was invalid or
  *          there was an error opening the file (in case of request for
- *            overwrite or append) or
+ *            overwrite) or
  *          file exists (in case of request for create but not overwrite) or
  *          file does not exist (in case of request for status)
  *   Frames 2-5:
@@ -84,9 +83,12 @@
  * never be reached regardless of user input. Other errors are handled
  * gracefully with messages to syslog or stderr/out.
  *
- * There a two threads in the process---the main and the FPGA threads. The main
- * one opens the REP and RADIO/PUB sockets. It then starts the FPGA thread
- * using zactor high-level class, which on UNIX systems is a wrapper around
+ * There a two threads in the process---the main and the FPGA threads.
+ *
+ * The main one opens the REP and RADIO/PUB sockets.
+ * It allocates a pt_data_t structure which contains data to be written to by
+ * one thread, read by the other one. It then starts the FPGA thread using
+ * zactor high-level class, which on UNIX systems is a wrapper around
  * pthread_create. zactor_new creates two PAIR zmq sockets and creates
  * a detached thread caliing a wrapper (s_thread_shim) around the hanlder of
  * our choice. It starts the actual handler (which we pass to zactor_new),
@@ -106,9 +108,42 @@
  * commits, so we stick to the default one for now. But since we want to deal
  * with integer signals, and not string messages, we define fpga_destroy as
  * a wrapper around zactor_destroy, which sends SIG_STOP and then calls
- * zactor_destroy to wait for the handler to return.  
+ * zactor_destroy to wait for the handler to return.
  *
- * Also see comment before fpga_comm_body, the main body of the FPGA thread.
+ * The main thread polls the client readers (REP and RADIO/PUB) as well as its
+ * end of the pipe (a PAIR socket) to the FPGA thread.
+ * When it receives a request from a client (on the REP socket) it examines it.
+ * If the request is invalid, it replies with error. If it is a valid request
+ * for status, it opens the filename and sends the status reply.
+ * If it is a valid request to write, it opens the file, mmaps it to a location
+ * that is accessible by the FPGA thread and sets to non-zero an integer
+ * parameter, which tells the FPGA to copy every received packet to the mmapped
+ * region until the maximum ticks are reached. It then disables polling on the
+ * REP socket until it receives a SIG_FILE from the FPGA thread (on the PAIR
+ * socket). It then writes accumulated statistics to the beginning of the file,
+ * closes it, sends the reply to the client and re-enables polling on the REP
+ * socket.
+ * (NOT IMPLEMENTED YET) When it receives a SIG_MCA from the FPGA thread it
+ * reads in the joined MCA frames that the FPGA has been saving to a pre-mapped
+ * location and sends them as a single ZMQ message. 
+ *
+ * The FPGA thread is responsible for opening and closing the netmap interface
+ * and is the only one that reads from it.
+ * It polls the netmap file descriptor as well as its PAIR socket connected to
+ * the main thread.
+ * The handler for the netmap file descriptor saves MCA frames to
+ * a pre-allocated memory area that the main thread can access. When receiving
+ * the last part of an MCA frame it signals the main thread and the main thread
+ * is responsible for sending it as a packet to the subscribers via its
+ * RADIO/PUB socket.
+ * For each packet it also checks an integer parameter (set to non-zero by the
+ * main thread after opening a file for writing) and if it is non-zero it
+ * copies the packet to the mmapped region, accumulating statistics. When the
+ * maximum requested ticks are reached, it sets the parameter to zero and
+ * signals the main thread. The main thread closes the file and sends a reply
+ * to the client via its REP socket.
+ * When receiving a SIG_STOP signal from the main thread on the PAIR socket it
+ * exits, cleaning up.
  *
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
  * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
@@ -120,6 +155,7 @@
 #include "common.h"
 
 /* The following macros change parts of the implementation */
+#define USE_MMAP
 // #define BE_DAEMON
 // #define CUSTOM_ZACTOR_DESTRUCTOR
 
@@ -143,6 +179,8 @@
 	fprintf (stdout, "Thread %p: ", (void*) pthread_self()); \
 	fprintf (stdout, __VA_ARGS__); \
 	fprintf (stdout, "\n");        \
+	if (errno)                     \
+		fputs (strerror (errno), stdout); \
 	fflush (stdout);               \
 	} else (void)0
 #  define INFO(...) if (1) {           \
@@ -157,13 +195,14 @@
 	fprintf (stderr, "\n");        \
 	fflush (stderr);               \
 	} else (void)0
+#  define UPDATE_INTERVAL 2000  /* in milliseconds */
 #endif /* BE_DAEMON */
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
-#define UPDATE_INTERVAL 2000  /* in milliseconds */
+#define FDATA_OFF  32 /* 32 bytes for job statistics, see struct sjob_t */
 
-#define SAVEJOB_IF "tcp://lo:5555"
-#define PUBLISH_IF "tcp://lo:5556"
+#define SAVEJOB_IF "tcp://*:55555"
+#define PUBLISH_IF "tcp://*:55556"
 #define FPGA_NM_IF "vale:fpga"
 
 /* Signals for communicating between main and FPG thread */
@@ -178,27 +217,48 @@
 #define REQ_PIC      "s81"
 #define REP_PIC    "18888"
 
+#ifndef BE_DAEMON
+/*
+ * Global stats, only used in foreground mode
+ */
 struct stats_t
 {
+	u_int64_t rcvd;
 	u_int64_t last_rcvd;
 	u_int64_t missed;
+	u_int64_t dispatched;
 	struct timeval last_check;
 };
+#endif /* BE_DAEMON */
 
-/* Data related to the currently saved file */
-struct sjob_t
-{
-	/* the following are incremented by the FPGA thread as it saves */
+/*
+ * Data related to the currently saved file
+ */
+struct sjob_stats_t
+{/* statistics saved to the file; we declare it as a separate struct to avoid
+  * potential bugs when changing the layout of sjob_t structure or when reading
+  * into it from the opened file */
 	u_int64_t ticks;
 	u_int64_t size; /* do not exceed MAX_FSIZE */
 	u_int64_t frames;
 	u_int64_t missed_frames; /* dropped frames */
+};
+
+struct sjob_t
+{
+	/* the following are incremented by the FPGA thread as it saves */
+	struct sjob_stats_t st;
 	/* the following are set by the main thread before enabling the save
 	 * parameter */
 	u_int64_t max_ticks;
 	char* filename;
+#ifdef USE_MMAP
 	void* map;
+#endif /* USE_MMAP */
 	int fd;
+	int needs_trunc; /* when opening file for writing, we pre-allocate
+			  * space and truncate when closing; not done in read
+			  * mode (status requests) */
 };
 
 /*
@@ -207,6 +267,12 @@ struct sjob_t
  */
 struct pt_data_t
 {
+	zsock_t* sigpipe; /* the loop's readers may need to singnal the main
+			   * thread */
+	struct netmap_ring* rxring; /* we only use one */
+#ifndef BE_DAEMON
+	struct stats_t stats;
+#endif /* BE_DAEMON */
 	struct sjob_t cur_sjob;
 	int save_enabled;    /* if non-zero, save to the file in cur_sjob */
 	u_int16_t cur_frame; /* keep track of missed frames */
@@ -227,10 +293,12 @@ static void fpga_stop (zactor_t* self);
 static void fpga_destroy (zactor_t** self);
 static void finalize_job (struct g_data_t* data);
 static int  sjob_init (struct sjob_t* sjob, mode_t fmode);
-static int  sjob_read_stat (struct sjob_t* sjob);
-static int  sjob_write_stat (struct sjob_t* sjob);
+static void sjob_read_stat (struct sjob_t* sjob);
+static void sjob_write_stat (struct sjob_t* sjob);
 static void sjob_close (struct sjob_t* sjob);
+#ifndef BE_DAEMON
 static int  print_stats (zloop_t* loop, int timer_id, void* stats_);
+#endif /* BE_DAEMON */
 static int  sjob_req_hn (zloop_t* loop, zsock_t* reader, void* pt_data_);
 static int  fpga_to_main_hn (zloop_t* loop, zsock_t* reader, void* data_);
 static int  nm_rx_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* pt_data_);
@@ -283,28 +351,21 @@ static void
 finalize_job (struct g_data_t* data)
 {
 	assert (data);
-	if (data->pt_data.save_enabled == 0)
+	assert (data->pt_data.save_enabled == 0);
+	if (data->pt_data.cur_sjob.fd == -1)
 	{
-		assert (data->pt_data.cur_sjob.ticks == 0);
-		assert (data->pt_data.cur_sjob.size == 0);
-		assert (data->pt_data.cur_sjob.frames == 0);
-		assert (data->pt_data.cur_sjob.missed_frames == 0);
-		assert (data->pt_data.cur_sjob.filename == NULL);
-		assert (data->pt_data.cur_sjob.map == NULL);
-		assert (data->pt_data.cur_sjob.fd == -1);
 		return;
 	}
 
 	/* Send message to client */
 	zsock_send (data->sjob_rep, REP_PIC, REQ_OK, 
-		data->pt_data.cur_sjob.ticks,
-		data->pt_data.cur_sjob.size,
-		data->pt_data.cur_sjob.frames,
-		data->pt_data.cur_sjob.missed_frames);
+		data->pt_data.cur_sjob.st.ticks,
+		data->pt_data.cur_sjob.st.size,
+		data->pt_data.cur_sjob.st.frames,
+		data->pt_data.cur_sjob.st.missed_frames);
 
 	sjob_write_stat (&data->pt_data.cur_sjob);
 	sjob_close (&data->pt_data.cur_sjob);
-	data->pt_data.save_enabled = 0;
 }
 
 /*
@@ -316,13 +377,16 @@ static int
 sjob_init (struct sjob_t* sjob, mode_t fmode)
 {
 	assert (sjob);
-	assert (sjob->ticks == 0);
-	assert (sjob->size == 0);
-	assert (sjob->frames == 0);
-	assert (sjob->missed_frames == 0);
+	assert (sjob->st.ticks == 0);
+	assert (sjob->st.size == 0);
+	assert (sjob->st.frames == 0);
+	assert (sjob->st.missed_frames == 0);
 	assert (sjob->filename != NULL);
+#ifdef USE_MMAP
 	assert (sjob->map == NULL);
+#endif /* USE_MMAP */
 	assert (sjob->fd == -1);
+	assert (sjob->needs_trunc == 0);
 
 	/* Open the file */
 	sjob->fd = open (sjob->filename, fmode,
@@ -333,21 +397,44 @@ sjob_init (struct sjob_t* sjob, mode_t fmode)
 		return -1;
 	}
 
-	int rc = posix_fallocate (sjob->fd, 0, MAX_FSIZE);
-	if (rc)
+	int rc;
+	if (fmode & (O_RDWR | O_WRONLY))
 	{
-		WARN ("Could not allocate %llu to file", MAX_FSIZE);
-		errno = rc; /* posix_fallocate does not set errno */
-		return -1;
+		sjob->needs_trunc = 1;
+		rc = posix_fallocate (sjob->fd, 0, MAX_FSIZE);
+		if (rc)
+		{
+			WARN ("Could not allocate %llu to file", MAX_FSIZE);
+			errno = rc; /* posix_fallocate does not set errno */
+			return -1;
+		}
 	}
 
-	sjob->map = mmap (NULL, MAX_FSIZE, PROT_WRITE,
-		MAP_SHARED, sjob->fd, 0);
+#ifdef USE_MMAP
+	/* if (fmode & O_RDONLY) */
+	/* { */
+	/*         sjob->map = mmap (NULL, MAX_FSIZE, PROT_READ, */
+	/*                 MAP_PRIVATE, sjob->fd, 0); */
+	/* } */
+	/* else */
+	/* { */
+	/*         sjob->map = mmap (NULL, MAX_FSIZE, PROT_WRITE, */
+	/*                 MAP_SHARED, sjob->fd, 0); */
+	/* } */
+	sjob->map = mmap (NULL, MAX_FSIZE, PROT_WRITE, MAP_SHARED, sjob->fd, 0);
 	if (sjob->map == (void*)-1)
 	{
 		WARN ("Could not mmap file %s", sjob->filename);
 		return -1;
 	}
+#else /* USE_MMAP */
+	rc = lseek (sjob->fd, FDATA_OFF, 0);
+	if (rc == (off_t)-1 || rc < FDATA_OFF)
+	{
+		WARN ("Could not adjust file cursor");
+		return -1;
+	}
+#endif /* USE_MMAP */
 
 	return 0;
 }
@@ -356,17 +443,69 @@ sjob_init (struct sjob_t* sjob, mode_t fmode)
  * Reads stats previously saved to file. Used when client requests a status for
  * filename
  */
-static int
+static void
 sjob_read_stat (struct sjob_t* sjob)
 {
+	assert (sjob);
+	assert (sjob->st.ticks == 0);
+	assert (sjob->st.size == 0);
+	assert (sjob->st.frames == 0);
+	assert (sjob->st.missed_frames == 0);
+	assert (sjob->filename != NULL);
+#ifdef USE_MMAP
+	assert (sjob->map != NULL && sjob->map != (void*)-1);
+#endif /* USE_MMAP */
+	assert (sjob->fd != -1);
+
+#ifdef USE_MMAP
+	memcpy (&sjob->st, sjob->map, FDATA_OFF);
+#else /* USE_MMAP */
+	int rc = lseek (sjob->fd, 0, 0);
+	if (rc)
+	{
+		WARN ("Could not seek to beginning of file");
+		return;
+	}
+	rc = read (sjob->fd, &sjob->st, FDATA_OFF);
+	if (rc < FDATA_OFF)
+	{
+		WARN ("Could not read from beginning of file");
+		return;
+	}
+#endif /* USE_MMAP */
 }
 
 /*
  * Writes stats to a currently open file. Used right before closing it.
  */
-static int
+static void
 sjob_write_stat (struct sjob_t* sjob)
 {
+	assert (sjob);
+	assert (sjob->filename != NULL);
+	assert (sjob->needs_trunc); /* should have been done when opening
+				     * a file for writing */
+#ifdef USE_MMAP
+	assert (sjob->map != NULL && sjob->map != (void*)-1);
+#endif /* USE_MMAP */
+	assert (sjob->fd != -1);
+
+#ifdef USE_MMAP
+	memcpy (sjob->map, &sjob->st, FDATA_OFF);
+#else /* USE_MMAP */
+	int rc = lseek (sjob->fd, 0, 0);
+	if (rc)
+	{
+		WARN ("Could not seek to beginning of file");
+		return;
+	}
+	rc = write (sjob->fd, &sjob->st, FDATA_OFF);
+	if (rc < FDATA_OFF)
+	{
+		WARN ("Could not write to beginning of file");
+		return;
+	}
+#endif /* USE_MMAP */
 }
 
 /*
@@ -376,33 +515,40 @@ static void
 sjob_close (struct sjob_t* sjob)
 {
 	assert (sjob);
+#ifdef USE_MMAP
 	if ( sjob->map != NULL && sjob->map != (void*)-1)
 	{
 		munmap (sjob->map, MAX_FSIZE);
 		sjob->map = NULL;
 	}
+#endif /* USE_MMAP */
 
 	if (sjob->fd >= 0)
 	{
-		int rc = ftruncate (sjob->fd, sjob->size);
-		if (rc == -1)
+		if (sjob->needs_trunc)
 		{
-			WARN ("Could not truncate file");
+			int rc = ftruncate (sjob->fd, sjob->st.size);
+			if (rc == -1)
+			{
+				WARN ("Could not truncate file");
+			}
 		}
 		close (sjob->fd);
 		sjob->fd = -1;
 	}
 
 	zstr_free (&sjob->filename);
+	sjob->needs_trunc = 0;
 	sjob->max_ticks = 0;
-	sjob->ticks = 0;
-	sjob->size = 0;
-	sjob->frames = 0;
-	sjob->missed_frames = 0;
+	sjob->st.ticks = 0;
+	sjob->st.size = 0;
+	sjob->st.frames = 0;
+	sjob->st.missed_frames = 0;
 }
 
 /* --------------------------- SOCKET HANDLERS ----------------------------- */
 
+#ifndef BE_DAEMON
 /*
  * When working in foreground, print statistics (bandwidth, etc) every
  * UPDATE_INTERVAL
@@ -417,6 +563,7 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 
 	return 0;
 }
+#endif /* BE_DAEMON */
 
 /*
  * Called by the main thread when it receives a request from a client to save
@@ -443,7 +590,7 @@ sjob_req_hn (zloop_t* loop, zsock_t* reader, void* pt_data_)
 		DEBUG ("Receive interrupted");
 		return -1;
 	}
-	if (pt_data->cur_sjob.filename == NULL || job_mode > 2)
+	if (pt_data->cur_sjob.filename == NULL || job_mode > 1)
 	{
 		INFO ("Request was malformed");
 		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
@@ -465,32 +612,24 @@ sjob_req_hn (zloop_t* loop, zsock_t* reader, void* pt_data_)
 	 *   create: create or overwrite
 	 *           - if successful, enable save
 	 *           - if failed, send reply (this shouldn't happen)
-	 *   create: create or append
-	 *           - if successful, enable save
-	 *           - if failed, send reply (this shouldn't happen)
 	 */
 	if (pt_data->cur_sjob.max_ticks == 0)
-	{
+	{ /* status */
+#ifdef USE_MMAP
+		/* why can't we map read-only file even with MAP_PRIVATE? */
+		fmode = O_RDWR;
+#else /* USE_MMAP */
 		fmode = O_RDONLY;
+#endif /* USE_MMAP */
 		exp_errno = ENOENT;
 	}
 	else
 	{
 		fmode = O_RDWR | O_CREAT;
-
-		switch (job_mode)
-		{
-			case 0: /* do not overwrite, error if it exists */
+		if (job_mode == 0)
+		{ /* do not overwrite */
 				fmode |= O_EXCL;
 				exp_errno = EEXIST;
-				break;
-			case 1: /* overwrite if it exists */
-				break;
-			case 2: /* append or create */
-				fmode |= O_APPEND;
-				break;
-			default: /* we handle this above */
-				assert (0);
 		}
 	}
 
@@ -513,10 +652,10 @@ sjob_req_hn (zloop_t* loop, zsock_t* reader, void* pt_data_)
 	{ /* just read in stats and send reply */
 		sjob_read_stat (&pt_data->cur_sjob);
 		zsock_send (reader, REP_PIC, REQ_OK, 
-			pt_data->cur_sjob.ticks,
-			pt_data->cur_sjob.size,
-			pt_data->cur_sjob.frames,
-			pt_data->cur_sjob.missed_frames);
+			pt_data->cur_sjob.st.ticks,
+			pt_data->cur_sjob.st.size,
+			pt_data->cur_sjob.st.frames,
+			pt_data->cur_sjob.st.missed_frames);
 		sjob_close (&pt_data->cur_sjob);
 		return 0;
 	}
@@ -566,6 +705,7 @@ fpga_to_main_hn (zloop_t* loop, zsock_t* reader, void* data_)
 			break;
 		case SIG_FILE:
 			DEBUG ("Save job ready");
+			assert (data->pt_data.save_enabled == 0);
 			finalize_job (data);
 			/* Re-enable polling on the reader */
 			int rc  = zloop_reader (loop, data->sjob_rep, sjob_req_hn,
@@ -595,7 +735,70 @@ static int
 nm_rx_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* pt_data_)
 {
 	struct pt_data_t* pt_data = (struct pt_data_t*) pt_data_;
-	DEBUG ("Something in the rx ring");
+
+#ifndef BE_DAEMON
+	pt_data->stats.dispatched++;
+#endif /* BE_DAEMON */
+	do
+	{
+		u_int32_t cur_bufid =
+			pt_data->rxring->slot[ pt_data->rxring->cur ].buf_idx;
+		fpga_pkt* pkt =
+			(fpga_pkt*) NETMAP_BUF (pt_data->rxring, cur_bufid);
+
+		uint16_t prev_frame = pt_data->cur_frame;
+		pt_data->cur_frame = frame_seq (pkt);
+#ifndef BE_DAEMON
+		if (pt_data->stats.rcvd == 0)
+		{
+			INFO ("First received frame is #%hu",
+				pt_data->cur_frame);
+		}
+		pt_data->stats.missed += (u_int64_t) (
+			(uint16_t)(pt_data->cur_frame - prev_frame) - 1);
+
+		pt_data->stats.rcvd++;
+		if (pt_data->stats.rcvd == 0)
+		{
+			DEBUG ("No. received packets wrapped around");
+			pt_data->stats.rcvd++; /* don't reset cur_frame next time */
+		}
+#endif /* BE_DAEMON */
+
+		if (pt_data->save_enabled)
+		{ /* save packet */
+#ifdef USE_MMAP
+			memcpy ((u_int8_t*)pt_data->cur_sjob.map + FDATA_OFF +
+				pt_data->cur_sjob.st.size, pkt, pkt_len (pkt));
+#else /* USE_MMAP */
+			int rc = write (pt_data->cur_sjob.fd, pkt, pkt_len (pkt));
+			if (rc == -1)
+			{
+				ERROR ("Could not write to file");
+				return -1;
+			}
+#endif /* USE_MMAP */
+			if (is_tick (pkt))
+				pt_data->cur_sjob.st.ticks++;
+			pt_data->cur_sjob.st.size += pkt_len (pkt);
+			pt_data->cur_sjob.st.frames++;
+			pt_data->cur_sjob.st.missed_frames += (u_int64_t) (
+				(uint16_t)(pt_data->cur_frame - prev_frame) - 1);
+
+			if ( ( pt_data->cur_sjob.st.ticks ==
+				  pt_data->cur_sjob.max_ticks ) || 
+			     ( pt_data->cur_sjob.st.size + MAX_FPGA_FRAME_LEN
+				  + FDATA_OFF > MAX_FSIZE ) )
+			{
+				pt_data->save_enabled = 0;
+				zsock_signal (pt_data->sigpipe, SIG_FILE);
+			}
+		}
+
+		pt_data->rxring->head = pt_data->rxring->cur =
+			nm_ring_next(pt_data->rxring, pt_data->rxring->cur);
+
+	} while ( ! nm_ring_empty (pt_data->rxring) );
 
 	return 0;
 }
@@ -636,29 +839,15 @@ main_to_fpga_sig_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 
 /* --------------------------- THREADS' BODIES ----------------------------- */
 
-/*
- * The main body of the FPGA thread. It is responsible for opening and closing
- * the netmap interface and is the only one that reads from it.
- * It saves MCA frames to a pre-allocated memory area that the main thread can
- * access. When receiving the last part of an MCA frame it signals the main
- * thread and the main thread is responsible for sending it as a packet to the
- * subscribers via its RADIO socket.
- * It also checks an integer parameter (set to non-zero by the main thread
- * after opening a file for writing) and if it is non-zero it copies ALL frames
- * to the file, accumulating statistics. When the maximum requested ticks are
- * reached, it sets the parameter to zero and signals the main thread. The main
- * thread closes the file and sends a reply to the client via its ROUTER
- * socket.
- * The idea is to have as few tasks in addition to reading from the netmap tx
- * ring, and as few interruptions (signal handling, function calls) as
- * possible.
- */
+/* See comments in DEV NOTES section at the beginning */
+
 static void
 fpga_comm_body (zsock_t* pipe, void* pt_data_)
 {
 	assert (pt_data_);
 	zsock_signal (pipe, SIG_INIT); /* zactor_new will wait for this */
 	struct pt_data_t* pt_data = (struct pt_data_t*) pt_data_;
+	pt_data->sigpipe = pipe;
 
 	/* Open the interface */
 	struct nm_desc* nmd = nm_open(FPGA_NM_IF"}1", NULL, 0, 0);
@@ -673,12 +862,13 @@ fpga_comm_body (zsock_t* pipe, void* pt_data_)
 
 	/* Get the ring (we only use one) */
 	assert (nmd->first_rx_ring == nmd->last_rx_ring);
-	struct netmap_ring* rxring = NETMAP_RXRING ( nmd->nifp,
+	pt_data->rxring = NETMAP_RXRING ( nmd->nifp,
 		nmd->first_rx_ring);
 
 	/* Register the pollers, we use the lower-level zloop_poller in order
 	 * to handle the netmap file descriptor as well */
 	struct zmq_pollitem_t pitem;
+	memset (&pitem, 0, sizeof (pitem));
 	pitem.fd = nmd->fd;
 	pitem.events = ZMQ_POLLIN;
 	zloop_t* loop = zloop_new ();
@@ -712,6 +902,7 @@ fpga_comm_body (zsock_t* pipe, void* pt_data_)
 int
 main (void)
 {
+	assert (sizeof (struct sjob_stats_t) == FDATA_OFF);
 	int rc;
 
 #ifdef BE_DAEMON
@@ -730,7 +921,6 @@ main (void)
 	struct g_data_t data;
 	memset (&data, 0, sizeof (data));
 	data.pt_data.cur_sjob.fd = -1;
-	data.pt_data.cur_frame = -1;
 	/* TO DO: a mapped area to put MCA frames into */
 
 	/* Start the thread, will block until fpga_comm_body signals */
@@ -776,10 +966,9 @@ main (void)
 	}
 
 #ifndef BE_DAEMON
-	struct stats_t gstats;
-	memset (&gstats, 0, sizeof (gstats));
 	/* Set the timer */
-	rc = zloop_timer (loop, UPDATE_INTERVAL, 0, print_stats, &gstats);
+	rc = zloop_timer (loop, UPDATE_INTERVAL, 0, print_stats,
+		&data.pt_data.stats);
 	if (rc == -1)
 	{
 		ERROR ("Could not register a timer");
@@ -796,6 +985,7 @@ main (void)
 
 	DEBUG (rc ? "Terminated by handler" : "Interrupted");
 
+	data.pt_data.save_enabled = 0;
 	finalize_job (&data);
 	zsock_destroy (&data.sjob_rep);
 	zloop_destroy (&loop);
