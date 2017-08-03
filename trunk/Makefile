@@ -14,6 +14,6 @@ libs := $(patsubst %.c,%,$(notdir $(wildcard $(LIB_SRC)/*.c)))
 so := $(libs:%=lib%.so)
 
 CC := gcc
-CFLAGS := -Wno-unused -Wall -Wextra -O1 -I$(CPATH) $(filter -O0 -O2 -DVERBOSE -DFPGA_DEBUG,$(CFLAGS))
+CFLAGS := -Wno-unused -Wall -Wextra -O1 -I$(CPATH) $(filter -O0 -O2 -DSYSLOG -DVERBOSE -DFPGA_DEBUG,$(CFLAGS))
 LDLIBS := $(ext_libs:%=-l% )
 LDFLAGS := -L$(LIB_ROOT)

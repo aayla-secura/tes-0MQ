@@ -152,51 +152,21 @@
  *     make sure they are running ok.
  */
 
-#include "common.h"
-
+#define VERBOSE
+#define MULTITHREAD /* this is only used in the debuggind macros in common.h */
 /* The following macros change parts of the implementation */
 #define USE_MMAP
 // #define BE_DAEMON
 // #define CUSTOM_ZACTOR_DESTRUCTOR
 
 #ifdef BE_DAEMON
+#  define SYSLOG /* print to syslog */
 #  include "daemon.h"
 #else /* BE_DAEMON */
-/* common.h uses syslog for ERROR, DEBUG, WARN, INFO */
-#  undef ERROR
-#  undef WARN
-#  undef INFO
-#  undef DEBUG
-#  define ERROR(...) if (1) {          \
-	fprintf (stdout, "Thread %p: ", (void*) pthread_self()); \
-	fprintf (stdout, __VA_ARGS__); \
-	fprintf (stdout, "\n");        \
-	if (errno)                     \
-		fputs (strerror (errno), stdout); \
-	fflush (stdout);               \
-	} else (void)0
-#  define WARN(...) if (1) {           \
-	fprintf (stdout, "Thread %p: ", (void*) pthread_self()); \
-	fprintf (stdout, __VA_ARGS__); \
-	fprintf (stdout, "\n");        \
-	if (errno)                     \
-		fputs (strerror (errno), stdout); \
-	fflush (stdout);               \
-	} else (void)0
-#  define INFO(...) if (1) {           \
-	fprintf (stdout, "Thread %p: ", (void*) pthread_self()); \
-	fprintf (stdout, __VA_ARGS__); \
-	fprintf (stdout, "\n");        \
-	fflush (stdout);               \
-	} else (void)0
-#  define DEBUG(...) if (1) {          \
-	fprintf (stderr, "Thread %p: ", (void*) pthread_self()); \
-	fprintf (stderr, __VA_ARGS__); \
-	fprintf (stderr, "\n");        \
-	fflush (stderr);               \
-	} else (void)0
 #  define UPDATE_INTERVAL 2000  /* in milliseconds */
 #endif /* BE_DAEMON */
+
+#include "common.h"
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
 #define FDATA_OFF  32 /* 32 bytes for job statistics, see struct sjob_t */
@@ -983,7 +953,14 @@ main (void)
 	INFO ("Waiting for jobs");
 	rc = zloop_start (loop);
 
-	DEBUG (rc ? "Terminated by handler" : "Interrupted");
+	if (rc)
+	{
+		DEBUG ("Terminated by handler");
+	}
+	else
+	{
+		DEBUG ("Interrupted");
+	}
 
 	data.pt_data.save_enabled = 0;
 	finalize_job (&data);
