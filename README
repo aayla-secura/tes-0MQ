@@ -1,0 +1,41 @@
+Layout of the trunk is:
+- include:      header files
+- src/bin:      source binary files
+- src/bin/test: miscellaneous test files
+- src/lib:      source library files
+- lib:          compiled libraries (created by make install if missing)
+- bin:          compiled binaries  (created by make install if missing)
+
+There is a Makefile in both src/bin and src/lib which is used respectively to
+build and install binaries or libraries. From the trunk do:
+
+ cd src/lib
+ make all
+ make install
+ cs ../bin
+ make all
+ make install
+
+The Makefile in src/bin also works for src/bin/test, just do (in src/bin)
+ 
+ make test/name_of_executable_without_extension
+
+The Makefile will link with the necessary libraries (and it will make sure
+include and lib in the trunk are given to gcc). Before running a program in
+bin/ do
+
+ export LD_LIBRARY_PATH=/path/to/trunk/lib
+
+Note, at the moment there's only one library, daemon and it's only used if
+src/bin/server.c is compiled with BE_DAEMON.
+
+To modify CFLAGS and other global parameters passed to gcc (or the compiler
+executable itself), see Makefile in the trunk directory, which is sourced by
+the other Makefiles.
+
+bin/server is the server program, bin/client is the client which includes
+a help (usage) message when run with no args.
+
+See comments at the beginning of src/bin/server.c.
+
+Only tested on Linux 4.8.4 at the moment.
