@@ -92,9 +92,9 @@
 /* ------------------------------------------------------------------------- */
 #endif /* SYSLOG */
 
-#define ERROR(...) DEBUG_PRIV(__VA_ARGS__, "")
-#define WARN(...)  DEBUG_PRIV(__VA_ARGS__, "")
-#define INFO(...)  DEBUG_PRIV(__VA_ARGS__, "")
+#define ERROR(...) ERROR_PRIV(__VA_ARGS__, "")
+#define WARN(...)  WARN_PRIV(__VA_ARGS__, "")
+#define INFO(...)  INFO_PRIV(__VA_ARGS__, "")
 
 #ifdef VERBOSE
 #  define DEBUG(...) DEBUG_PRIV(__VA_ARGS__, "")
