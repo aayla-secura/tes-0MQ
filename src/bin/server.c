@@ -124,14 +124,16 @@
  *
  * Netmap uses two user-driven constructs---a head and a cursor. The head tells
  * it which slots it can safely free, while the cursor tells it when to unblock
- * a poll call.
+ * a poll call. When the head lags behind the tail, the cursor must never be
+ * set to a slot index in the range head+1 ... tail because the poll would
+ * block forever (the tail will reach the head before it reaches the cursor).
  *
- * The traditional way of dealing with new packets after netmap unblocks is to
- * loop until cursor reaches the tail, instead of a fixed number of times. That
- * way packets that arrive while previous one are being processed will be
- * consumed as well without the need for another poll.
+ * The simplest, fastest way to deal with new packets is to move the head and
+ * cursor together until they reach the tail (at which point the ring is
+ * empty). The next poll will unblock when the ring gets full (the tail will
+ * wrap around and reach cursor).
  *
- * To do this in a multi-threaded context each task thread has access to the
+ * To do this in our multi-threaded context each task thread has access to the
  * (read-only) rxring tail, so it knows when it has processed all available
  * packets. It keeps its own head (readable by the coordinator thread), which
  * tells the coordinator thread which packets the task has processed.
@@ -141,10 +143,12 @@
  * lag behind the per-thread head.
  *
  * After receiving new packets, the coordinator thread checks its list of
- * tasks. To all tasks which are currently doing work and are not busy
- * processing packets (indicated by a 'busy' boolean) it sends a SIG_WAKEUP
- * (down the corresponding pipe). It then sets the rxring cursor to the tail,
- * and the rxring head to the per-thread head that is farthest behind the tail.
+ * tasks. For all tasks which are currently doing work (indicated by an 'active
+ * boolean) it checks their heads and saves the one that is farthest behind the
+ * tail (the slowest task). Then, to each task which is waiting for more
+ * packets (indicated by a 'busy' boolean being false) it sends a SIG_WAKEUP
+ * (down the corresponding pipe). It then sets the rxring cursor and the rxring
+ * head to the per-thread head that is farthest behind the tail.
  *
  * Each task thread polls its end of the pipe waiting for a SIG_WAKEUP signal.
  * After receiving a SIG_WAKEUP signal, it sets the 'busy' parameter to true
@@ -156,6 +160,15 @@
  * The coordinator thread will not check its head then.
  *
  * Note: bool type and true/false macros are ensured by CZMQ.
+ *
+ * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
+ * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * fpga.h: fix event length and MAX_PLS_PEAKS
+ * check if packet is valid and drop (increment another counter for malformed
+ *   packets)
+ * how to ensure that task threads do not modigy head or cursor (or any other
+ *   netmap variable), and only read them?
  */
 
 #define VERBOSE
@@ -169,7 +182,7 @@
 #  define SYSLOG /* print to syslog */
 #  include "daemon.h"
 #else /* BE_DAEMON */
-#  define UPDATE_INTERVAL 2000  /* in milliseconds */
+#  define UPDATE_INTERVAL 2  /* in seconds */
 #endif /* BE_DAEMON */
 
 #include "common.h"
@@ -184,35 +197,6 @@
 #define SIG_STOP   1 /* coordinator -> task when error or shutting down */
 #define SIG_DIED   2 /* task -> coordinator when error */
 #define SIG_WAKEUP 3 /* coordinator -> task when new packets arrive */
-
-/* ------------------------------------------------------------------------- */
-
-static inline char* nm_ring_first_buf (struct netmap_ring* ring);
-static inline char* nm_ring_cur_buf (struct netmap_ring* ring);
-static inline char* nm_ring_next_buf (struct netmap_ring* ring);
-static inline char* nm_ring_following_buf (struct netmap_ring* ring,
-	uint32_t idx);
-static inline char* nm_ring_last_buf (struct netmap_ring* ring);
-typedef struct __task_t task_t;
-static int task_new (struct netmap_ring* rxring, zactor_fn* tbody,
-	zlistx_t* list, zloop_t* loop);
-static void task_stop (zactor_t* self);
-static void task_destroy (void** self_p);
-static inline bool task_is_active (task_t* self);
-static inline bool task_is_waiting (task_t* self);
-static inline int task_signal (task_t* self, byte sig);
-static inline int task_read (task_t* self, zloop_t* loop);
-static u_int32_t tasks_first_head (zlistx_t* tasks, struct netmap_ring* ring);
-static int coordinator_sig_hn (zloop_t* loop, zsock_t* reader, void* self_);
-static int sjob_req_hn (zloop_t* loop, zsock_t* reader, void* self_);
-#ifndef BE_DAEMON
-static int print_stats (zloop_t* loop, int timer_id, void* stats_);
-#endif /* BE_DAEMON */
-static int task_sig_hn (zloop_t* loop, zsock_t* reader, void* ignored);
-static int new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
-static void sjob_task_body (zsock_t* pipe, void* self_);
-static void hist_task_body (zsock_t* pipe, void* arg_);
-static int coordinator_body (void);
 
 /* ------------------------------------------------------------------------- */
 /* -------------------------- TASK-SPECIFIC DATA --------------------------- */
@@ -240,6 +224,7 @@ struct sjob_stats_t
 	u_int64_t size;        /* do not exceed MAX_FSIZE */
 	u_int64_t frames;
 	u_int64_t frames_lost; /* dropped frames */
+	/* TO DO: send those flags as well */
 	/* Last 8-bytes of the tick header */
 	u_int8_t ovrfl;
 	u_int8_t err;
@@ -262,16 +247,15 @@ struct sjob_t
 /* ------------------------------------------------------------------------- */
 
 /*
- * Per-thread data. Each task thread handler receives this. Layout subject to
- * change, so for simplicity we make it opaque and access it via the methods
- * below. (TO DO)
+ * Per-thread data. Each task thread handler receives this.
  */
 struct task_arg_t
 {
 	struct netmap_ring* rxring; /* we only use one */
-	void*        data;       /* task specific, the task handler should
-				  * allocate and free this */
+	zsock_t*     frontend;   /* the public interface */
+	void*        data;       /* task specific, the task sets this */
 	u_int32_t    head;       /* private to thread */
+	u_int16_t    cur_frame;  /* keep track of missed frames */
 	bool         terminated; /* the handler for the PAIR socket to the
 				  * coordinator thread will set this when
 				  * receiving SIG_STOP, in which case the task
@@ -286,7 +270,8 @@ struct task_arg_t
 
 /*
  * The coordinator should not rely on the layout of struct task_arg_t, so we
- * make this opaque. Coordinator accesses it via the methods below.
+ * make this opaque. Coordinator accesses it via the methods below see (TASK
+ * MANAGEMENT).
  */
 struct __task_t
 {
@@ -300,6 +285,7 @@ struct __task_t
  */
 struct stats_t
 {
+	struct timeval last_update;
 	u_int64_t received;
 	u_int64_t missed;
 };
@@ -315,48 +301,113 @@ struct coordinator_t
 };
 
 /* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+static inline fpga_pkt* nm_ring_first_pkt (struct netmap_ring* ring);
+static inline fpga_pkt* nm_ring_cur_pkt (struct netmap_ring* ring);
+static inline fpga_pkt* nm_ring_pkt (
+	struct netmap_ring* ring, uint32_t idx);
+static inline fpga_pkt* nm_ring_last_pkt (struct netmap_ring* ring);
+static inline u_int16_t nm_ring_first_buf_len (struct netmap_ring* ring);
+static inline u_int16_t nm_ring_cur_buf_len (struct netmap_ring* ring);
+static inline u_int16_t nm_ring_buf_len (
+	struct netmap_ring* ring, uint32_t idx);
+static inline u_int16_t nm_ring_last_buf_len (struct netmap_ring* ring);
+static uint32_t nm_smaller_buf_id (
+	struct netmap_ring* ring, uint32_t ida, uint32_t idb);
+static uint32_t nm_larger_buf_id (
+	struct netmap_ring* ring, uint32_t ida, uint32_t idb);
+static int nm_compare_buf_ids (
+	struct netmap_ring* ring, uint32_t ida, uint32_t idb);
+typedef struct __task_t task_t;
+static int task_new (struct netmap_ring* rxring, zactor_fn* tbody,
+	zlistx_t* list, zloop_t* loop);
+static void task_stop (zactor_t* self);
+static void task_destroy (void** self_p);
+static inline bool task_is_active (task_t* self);
+static inline bool task_is_waiting (task_t* self);
+static inline int task_signal (task_t* self, byte sig);
+static inline int task_read (task_t* self, zloop_t* loop);
+static inline u_int32_t task_get_head (task_t* self);
+static void sjob_finalize (struct task_arg_t* self);
+static int  sjob_init (struct sjob_t* sjob, mode_t fmode);
+static void sjob_read_stat (struct sjob_t* sjob);
+static void sjob_write_stat (struct sjob_t* sjob);
+static void sjob_close (struct sjob_t* sjob);
+static int coordinator_sig_hn (zloop_t* loop, zsock_t* reader, void* self_);
+static int sjob_req_hn (zloop_t* loop, zsock_t* reader, void* self_);
+#ifndef BE_DAEMON
+static int print_stats (zloop_t* loop, int timer_id, void* stats_);
+#endif /* BE_DAEMON */
+static int task_sig_hn (zloop_t* loop, zsock_t* reader, void* ignored);
+static int new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
+static void sjob_task_body (zsock_t* pipe, void* self_);
+static void hist_task_body (zsock_t* pipe, void* arg_);
+static int coordinator_body (void);
+
+/* ------------------------------------------------------------------------- */
 /* ------------------------------- HELPERS --------------------------------- */
 /* ------------------------------------------------------------------------- */
 
 /* -------------------------------- NETMAP --------------------------------- */
 
-/* Get the head, cur, next (advancing cur), following <id> or tail buffer of
- * a ring. It wraps around back to 0. */
-static inline char*
-nm_ring_first_buf (struct netmap_ring* ring)
+/* Get the head, cur, <id>, following <id> or tail buffer of a ring. */
+static inline fpga_pkt*
+nm_ring_first_pkt (struct netmap_ring* ring)
 {
-	return NETMAP_BUF (ring, ring->slot[ ring->head ].buf_idx);
+	return (fpga_pkt*) NETMAP_BUF (ring, ring->slot[ ring->head ].buf_idx);
 }
-static inline char*
-nm_ring_cur_buf (struct netmap_ring* ring)
+static inline fpga_pkt*
+nm_ring_cur_pkt (struct netmap_ring* ring)
 {
 	if (unlikely (ring->cur == ring->tail))
 		return NULL;
-	return NETMAP_BUF (ring, ring->slot[ ring->cur ].buf_idx);
+	return (fpga_pkt*) NETMAP_BUF (ring, ring->slot[ ring->cur ].buf_idx);
 }
-static inline char*
-nm_ring_next_buf (struct netmap_ring* ring)
+static inline fpga_pkt*
+nm_ring_pkt (struct netmap_ring* ring, uint32_t idx)
 {
-	ring->cur = nm_ring_next (ring, ring->cur);
-	if (unlikely (ring->cur == ring->tail))
+	if (unlikely (idx == ring->tail))
 		return NULL;
-	return NETMAP_BUF (ring, ring->slot[ ring->cur ].buf_idx);
+	return (fpga_pkt*) NETMAP_BUF (ring, ring->slot[ idx ].buf_idx);
 }
-static inline char*
-nm_ring_following_buf (struct netmap_ring* ring, uint32_t idx)
-{
-	uint32_t next = nm_ring_next (ring, idx); 
-	if (unlikely (next == ring->tail))
-		return NULL;
-	return NETMAP_BUF (ring, ring->slot[ next ].buf_idx);
-}
-static inline char*
-nm_ring_last_buf (struct netmap_ring* ring)
+static inline fpga_pkt*
+nm_ring_last_pkt (struct netmap_ring* ring)
 {
 	int last = ring->tail - 1;
 	if (unlikely (last < 0))
 		last = ring->num_slots - 1;
-	return NETMAP_BUF (ring, ring->slot[ last ].buf_idx);
+	return (fpga_pkt*) NETMAP_BUF (ring, ring->slot[ last ].buf_idx);
+}
+
+/* Get length of the head, cur, <id>, following <id> or tail buffer of a ring. */
+static inline u_int16_t
+nm_ring_first_buf_len (struct netmap_ring* ring)
+{
+	return ring->slot[ ring->head ].len;
+}
+static inline u_int16_t
+nm_ring_cur_buf_len (struct netmap_ring* ring)
+{
+	if (unlikely (ring->cur == ring->tail))
+		return 0;
+	return ring->slot[ ring->cur ].len;
+}
+static inline u_int16_t
+nm_ring_buf_len (struct netmap_ring* ring, uint32_t idx)
+{
+	if (unlikely (idx == ring->tail))
+		return 0;
+	return ring->slot[ idx ].len;
+}
+static inline u_int16_t
+nm_ring_last_buf_len (struct netmap_ring* ring)
+{
+	int last = ring->tail - 1;
+	if (unlikely (last < 0))
+		last = ring->num_slots - 1;
+	return ring->slot[ last ].len;
 }
 
 /* Compare slots mod num_slots taking into accout the ring's head. Returns the
@@ -387,6 +438,8 @@ nm_smaller_buf_id (struct netmap_ring* ring, uint32_t ida, uint32_t idb)
 	else
 		return max;
 }
+#if 0
+/* Not used */
 static uint32_t
 nm_larger_buf_id (struct netmap_ring* ring, uint32_t ida, uint32_t idb)
 {
@@ -429,6 +482,7 @@ nm_compare_buf_ids (struct netmap_ring* ring, uint32_t ida, uint32_t idb)
 	else
 		return (ida < idb) ? 1 : -1;
 }
+#endif
 
 /* ---------------------------- TASK MANAGEMENT ---------------------------- */
 
@@ -547,10 +601,10 @@ task_is_active (task_t* self)
  * Main will only send SIG_WAKEUP to waiting threads
  */
 static inline bool
-task_is_waiting (task_t* self)
+task_is_busy (task_t* self)
 {
 	assert (self);
-	return (self->arg.active && ( ! self->arg.busy ));
+	return self->arg.busy;
 
 }
 
@@ -560,6 +614,7 @@ task_is_waiting (task_t* self)
 static inline int
 task_signal (task_t* self, byte sig)
 {
+	assert (self);
 	return zsock_signal (self->actor, sig);
 }
 
@@ -578,20 +633,167 @@ task_read (task_t* self, zloop_t* loop)
 /*
  * Get the head of the slowest task.
  */
-static u_int32_t
-tasks_first_head (zlistx_t* tasks, struct netmap_ring* ring)
+static inline u_int32_t
+task_get_head (task_t* self)
 {
-	u_int32_t head = ring->tail; /* in case no active tasks */
-	task_t* self = zlistx_first (tasks);
-	while (self)
+	assert (self);
+	return self->arg.head;
+}
+
+/* --------------------------- SAVE-TO-FILE TASK --------------------------- */
+
+/*
+ * Called by the main thread when a save job is done or when we are shutting
+ * down. Will send a message to the client.
+ */
+static void
+sjob_finalize (struct task_arg_t* self)
+{
+	assert (self);
+	/* TO DO: check if this should only be called when active */
+	if ( ! self->active )
 	{
-		if ( self->arg.active )
-			head = nm_smaller_buf_id (ring, head, self->arg.head);
-		self = zlistx_next (tasks);
+		return;
+	}
+	struct sjob_t* sjob = (struct sjob_t*) self->data;
+	assert (sjob->filename != NULL);
+	assert (sjob->fd != -1);
+	self->active = false;
+
+	/* Send message to client */
+	zsock_send (self->frontend, REP_PIC, REQ_OK, 
+		sjob->st.ticks,
+		sjob->st.size,
+		sjob->st.frames,
+		sjob->st.frames_lost);
+
+	sjob_write_stat (sjob);
+	sjob_close (sjob);
+}
+
+/*
+ * Called by the main thread when it receives a valid request to save to file.
+ * In case of an error it returns -1 and the caller should send a message to
+ * the client.
+ */
+static int
+sjob_init (struct sjob_t* sjob, mode_t fmode)
+{
+	assert (sjob);
+	assert (sjob->filename != NULL);
+	assert (sjob->fd == -1);
+	assert (sjob->st.ticks == 0);
+	assert (sjob->st.size == 0);
+	assert (sjob->st.frames == 0);
+	assert (sjob->st.frames_lost == 0);
+	assert (sjob->st.ovrfl == 0);
+	assert (sjob->st.err == 0);
+	assert (sjob->st.cfd == 0);
+	assert (sjob->st.events_lost == 0);
+
+	/* Open the file */
+	sjob->fd = open (sjob->filename, fmode,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (sjob->fd == -1)
+	{ /* do not print warning, maybe request was for status */
+		return -1;
 	}
 
-	return head;
+	int rc;
+	rc = lseek (sjob->fd, FDATA_OFF, 0);
+	if (rc == (off_t)-1 || rc < FDATA_OFF)
+	{
+		WARN ("Could not adjust file cursor");
+		return -1;
+	}
+
+	return 0;
 }
+
+/*
+ * Reads stats previously saved to file. Used when client requests a status for
+ * filename
+ */
+static void
+sjob_read_stat (struct sjob_t* sjob)
+{
+	assert (sjob);
+	assert (sjob->filename != NULL);
+	assert (sjob->fd != -1);
+	assert (sjob->st.ticks == 0);
+	assert (sjob->st.size == 0);
+	assert (sjob->st.frames == 0);
+	assert (sjob->st.frames_lost == 0);
+	assert (sjob->st.ovrfl == 0);
+	assert (sjob->st.err == 0);
+	assert (sjob->st.cfd == 0);
+	assert (sjob->st.events_lost == 0);
+
+	int rc = lseek (sjob->fd, 0, 0);
+	if (rc)
+	{
+		WARN ("Could not seek to beginning of file");
+		return;
+	}
+	rc = read (sjob->fd, &sjob->st, FDATA_OFF);
+	if (rc < FDATA_OFF)
+	{
+		WARN ("Could not read from beginning of file");
+		return;
+	}
+}
+
+/*
+ * Writes stats to a currently open file. Used right before closing it.
+ */
+static void
+sjob_write_stat (struct sjob_t* sjob)
+{
+	assert (sjob);
+	assert (sjob->filename != NULL);
+	assert (sjob->fd != -1);
+
+	int rc = lseek (sjob->fd, 0, 0);
+	if (rc)
+	{
+		WARN ("Could not seek to beginning of file");
+		return;
+	}
+	rc = write (sjob->fd, &sjob->st, FDATA_OFF);
+	if (rc < FDATA_OFF)
+	{
+		WARN ("Could not write to beginning of file");
+		return;
+	}
+}
+
+/*
+ * Unmaps mmapped file, closes the file descriptor, nullifies and resets stats
+ */
+static void
+sjob_close (struct sjob_t* sjob)
+{
+	assert (sjob);
+
+	if (sjob->fd >= 0)
+	{
+		close (sjob->fd);
+		sjob->fd = -1;
+	}
+
+	zstr_free (&sjob->filename);
+	sjob->max_ticks = 0;
+	sjob->st.ticks = 0;
+	sjob->st.size = 0;
+	sjob->st.frames = 0;
+	sjob->st.frames_lost = 0;
+	sjob->st.ovrfl = 0;
+	sjob->st.err = 0;
+	sjob->st.cfd = 0;
+	sjob->st.events_lost = 0;
+}
+
+/* --------------------------- PUBLISH HIST TASK --------------------------- */
 
 /* ------------------------------------------------------------------------- */
 /* --------------------------- SOCKET HANDLERS ----------------------------- */
@@ -605,7 +807,7 @@ static int
 coordinator_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 {
 	assert (self_);
-	DEBUG ("Got a signal from coordinator");
+
 	struct task_arg_t* self = (struct task_arg_t*) self_;
 	assert ( ! self->terminated );
 	assert ( ! self->busy );
@@ -631,7 +833,67 @@ coordinator_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	assert (sig == SIG_WAKEUP);
 	assert (self->active);
 
+	struct sjob_t* sjob = (struct sjob_t*) self->data;
+	assert (sjob->filename != NULL);
+	assert (sjob->fd != -1);
 	self->busy = true;
+	/* Process packets */
+	while (true)
+	{
+		fpga_pkt* pkt = nm_ring_pkt (self->rxring, self->head);
+		if (pkt == NULL)
+			break;
+
+		uint16_t len = nm_ring_buf_len (self->rxring, self->head);
+		if (len != pkt_len (pkt))
+		{
+			WARN ("Packet length mismatch: header says %hu, "
+				"netmap slot is %hu", pkt_len (pkt), len);
+			if (len < pkt_len (pkt))
+				len = pkt_len (pkt);
+		}
+		int rc = __check_fpga_pkt (pkt);
+		if (rc)
+		{ /* TO DO */
+			;
+		}
+
+		/* TO DO: how to handle errors */
+		rc = write (sjob->fd, pkt, len);
+		if (rc == -1)
+		{
+			ERROR ("Could not write to file [%d]", sjob->fd);
+			return -1;
+		}
+
+		uint16_t prev_frame = self->cur_frame;
+		self->cur_frame = frame_seq (pkt);
+
+		/* TO DO: save err flags */
+		if (is_tick (pkt))
+			sjob->st.ticks++;
+		sjob->st.size += len;
+		sjob->st.frames++;
+		sjob->st.frames_lost += (u_int64_t) (
+			(uint16_t)(self->cur_frame - prev_frame) - 1);
+
+		if (sjob->st.ticks == sjob->max_ticks)
+		{
+			sjob_finalize (self);
+			assert ( ! self->active );
+			/* Enable polling on the reader */
+			rc = zloop_reader (loop, self->frontend,
+				sjob_req_hn, self_);
+			if (rc == -1)
+			{
+				ERROR ("Could not re-enable the zloop reader");
+				return -1;
+			}
+			break;
+		}
+
+		self->head = nm_ring_next (self->rxring, self->head);
+	}
 
 	self->busy = false;
 	return 0;
@@ -640,18 +902,102 @@ coordinator_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 /* --------------------------- SAVE-TO-FILE TASK --------------------------- */
 
 /*
- * Called when a client sends a request on the REP socket.
+ * Called when a client sends a request on the REP socket. For valid requests
+ * of status, opens the file and send the reply. For valid requests to save,
+ * opens the file and marks the task as active, so that next time the
+ * coordinator reads new packets it will send a SIG_WAKEUP.
  */
 static int
 sjob_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 {
 	assert (self_);
-	INFO ("Received a save request");
+
 	struct task_arg_t* self = (struct task_arg_t*) self_;
 	assert ( ! self->terminated );
 	assert ( ! self->busy );
 	assert ( ! self->active );
+	struct sjob_t* sjob = (struct sjob_t*) self->data;
+	u_int8_t job_mode;
 
+	int rc = zsock_recv (reader, REQ_PIC, &sjob->filename,
+		&sjob->max_ticks, &job_mode);
+	if (rc == -1)
+	{ /* would also return -1 if picture contained a pointer (p) or a null
+	   * frame (z) but message received did not match this signature; this
+	   * is irrelevant in this case */
+		DEBUG ("Receive interrupted");
+		return -1;
+	}
+	if (sjob->filename == NULL || job_mode > 1)
+	{
+		INFO ("Received a malformed request");
+		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		return 0;
+	}
+
+	mode_t fmode;
+	int exp_errno = 0;
+	/*
+	 * Set the file open mode and act according to the return status of
+	 * open and errno (print a warning of errno is unexpected)
+	 * Request is for:
+	 *   status: open read-only
+	 *           - if successful, read in stats and send reply
+	 *           - if failed, send reply (expect errno == ENOENT)
+	 *   create: create if non-existing
+	 *           - if successful, enable save
+	 *           - if failed, send reply (expect errno == EEXIST)
+	 *   create: create or overwrite
+	 *           - if successful, enable save
+	 *           - if failed, send reply (this shouldn't happen)
+	 */
+	if (sjob->max_ticks == 0)
+	{ /* status */
+		INFO ("Received request for status");
+		fmode = O_RDONLY;
+		exp_errno = ENOENT;
+	}
+	else
+	{
+		INFO ("Received request to write %lu ticks", sjob->max_ticks);
+		fmode = O_RDWR | O_CREAT;
+		if (job_mode == 0)
+		{ /* do not overwrite */
+				fmode |= O_EXCL;
+				exp_errno = EEXIST;
+		}
+	}
+
+	rc = sjob_init (sjob, fmode);
+	if (rc == -1)
+	{
+		if (errno != exp_errno)
+		{
+			WARN ("Could not open file %s",
+				sjob->filename);
+		}
+		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		sjob_close (sjob);
+		return 0;
+	}
+	INFO ("Opened file %s for %s", sjob->filename,
+		(fmode & O_RDWR ) ? "writing" : "reading" );
+
+	if (sjob->max_ticks == 0)
+	{ /* just read in stats and send reply */
+		sjob_read_stat (sjob);
+		zsock_send (reader, REP_PIC, REQ_OK, 
+			sjob->st.ticks,
+			sjob->st.size,
+			sjob->st.frames,
+			sjob->st.frames_lost);
+		sjob_close (sjob);
+		return 0;
+	}
+
+	/* Disable polling on the reader until the job is done */
+	zloop_reader_end (loop, reader);
+	self->head = self->rxring->head;
 	self->active = true;
 	return 0;
 }
@@ -671,13 +1017,26 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 	assert (stats_);
 	struct stats_t* stats = (struct stats_t*) stats_;
 
+	if ( ! timerisset (&stats->last_update) )
+	{ /* first time */
+		gettimeofday (&stats->last_update, NULL);
+		return 0;
+	}
+
+	struct timeval tnow, tdiff;
+	gettimeofday (&tnow, NULL);
+
+	timersub (&tnow, &stats->last_update, &tdiff);
+	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
+	
 	INFO (
 		"dropped frames: %10lu    "
 		"avg bandwidth: %10.3e pps",
 		stats->missed,
-		(double) stats->received * 1000 / UPDATE_INTERVAL
+		(double) stats->received / tdelta
 		);
 
+	memcpy (&stats->last_update, &tnow, sizeof (struct timeval));
 	stats->received = 0;
 	stats->missed = 0;
 
@@ -732,16 +1091,21 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	assert (data_);
 	struct coordinator_t* data = (struct coordinator_t*) data_;
 
-	/* Signal the waiting tasks */
+	/* Signal the waiting tasks and find the head of the slowest one */
+	u_int32_t head = data->rxring->tail; /* in case no active tasks */
 	task_t* task = zlistx_first (data->tasks);
-	assert (task);
 	int rc = 0;
-	do
+	while (task)
 	{
-		if (task_is_waiting (task))
-			rc |= task_signal (task, SIG_WAKEUP);
+		if (task_is_active (task))
+		{
+			head = nm_smaller_buf_id (data->rxring,
+				head, task_get_head (task));
+			if ( ! task_is_busy (task) )
+				rc |= task_signal (task, SIG_WAKEUP);
+		}
 		task = zlistx_next (data->tasks);
-	} while (task);
+	}
 	if (rc)
 	{
 		ERROR ("Could not send SIG_WAKEUP to all waiting tasks.");
@@ -751,16 +1115,15 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	/* Save statistics */
 	uint32_t num_new = nm_ring_space (data->rxring);
 	data->stats.received += num_new;
-	fpga_pkt* pkt = (fpga_pkt*) nm_ring_cur_buf (data->rxring);
+	fpga_pkt* pkt = nm_ring_cur_pkt (data->rxring);
 	uint16_t fseqA = frame_seq (pkt);
-	pkt = (fpga_pkt*) nm_ring_last_buf (data->rxring);
+	pkt = nm_ring_last_pkt (data->rxring);
 	uint16_t fseqB = frame_seq (pkt);
 	data->stats.missed += (u_int64_t) ( num_new - 1 -
 		(uint16_t)(fseqB - fseqA) );
 
 	/* Set the head and cursor */
-	data->rxring->head = tasks_first_head (data->tasks, data->rxring);
-	data->rxring->cur = data->rxring->tail;
+	data->rxring->head = data->rxring->cur = head;
 
 	return 0;
 }
@@ -782,14 +1145,19 @@ sjob_task_body (zsock_t* pipe, void* self_)
 	assert ( ! self->terminated );
 	assert ( ! self->busy );
 	assert ( ! self->active );
-	/* TO DO: set self->data */
+
+	struct sjob_t sjob;
+	memset (&sjob, 0, sizeof (sjob));
+	sjob.fd = -1;
+	self->data = &sjob;
+
 	zloop_t* loop = zloop_new ();
 	zloop_set_nonstop (loop, 1); /* only the coordinator thread should get
 				      * interrupted, we wait for SIG_STOP */
 
 	/* Open the REP interface */
-	zsock_t* frontend = zsock_new_rep ("@"TASK_SAVE_IF);
-	if (frontend == NULL)
+	self->frontend = zsock_new_rep ("@"TASK_SAVE_IF);
+	if (self->frontend == NULL)
 	{
 		ERROR ("Could not open the public socket");
 		goto cleanup;
@@ -798,7 +1166,7 @@ sjob_task_body (zsock_t* pipe, void* self_)
 
 	/* Register the readers */
 	rc  = zloop_reader (loop, pipe, coordinator_sig_hn, self_);
-	rc |= zloop_reader (loop, frontend, sjob_req_hn, self_);
+	rc |= zloop_reader (loop, self->frontend, sjob_req_hn, self_);
 	if (rc)
 	{
 		ERROR ("Could not register the zloop readers");
@@ -811,7 +1179,8 @@ sjob_task_body (zsock_t* pipe, void* self_)
 	assert (rc == -1); /* we don't get interrupted */
 
 cleanup:
-	self->active = false;
+	sjob_finalize (self); /* will set active to false */
+	assert ( ! self->active );
 	/*
 	 * zactor_destroy waits for a signal from s_thread_shim (see DEV
 	 * NOTES), so if we exited the loop after receiving SIG_STOP (from
@@ -824,7 +1193,7 @@ cleanup:
 	if ( ! self->terminated )
 		zsock_signal (pipe, SIG_DIED);
 	zloop_destroy (&loop);
-	zsock_destroy (&frontend);
+	zsock_destroy (&self->frontend);
 	DEBUG ("Done");
 }
 
@@ -884,13 +1253,14 @@ coordinator_body (void)
 
 #ifndef BE_DAEMON
 	/* Set the timer */
-	rc = zloop_timer (loop, UPDATE_INTERVAL, 0, print_stats, &data.stats);
+	rc = zloop_timer (loop, 1000 * UPDATE_INTERVAL, 0,
+		print_stats, &data.stats);
 	if (rc == -1)
 	{
 		ERROR ("Could not set a timer");
 		goto cleanup;
 	}
-	DEBUG ("Will print stats every %d milliseconds", UPDATE_INTERVAL);
+	DEBUG ("Will print stats every %d seconds", UPDATE_INTERVAL);
 #endif /* BE_DAEMON */
 
 	DEBUG ("All threads initialized");
