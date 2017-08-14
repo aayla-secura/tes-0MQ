@@ -2,8 +2,8 @@
 #define __COMMON_H__INCLUDED__
 
 #include <sys/types.h>
-#include <sys/time.h>
-#include <sys/mman.h>
+// #include <sys/time.h>
+// #include <sys/mman.h>
 #include <errno.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -11,18 +11,41 @@
 #include <stdio.h>
 #include <syslog.h>
 #include <string.h>
-#include <signal.h>
-#include <poll.h>
-#include <pthread.h>
+// #include <signal.h>
+// #include <poll.h>
+// #include <pthread.h>
 
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
 
-#define NETMAP_WITH_LIBS
-#include <net/netmap_user.h>
+#define FPGAPKT_DEBUG
+#include <net/fpgapkt.h>
 
-#define FPGA_DEBUG
-#include <net/fpga_user.h>
+/* Signals for communicating between coordinator and task threads */
+#define SIG_INIT   0 /* task -> coordinator thread when ready */
+#define SIG_STOP   1 /* coordinator -> task when error or shutting down */
+#define SIG_DIED   2 /* task -> coordinator when error */
+#define SIG_WAKEUP 3 /* coordinator -> task when new packets arrive */
+
+/*
+ * The verbosity and the daemon state will eventually be taken from
+ * command-line options passed when the server is started. They'll then be
+ * saved in external variables (probably), and the methods for printing
+ * messages will use the daemon's state.
+ */
+
+// #define FULL_DBG    // will use assert throughout
+#define VERBOSE     // will print debugging messages
+#define MULTITHREAD // will print thread id in debug messages
+// #define BE_DAEMON  // will go into background
+
+/* ------------------------------------------------------------------------- */
+
+// #ifdef FULL_DBG
+// #  define DBG_ASSERT(..) assert (__VA_ARGS__)
+// #else
+// #  define DBG_ASSERT(..)
+// #endif
 
 /* ------------------------------------------------------------------------- */
 

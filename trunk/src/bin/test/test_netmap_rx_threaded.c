@@ -14,9 +14,9 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGA_DEBUG
+#define FPGAPKT_DEBUG
 // #define FPGA_USE_MACROS
-#include <net/fpga_user.h>
+#include <net/fpgapkt.h>
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
 // #define SAVE_FILE  "/media/nm_test"
@@ -199,11 +199,6 @@ main_cleanup (int sig)
 	if (errno && errno != EINTR)
 	{
 		perror ("");
-		rc = EXIT_FAILURE;
-	}
-	if (fpgaerrno)
-	{
-		__fpga_perror (stderr, "");
 		rc = EXIT_FAILURE;
 	}
 
