@@ -13,9 +13,9 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGA_DEBUG
+#define FPGAPKT_DEBUG
 // #define FPGA_USE_MACROS
-#include <net/fpga_user.h>
+#include <net/fpgapkt.h>
 
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
@@ -24,6 +24,29 @@
 #define NM_IFNAME "vale:fpga"
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
 			* signal handler */
+
+
+#define MAX_MCA_FRAMES      45
+// #define MAX_TRACE_FRAMES
+#define MAX_MCA_BINS_ALL    1 << 14
+#define MAX_MCA_BINS_HFR      ((MAX_FPGA_FRAME_LEN - MCA_HDR_LEN - \
+				FPGA_HDR_LEN) / BIN_LEN)
+#define MAX_MCA_BINS_SFR      ((MAX_FPGA_FRAME_LEN - \
+				FPGA_HDR_LEN) / BIN_LEN)
+#define MAX_PLS_PEAKS         ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				PLS_HDR_LEN) / PEAK_LEN)
+#define MAX_TR_SGL_PEAKS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN) / PEAK_LEN)
+#define MAX_TR_SGL_SMPLS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN) / SMPL_LEN)
+#define MAX_TR_AVG_SMPLS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_HDR_LEN) / SMPL_LEN)
+#define MAX_TR_DP_PEAKS_HFR   ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
+#define MAX_TR_DPTR_PEAKS_HFR ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
+#define MAX_TR_DPTR_SMPLS_HFR ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+				TR_FULL_HDR_LEN - DP_LEN) / SMPL_LEN)
 
 #define SRC_HW_ADDR "ff:ff:ff:ff:ff:ff"
 #define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
@@ -151,7 +174,7 @@ new_mca_pkt (int seq, int num_bins,
 	if (seq == 0)
 	{
 		pkt->length += MCA_HDR_LEN;
-		struct __mca_header* mh = (struct __mca_header*) &pkt->body;
+		struct mca_header* mh = (struct mca_header*) &pkt->body;
 		mh->size = MCA_HDR_LEN + num_all_bins * BIN_LEN;
 		mh->last_bin = num_all_bins - 1;
 		mh->lowest_value = (u_int32_t) random ();
@@ -176,7 +199,7 @@ new_tick_pkt (u_int16_t flags)
 	pkt->fpga_hdr.evt_size = 3;
 	pkt->fpga_hdr.evt_type = EVT_TICK_TYPE;
 
-	struct __tick_header* th = (struct __tick_header*) &pkt->body;
+	struct tick_header* th = (struct tick_header*) &pkt->body;
 	th->period = (u_int32_t) random ();
 	th->flags = flags;
 	th->toff = (u_int16_t) random ();
@@ -200,7 +223,7 @@ new_peak_pkt (u_int16_t flags)
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_PEAK_TYPE;
 
-	struct __peak_header* ph = (struct __peak_header*) &pkt->body;
+	struct peak_header* ph = (struct peak_header*) &pkt->body;
 	ph->height = (u_int16_t) random ();
 	ph->rise_time = (u_int16_t) random ();
 	ph->flags = flags;
@@ -220,7 +243,7 @@ new_pulse_pkt (int num_peaks, u_int16_t flags)
 	pkt->fpga_hdr.evt_size = num_peaks; /* is it?? */
 	pkt->fpga_hdr.evt_type = EVT_PLS_TYPE;
 
-	struct __pulse_header* ph = (struct __pulse_header*) &pkt->body;
+	struct pulse_header* ph = (struct pulse_header*) &pkt->body;
 	ph->size = (u_int16_t) random ();
 	ph->flags = flags;
 	ph->toff = (u_int16_t) random ();
@@ -244,8 +267,8 @@ new_area_pkt (u_int16_t flags)
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_AREA_TYPE;
 
-	struct __area_header* ah =
-		(struct __area_header*) &pkt->body;
+	struct area_header* ah =
+		(struct area_header*) &pkt->body;
 	ah->area = (u_int32_t) random ();
 	ah->flags = flags;
 	ah->toff = (u_int16_t) random ();
@@ -268,8 +291,8 @@ new_trace_sgl_pkt (int num_peaks,
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_TR_SGL_TYPE;
 
-	struct __trace_full_header* th =
-		(struct __trace_full_header*) &pkt->body;
+	struct trace_full_header* th =
+		(struct trace_full_header*) &pkt->body;
 	th->trace.size = (u_int16_t) random ();
 	th->trace.tr_flags = tr_flags;
 	th->trace.flags = flags;
@@ -311,8 +334,8 @@ new_trace_dp_pkt (int num_peaks,
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_TR_DP_TYPE;
 
-	struct __trace_full_header* th =
-		(struct __trace_full_header*) &pkt->body;
+	struct trace_full_header* th =
+		(struct trace_full_header*) &pkt->body;
 	th->trace.size = (u_int16_t) random ();
 	th->trace.tr_flags = tr_flags;
 	th->trace.flags = flags;
@@ -323,12 +346,12 @@ new_trace_dp_pkt (int num_peaks,
 
 	/* peaks */
 
-	struct __dot_prod* dp = (struct __dot_prod*)(
+	struct dot_prod* dp = (struct dot_prod*)(
 		(u_char*) pkt + pkt->length );
 	/* Don't know how to cast to 48-bit integer and don't want to write to
 	 * reserved bits, so write 64-bits to a temporary struct and copy only
 	 * the used field */
-	struct __dot_prod dptmp = {0,};
+	struct dot_prod dptmp = {0,};
 	u_int64_t rand = random ();
 	memcpy (&dptmp, &rand, DP_LEN);
 	dp->dot_prod = dptmp.dot_prod;
@@ -494,11 +517,6 @@ cleanup (int sig)
 		perror ("");
 		rc = EXIT_FAILURE;
 	}
-	if (fpgaerrno)
-	{
-		__fpga_perror (stderr, "");
-		rc = EXIT_FAILURE;
-	}
 
 	if (gobj.nmd)
 	{
@@ -516,7 +534,7 @@ int
 main (void)
 {
 	/* Debugging */
-	__fpga_self_test ();
+	// fpgapkt_self_test ();
 
 	srandom ( (unsigned int) random () );
 	int rc;
@@ -552,93 +570,6 @@ main (void)
 	}
 	print_desc_info ();
 
-#if 0
-	fpga_pkt* pkt;
-	union mca_flags m_flags = {0,};
-	m_flags.C = 1;
-	m_flags.T = 2;
-	m_flags.Q = 3;
-	pkt = new_mca_pkt (0, 8, 16, m_flags.all);
-	puts ("\n--- MCA 0 ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	pkt = new_mca_pkt (1, 8, 16, 0);
-	puts ("\n--- MCA 1 ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	union tick_flags t_flags = {0,};
-	t_flags.T  = 1;
-	t_flags.EL = 1;
-	pkt = new_tick_pkt (t_flags.all);
-	puts ("\n--- Tick ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	union event_flags evt_flags = {0,};
-	evt_flags.T  = 1;
-	evt_flags.CH = 5;
-	pkt = new_peak_pkt (evt_flags.all);
-	puts ("\n--- Peak ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	pkt = new_pulse_pkt (3, evt_flags.all);
-	puts ("\n--- Pulse ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	pkt = new_area_pkt (evt_flags.all);
-	puts ("\n--- Area ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	union trace_flags tr_flags = {0,};
-	tr_flags.OFF =  2;
-	tr_flags.STR = 15;
-	tr_flags.MP  =  1;
-	pkt = new_trace_sgl_pkt (2, 8, tr_flags.all, evt_flags.all);
-	puts ("\n--- Trace (single) ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	/* pkt = new_trace_avg_pkt (2, tr_flags.all, evt_flags.all); */
-	/* puts ("\n--- Trace (dot prod) ---"); */
-	/* rc = __check_fpga_pkt (pkt); */
-	/* if (rc) */
-	/*         __fpga_perror (stderr, "--- Error: "); */
-	/* dump_pkt (pkt); */
-
-	pkt = new_trace_dp_pkt (2, tr_flags.all, evt_flags.all);
-	puts ("\n--- Trace (dot prod) ---");
-	rc = __check_fpga_pkt (pkt);
-	if (rc)
-		__fpga_perror (stderr, "--- Error: ");
-	dump_pkt (pkt);
-
-	/* pkt = new_trace_dptr_pkt (2, tr_flags.all, evt_flags.all); */
-	/* puts ("\n--- Trace (dot prod) ---"); */
-	/* rc = __check_fpga_pkt (pkt); */
-	/* if (rc) */
-	/*         __fpga_perror (stderr, "--- Error: "); */
-	/* dump_pkt (pkt); */
-
-#else
 	/* ------------------------------------------------------------ */
 
 	/* Create some packets before starting and only increment frame_seq
@@ -653,6 +584,7 @@ main (void)
 		if (pkt == NULL)
 			break; /* Reached max */
 		dump_pkt (pkt);
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		/* the rest of the frames */
 		for (int f = 1; f < MAX_MCA_FRAMES; f++)
 		{
@@ -661,6 +593,7 @@ main (void)
 			if (pkt == NULL)
 				break; /* Reached max */
 			dump_pkt (pkt);
+			assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		}
 
 		/* ---------------- Some event packets ---------------- */
@@ -668,27 +601,33 @@ main (void)
 		if (pkt == NULL)
 			break; /* Reached max */
 		dump_pkt (pkt);
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		pkt = new_peak_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		dump_pkt (pkt);
+		dump_pkt (pkt); // FIX
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		pkt = new_pulse_pkt (MAX_PLS_PEAKS, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
 		dump_pkt (pkt);
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		pkt = new_area_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		dump_pkt (pkt);
+		dump_pkt (pkt); // FIX
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		pkt = new_trace_sgl_pkt (MAX_TR_SGL_PEAKS_HFR / 2,
 			MAX_TR_SGL_SMPLS_HFR / 2, 0, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		dump_pkt (pkt);
+		dump_pkt (pkt); // FIX
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 		pkt = new_trace_dp_pkt (MAX_TR_DP_PEAKS_HFR, 0, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
 		dump_pkt (pkt);
+		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
 	} while (0);
 
 	/* Get the ring (we only use one) */
@@ -727,9 +666,6 @@ main (void)
 		{
 			fpga_pkt* pkt = next_pkt ();
 			assert (pkt);
-			rc = __check_fpga_pkt (pkt);
-			if (rc)
-				raise (SIGTERM);
 
 			struct netmap_slot* cur_slot =
 				&txring->slot[ txring->cur ];
@@ -748,7 +684,6 @@ main (void)
 			}
 		}
 	}
-#endif
 
 	errno = 0;
 	raise (SIGTERM); /*cleanup*/

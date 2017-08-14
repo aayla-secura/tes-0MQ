@@ -118,7 +118,7 @@ s_close_open_fds (rlim_t max_fd)
 			continue;
 		if (dirent_no == STDERR_FILENO)
 			continue;
-		if (dirent_no >= max_fd)
+		if ((rlim_t)dirent_no >= max_fd)
 			break;
 
 		DEBUG ("Closing fd = %d", dirent_no);
@@ -151,12 +151,13 @@ s_close_nonstd_fds (void)
 	rlim_t max_fd;
 	rlim_t cur_fd;
 
-	max_fd = s_get_max_fd () - 1;
+	max_fd = s_get_max_fd ();
 	DEBUG ("s_get_max_fd () returned %li", max_fd);
-	if (max_fd < 0)
+	if (max_fd == 0)
 	{
 		DEBUG ("Using 4096 as the maximum fdno then");
-		WARN ("May not have closed all file descriptors. Could not get limit, so using 4096.");
+		WARN ("May not have closed all file descriptors. "
+			"Could not get limit, so using 4096.");
 		max_fd = 4096; /* Be reasonable */
 	}
 
@@ -165,7 +166,7 @@ s_close_nonstd_fds (void)
 
 	/* A fallback method: try to close all fd numbers up to some maximum */
 	DEBUG ("Using fallback method");
-	for (cur_fd = 0; cur_fd <= max_fd; cur_fd++)
+	for (cur_fd = 0; cur_fd < max_fd; cur_fd++)
 	{
 		if (cur_fd == STDIN_FILENO)
 			continue;
@@ -173,8 +174,6 @@ s_close_nonstd_fds (void)
 			continue;
 		if (cur_fd == STDERR_FILENO)
 			continue;
-		if (cur_fd >= max_fd)
-			break;
 
 		DEBUG ("Closing fd = %li", cur_fd);
 		close (cur_fd);

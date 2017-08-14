@@ -1,4 +1,9 @@
-#include "common.h"
+#include <assert.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <czmq.h>
 
 #define SAVEJOB_IF "tcp://localhost:55555"
 #define REQ_PIC      "s81"

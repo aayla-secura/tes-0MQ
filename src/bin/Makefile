@@ -1,7 +1,7 @@
 PROJ_ROOT := ../..
 include $(PROJ_ROOT)/Makefile
 
-LDLIBS += $(libs:%=-l% )
+LDLIBS = $(ext_libs:%=-l% )
 
 all: $(bins)
 
@@ -21,5 +21,9 @@ clean:
 %: %.c
 
 %: %.o
+	# this is not one of make's implicit rules, good
+	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) $(libs:%=-l% ) -o $@
+
+client: client.c
 	# this is not one of make's implicit rules, good
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
