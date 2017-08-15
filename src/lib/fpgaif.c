@@ -12,8 +12,7 @@
  * define our structures to include a single member that is the corresponding
  * netmap structure. Go with the second (we can also access the members using
  * pointer cast in this case, but better stick to using the netmap member
- * directly). See https://stackoverflow.com/questions/45659089/
- * aliasing-structures-or-pasting-definition-of-one-into-another/45659788
+ * directly).
  *
  * Netmap uses two user-driven constructs---a head and a cursor. The head tells
  * it which slots it can safely free, while the cursor tells it when to unblock
@@ -185,12 +184,18 @@ if_next_rxring (ifdesc* ifd)
 	return (ifring*)NETMAP_RXRING (ifd->n.nifp, ++ifd->n.cur_rx_ring);
 }
 
-/* Set the current buffer idx of a ring to head, +num or next.
+/* Set the current buffer idx of a ring to head, next or tail+num.
  * Return the set id. */
 uint32_t
 ifring_rewind (ifring* ring)
 {
 	ring->n.cur = ring->n.head;
+	return ring->n.cur;
+}
+uint32_t
+ifring_next (ifring* ring)
+{
+	ring->n.cur = s_ring_following (ring, ring->n.cur);
 	return ring->n.cur;
 }
 uint32_t
@@ -205,19 +210,16 @@ ifring_wait_for_more (ifring* ring, uint32_t num)
 		ring->n.cur -= ring->n.num_slots;
 	return ring->n.cur;
 }
-uint32_t
-ifring_next (ifring* ring)
-{
-	ring->n.cur = s_ring_following (ring, ring->n.cur);
-	return ring->n.cur;
-}
 
-/* Set the head buffer idx of a ring to next, cur, tail or <idx>
+/* Set the head buffer idx of a ring to next or cur.
  * Return the set id. */
 uint32_t
 ifring_release_one (ifring* ring)
 {
-	/* TO DO: check if head is tail? */
+#ifndef MIN_CHECKS
+	if (unlikely (ring->n.head == ring->n.tail))
+		return ring->n.head;
+#endif
 	ring->n.head = s_ring_following (ring, ring->n.head);
 	return ring->n.head;
 }
@@ -228,18 +230,32 @@ ifring_release_done (ifring* ring)
 	ring->n.head = ring->n.cur;
 	return ring->n.head;
 }
+
+/* Set both the head and cursor to tail.
+ * Return the set id. */
 uint32_t
 ifring_release_all (ifring* ring)
 {
-	ring->n.head = ring->n.tail;
+	ring->n.head = ring->n.cur = ring->n.tail;
 	return ring->n.head;
 }
-uint32_t
-ifring_set_head (ifring* ring, uint32_t idx)
+
+/* Set the cursor and optionally head to <idx>. */
+void
+ifring_goto (ifring* ring, uint32_t idx, int sync_h)
+{
+	/* TO DO: check if its after tail? */
+	ring->n.cur = idx;
+	if (sync_h)
+		ring->n.head = idx;
+}
+
+/* Set the head to <idx>. */
+void
+ifring_release_to (ifring* ring, uint32_t idx)
 {
 	/* TO DO: check if its after tail? */
 	ring->n.head = idx;
-	return ring->n.head;
 }
 
 /* Get the next buffer of a ring, incrementing cursor. Wraps around.
@@ -281,8 +297,7 @@ if_dispatch (ifdesc* ifd, int cnt, ifpkt_hn handler,
 	unsigned char* arg)
 {
 	/* The cast to nm_cb_t suppresses the GCC warning, due to ifpkt_hn
-	 * accepting an ifhdr* rather than (the equivalent) struct nm_pkthdr*.
-	 * (Sigh) I know... */
+	 * accepting an ifhdr* rather than (the equivalent) struct nm_pkthdr* */
 	return nm_dispatch (&ifd->n, cnt, (nm_cb_t)handler, arg);
 }
 
@@ -398,7 +413,7 @@ ifring_compare_ids (ifring* ring, uint32_t ida, uint32_t idb)
 	 * are < or both are > head, then the numerically smaller is first,
 	 * otherwise, the numerically larger is first. */
 	if ( (ring->n.head <= ida && ring->n.head <= idb) ||
-		(ring->n.head >= ida && ring->n.head >= idb) )
+		(ring->n.head > ida && ring->n.head > idb) )
 		return (ida < idb) ? -1 : 1;
 
 	return (ida < idb) ? 1 : -1;
@@ -413,7 +428,7 @@ ifring_earlier_id (ifring* ring, uint32_t ida, uint32_t idb)
 		return ida;
 
 	if ( (ring->n.head <= ida && ring->n.head <= idb) ||
-		(ring->n.head >= ida && ring->n.head >= idb) )
+		(ring->n.head > ida && ring->n.head > idb) )
 		return (ida < idb) ? ida : idb;
 
 	return (ida < idb) ? idb : ida;
@@ -425,7 +440,7 @@ ifring_later_id (ifring* ring, uint32_t ida, uint32_t idb)
 		return ida;
 
 	if ( (ring->n.head <= ida && ring->n.head <= idb) ||
-		(ring->n.head >= ida && ring->n.head >= idb) )
+		(ring->n.head > ida && ring->n.head > idb) )
 		return (ida < idb) ? idb : ida;
 
 	return (ida < idb) ? ida : idb;

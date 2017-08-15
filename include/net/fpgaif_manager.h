@@ -33,18 +33,26 @@ int if_set_cur_rxring (ifdesc* ifd, uint16_t idx);
 ifring* if_next_txring (ifdesc* ifd);
 ifring* if_next_rxring (ifdesc* ifd);
 
-/* Set the current buffer idx of a ring to head, +num or next.
+/* Set the current buffer idx of a ring to head, next or tail+num.
  * Return the set id. */
 uint32_t ifring_rewind (ifring* ring);
-uint32_t ifring_wait_for_more (ifring* ring, uint32_t num);
 uint32_t ifring_next (ifring* ring);
+uint32_t ifring_wait_for_more (ifring* ring, uint32_t num); /* 0 for cur to tail */
 
-/* Set the head buffer idx of a ring to next, cur, tail or <idx>
+/* Set the head buffer idx of a ring to next or cur.
  * Return the set id. */
 uint32_t ifring_release_one (ifring* ring);
 uint32_t ifring_release_done (ifring* ring);
+
+/* Set both the head and cursor to tail.
+ * Return the set id. */
 uint32_t ifring_release_all (ifring* ring);
-uint32_t ifring_set_head (ifring* ring, uint32_t idx);
+
+/* Set the cursor and optionally head to <idx>. */
+void ifring_goto (ifring* ring, uint32_t idx, int sync_h);
+
+/* Set the head to <idx>. */
+void ifring_release_to (ifring* ring, uint32_t idx);
 
 /* Get the next buffer of a ring, incrementing cursor. Wraps around. */
 char* ifring_next_buf (ifring* ring);
