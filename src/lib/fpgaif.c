@@ -66,7 +66,7 @@ struct _ifhdr
 static inline uint32_t
 s_ring_following (ifring* ring, uint32_t idx)
 { /* same as nm_ring_next */
-	return (unlikely(idx + 1 == ring->n.num_slots) ? 0 : idx + 1);
+	return (unlikely (idx + 1 == ring->n.num_slots) ? 0 : idx + 1);
 }
 static inline char*
 s_buf (ifring* ring, uint32_t idx)
@@ -92,7 +92,7 @@ ifdesc*
 if_open (const char *name, const ifreq *req,
 	uint64_t flags, const ifdesc *arg)
 {
-	return (ifdesc*) nm_open (name, &req->n, flags, &arg->n);
+	return (ifdesc*)nm_open (name, &req->n, flags, &arg->n);
 }
 int
 if_close (ifdesc* ifd)
@@ -108,180 +108,128 @@ if_fd (ifdesc* ifd)
 	return ifd->n.fd;
 }
 
-/* Set the current tx or rx ring to first, next, last or <idx>.
- * Returns 0 on succes, -1 on error. */
-int
-if_reset_cur_txring (ifdesc* ifd)
+/* Set and get the current tx or rx ring. It is not done in a circular fashion,
+ * Returns NULL for rings beyond the last one. */
+ifring*
+if_rewind_txring (ifdesc* ifd)
 {
 	ifd->n.cur_tx_ring = ifd->n.first_tx_ring;
-	return 0;
+	return s_txring (ifd, ifd->n.cur_tx_ring);
 }
-int
-if_inc_cur_txring (ifdesc* ifd)
-{
-	if (unlikely (ifd->n.cur_tx_ring > ifd->n.last_tx_ring))
-		return -1;
-	ifd->n.cur_tx_ring++;
-	return 0;
-}
-int
-if_set_cur_txring_to_last (ifdesc* ifd)
-{
-	ifd->n.cur_tx_ring = ifd->n.last_tx_ring;
-	return 0;
-}
-int
-if_set_cur_txring (ifdesc* ifd, uint16_t idx)
-{
-	if (unlikely (idx > ifd->n.last_tx_ring))
-		return -1;
-	ifd->n.cur_tx_ring = idx;
-	return 0;
-}
-int
-if_reset_cur_rxring (ifdesc* ifd)
-{
-	ifd->n.cur_rx_ring = ifd->n.first_rx_ring;
-	return 0;
-}
-int
-if_inc_cur_rxring (ifdesc* ifd)
-{
-	if (unlikely (ifd->n.cur_rx_ring > ifd->n.last_rx_ring))
-		return -1;
-	ifd->n.cur_rx_ring++;
-	return 0;
-}
-int
-if_set_cur_rxring_to_last (ifdesc* ifd)
-{
-	ifd->n.cur_rx_ring = ifd->n.last_rx_ring;
-	return 0;
-}
-int
-if_set_cur_rxring (ifdesc* ifd, uint16_t idx)
-{
-	if (unlikely (idx > ifd->n.last_rx_ring))
-		return -1;
-	ifd->n.cur_rx_ring = idx;
-	return 0;
-}
-
-/* Set and get the current tx or rx ring. It is not done in a circular fashion,
- * next and following may return NULL if the last one is reached. */
 ifring*
 if_next_txring (ifdesc* ifd)
 {
 	if (unlikely (ifd->n.cur_tx_ring == ifd->n.last_tx_ring))
 		return NULL;
-	return (ifring*)NETMAP_TXRING (ifd->n.nifp, ++ifd->n.cur_tx_ring);
+	return s_txring (ifd, ++ifd->n.cur_tx_ring);
+}
+ifring*
+if_goto_txring (ifdesc* ifd, uint16_t idx)
+{
+	if (unlikely (idx > ifd->n.last_tx_ring))
+		return NULL;
+	ifd->n.cur_tx_ring = idx;
+	return s_txring (ifd, ifd->n.cur_tx_ring);
+}
+ifring*
+if_goto_last_txring (ifdesc* ifd)
+{
+	ifd->n.cur_tx_ring = ifd->n.last_tx_ring;
+	return s_txring (ifd, ifd->n.cur_tx_ring);
+}
+ifring*
+if_rewind_rxring (ifdesc* ifd)
+{
+	ifd->n.cur_rx_ring = ifd->n.first_rx_ring;
+	return s_rxring (ifd, ifd->n.cur_rx_ring);
 }
 ifring*
 if_next_rxring (ifdesc* ifd)
 {
 	if (unlikely (ifd->n.cur_rx_ring == ifd->n.last_rx_ring))
 		return NULL;
-	return (ifring*)NETMAP_RXRING (ifd->n.nifp, ++ifd->n.cur_rx_ring);
+	return s_rxring (ifd, ++ifd->n.cur_rx_ring);
+}
+ifring*
+if_goto_rxring (ifdesc* ifd, uint16_t idx)
+{
+	if (unlikely (idx > ifd->n.last_rx_ring))
+		return NULL;
+	ifd->n.cur_rx_ring = idx;
+	return s_rxring (ifd, ifd->n.cur_rx_ring);
+}
+ifring*
+if_goto_last_rxring (ifdesc* ifd)
+{
+	ifd->n.cur_rx_ring = ifd->n.last_rx_ring;
+	return s_rxring (ifd, ifd->n.cur_rx_ring);
 }
 
-/* Set the current buffer idx of a ring to head, next or tail+num.
- * Return the set id. */
-uint32_t
-ifring_rewind (ifring* ring)
+/* Set and get the current buffer of a ring to head, next, <idx> or tail-1. */
+char*
+ifring_rewind_buf (ifring* ring)
 {
 	ring->n.cur = ring->n.head;
-	return ring->n.cur;
+	return s_buf (ring, ring->n.cur);
 }
-uint32_t
-ifring_next (ifring* ring)
-{
-	ring->n.cur = s_ring_following (ring, ring->n.cur);
-	return ring->n.cur;
-}
-uint32_t
-ifring_wait_for_more (ifring* ring, uint32_t num)
-{
-	ring->n.cur = ring->n.tail + num;
-#ifdef MIN_CHECKS
-	if (ring->n.cur >= ring->n.num_slots)
-#else
-	while (ring->n.cur >= ring->n.num_slots)
-#endif
-		ring->n.cur -= ring->n.num_slots;
-	return ring->n.cur;
-}
-
-/* Set the head buffer idx of a ring to next or cur.
- * Return the set id. */
-uint32_t
-ifring_release_one (ifring* ring)
-{
-#ifndef MIN_CHECKS
-	if (unlikely (ring->n.head == ring->n.tail))
-		return ring->n.head;
-#endif
-	ring->n.head = s_ring_following (ring, ring->n.head);
-	return ring->n.head;
-}
-uint32_t
-ifring_release_done (ifring* ring)
-{
-	/* TO DO: set to tail if cur is after tail? */
-	ring->n.head = ring->n.cur;
-	return ring->n.head;
-}
-
-/* Set both the head and cursor to tail.
- * Return the set id. */
-uint32_t
-ifring_release_all (ifring* ring)
-{
-	ring->n.head = ring->n.cur = ring->n.tail;
-	return ring->n.head;
-}
-
-/* Set the cursor and optionally head to <idx>. */
-void
-ifring_goto (ifring* ring, uint32_t idx, int sync_h)
-{
-	/* TO DO: check if its after tail? */
-	ring->n.cur = idx;
-	if (sync_h)
-		ring->n.head = idx;
-}
-
-/* Set the head to <idx>. */
-void
-ifring_release_to (ifring* ring, uint32_t idx)
-{
-	/* TO DO: check if its after tail? */
-	ring->n.head = idx;
-}
-
-/* Get the next buffer of a ring, incrementing cursor. Wraps around.
- * Returns NULL when reaching the tail. */
 char*
 ifring_next_buf (ifring* ring)
 {
 	ring->n.cur = s_ring_following (ring, ring->n.cur);
-#ifndef MIN_CHECKS
 	if (unlikely (ring->n.cur == ring->n.tail))
 		return NULL;
-#endif
+	return s_buf (ring, ring->n.cur);
+}
+char*
+ifring_goto_buf (ifring* ring, uint32_t idx)
+{
+	ring->n.cur = idx;
+	return s_buf (ring, ring->n.cur);
+}
+char*
+ifring_goto_last_buf (ifring* ring)
+{
+	if (unlikely (ring->n.tail == 0))
+		ring->n.cur = ring->n.num_slots - 1;
+	else
+		ring->n.cur = ring->n.tail - 1;
 	return s_buf (ring, ring->n.cur);
 }
 
-/* Get the next buffer length of a ring, incrementing cursor.  Wraps around.
- * Returns 0 when reaching the tail.*/
-uint16_t
-ifring_next_len (ifring* ring)
+/* Set and get the head buffer of a ring to next, <idx> or cur. */
+char*
+ifring_release_one_buf (ifring* ring)
 {
-	ring->n.cur = s_ring_following (ring, ring->n.cur);
-#ifndef MIN_CHECKS
-	if (unlikely (ring->n.cur == ring->n.tail))
-		return 0;
-#endif
-	return ring->n.slot[ ring->n.cur ].len;
+	ring->n.head = s_ring_following (ring, ring->n.head);
+	return s_buf (ring, ring->n.head);
+}
+char*
+ifring_release_to_buf (ifring* ring, uint32_t idx)
+{
+	ring->n.head = idx;
+	return s_buf (ring, ring->n.head);
+}
+char*
+ifring_release_done_buf (ifring* ring)
+{
+	ring->n.head = ring->n.cur;
+	return s_buf (ring, ring->n.head);
+}
+
+/* Set the current buffer of a ring to tail+num. */
+void
+ifring_wait_for_more (ifring* ring, uint32_t num)
+{
+	ring->n.cur = ring->n.tail + num;
+	while (ring->n.cur >= ring->n.num_slots)
+		ring->n.cur -= ring->n.num_slots;
+}
+
+/* Set both the head and current buffer to tail. */
+void
+ifring_release_all (ifring* ring)
+{
+	ring->n.head = ring->n.cur = ring->n.tail;
 }
 
 /* Same as nm_inject. */
@@ -303,8 +251,7 @@ if_dispatch (ifdesc* ifd, int cnt, ifpkt_hn handler,
 
 /* -------------------------------- READER --------------------------------- */
 
-
-/* Get the number of rings. */
+/* Get the number of tx or rx rings. */
 uint16_t
 if_txrings (ifdesc* ifd)
 {
@@ -316,8 +263,12 @@ if_rxrings (ifdesc* ifd)
 	return (ifd->n.last_rx_ring - ifd->n.first_rx_ring + 1);
 }
 
-/* Get a ring. It is not done in a circular fashion, next and following return
- * NULL if the last one is reached. */
+/* Get the current tx or rx ring id. */
+/* TO DO */
+
+/* Get the first, current, <idx>, following <idx> or last tx or rx ring.
+ * It is not done in a circular fashion.
+ * Returns NULL for rings beyond the last one. */
 ifring*
 if_first_txring (ifdesc* ifd)
 {
@@ -329,11 +280,18 @@ if_cur_txring (ifdesc* ifd)
 	return s_txring (ifd, ifd->n.cur_tx_ring);
 }
 ifring*
+if_txring (ifdesc* ifd, uint16_t idx)
+{
+	if (unlikely (idx > ifd->n.last_tx_ring))
+		return NULL;
+	return s_txring (ifd, idx);
+}
+ifring*
 if_following_txring (ifdesc* ifd, uint16_t idx)
 {
-	if (unlikely (ifd->n.cur_tx_ring == ifd->n.last_tx_ring))
+	if (unlikely (idx + 1 > ifd->n.last_tx_ring))
 		return NULL;
-	return s_txring (ifd, ifd->n.cur_tx_ring + 1);
+	return s_txring (ifd, idx + 1);
 }
 ifring*
 if_last_txring (ifdesc* ifd)
@@ -351,11 +309,18 @@ if_cur_rxring (ifdesc* ifd)
 	return s_rxring (ifd, ifd->n.cur_rx_ring);
 }
 ifring*
+if_rxring (ifdesc* ifd, uint16_t idx)
+{
+	if (unlikely (idx > ifd->n.last_rx_ring))
+		return NULL;
+	return s_rxring (ifd, idx);
+}
+ifring*
 if_following_rxring (ifdesc* ifd, uint16_t idx)
 {
-	if (unlikely (ifd->n.cur_rx_ring == ifd->n.last_rx_ring))
+	if (unlikely (idx + 1 > ifd->n.last_tx_ring))
 		return NULL;
-	return s_rxring (ifd, ifd->n.cur_rx_ring + 1);
+	return s_rxring (ifd, idx + 1);
 }
 ifring*
 if_last_rxring (ifdesc* ifd)
@@ -363,7 +328,7 @@ if_last_rxring (ifdesc* ifd)
 	return s_rxring (ifd, ifd->n.last_rx_ring);
 }
 
-/* Get the number of buffers. */
+/* Get the number of buffers in the ring. */
 uint32_t
 ifring_bufs (ifring* ring)
 {
@@ -375,29 +340,6 @@ uint32_t
 ifring_buf_size (ifring* ring)
 {
 	return ring->n.nr_buf_size;
-}
-
-/* Get the head, current, following <id> or tail buffer id of a ring. Wraps
- * around. */
-uint32_t
-ifring_head (ifring* ring)
-{
-	return ring->n.head;
-}
-uint32_t
-ifring_cur (ifring* ring)
-{
-	return ring->n.cur;
-}
-uint32_t
-ifring_following (ifring* ring, uint32_t idx)
-{
-	return s_ring_following (ring, idx);
-}
-uint32_t
-ifring_tail (ifring* ring)
-{
-	return ring->n.tail;
 }
 
 /* Compare slots mod num_slots taking into accout the ring's head.
@@ -419,7 +361,7 @@ ifring_compare_ids (ifring* ring, uint32_t ida, uint32_t idb)
 	return (ida < idb) ? 1 : -1;
 }
 /* Compare slots mod num_slots taking into accout the ring's head.
- * Returns the buf idx that is closer (smaller) or farther (larger) to the
+ * Returns the buf id that is closer (smaller) or farther (larger) to the
  * ring's head in a forward direction. */
 uint32_t
 ifring_earlier_id (ifring* ring, uint32_t ida, uint32_t idb)
@@ -446,8 +388,32 @@ ifring_later_id (ifring* ring, uint32_t ida, uint32_t idb)
 	return (ida < idb) ? ida : idb;
 }
 
-/* Get the head, current, <id>, following <id> or tail buffer of a ring. Wraps
- * around. Returns NULL for buffers in the range tail ... head-1. */
+/* Get the head, current, following <idx> or tail buffer id of a ring.
+ * Wraps around. */
+uint32_t
+ifring_head (ifring* ring)
+{
+	return ring->n.head;
+}
+uint32_t
+ifring_cur (ifring* ring)
+{
+	return ring->n.cur;
+}
+uint32_t
+ifring_following (ifring* ring, uint32_t idx)
+{
+	return s_ring_following (ring, idx);
+}
+uint32_t
+ifring_tail (ifring* ring)
+{
+	return ring->n.tail;
+}
+
+/* Get the head, current, <idx>, following <idx> or tail buffer of a ring.
+ * Wraps around.
+ * ifring_following_buf returns NULL when reaching the tail. */
 char*
 ifring_head_buf (ifring* ring)
 {
@@ -456,36 +422,20 @@ ifring_head_buf (ifring* ring)
 char*
 ifring_cur_buf (ifring* ring)
 {
-#ifdef MIN_CHECKS
 	return s_buf (ring, ring->n.cur);
-#else
-	if (ifring_compare_ids (ring, ring->n.cur, ring->n.tail) == -1)
-		return s_buf (ring, ring->n.cur);
-	return NULL;
-#endif
 }
 char*
 ifring_buf (ifring* ring, uint32_t idx)
 {
-#ifdef MIN_CHECKS
 	return s_buf (ring, idx);
-#else
-	if (ifring_compare_ids (ring, idx, ring->n.tail) == -1)
-		return s_buf (ring, idx);
-	return NULL;
-#endif
 }
 char*
 ifring_following_buf (ifring* ring, uint32_t idx)
 {
-#ifdef MIN_CHECKS
-	return s_buf (ring, s_ring_following (ring, idx));
-#else
 	idx = s_ring_following (ring, idx);
-	if (ifring_compare_ids (ring, idx, ring->n.tail) == -1)
-		return s_buf (ring, idx);
-	return NULL;
-#endif
+	if (unlikely (idx == ring->n.tail))
+		return NULL;
+	return s_buf (ring, idx);
 }
 char*
 ifring_last_buf (ifring* ring)
@@ -495,55 +445,16 @@ ifring_last_buf (ifring* ring)
 	return s_buf (ring, ring->n.tail - 1);
 }
 
-/* Get the head, current, <id>, following <id> or tail buffer length of a ring.
- * Wraps around.
- * Returns 0 when reaching the tail when incrementing by 1 (does not check
- * a given idx though).*/
-uint16_t
-ifring_head_len (ifring* ring)
-{
-	return ring->n.slot[ ring->n.head ].len;
-}
+/* Get the length of the current or <idx> buffer. */
 uint16_t
 ifring_cur_len (ifring* ring)
 {
-#ifdef MIN_CHECKS
 	return ring->n.slot[ ring->n.cur ].len;
-#else
-	if (ifring_compare_ids (ring, ring->n.cur, ring->n.tail) == -1)
-		return ring->n.slot[ ring->n.cur ].len;
-	return 0;
-#endif
 }
 uint16_t
 ifring_len (ifring* ring, uint32_t idx)
 {
-#ifdef MIN_CHECKS
 	return ring->n.slot[ idx ].len;
-#else
-	if (ifring_compare_ids (ring, idx, ring->n.tail) == -1)
-		return ring->n.slot[ idx ].len;
-	return 0;
-#endif
-}
-uint16_t
-ifring_following_len (ifring* ring, uint32_t idx)
-{
-#ifdef MIN_CHECKS
-	return ring->n.slot[ idx ].len;
-#else
-	idx = s_ring_following (ring, idx);
-	if (ifring_compare_ids (ring, idx, ring->n.tail) == -1)
-		return ring->n.slot[ idx ].len;
-	return 0;
-#endif
-}
-uint16_t
-ifring_last_len (ifring* ring)
-{
-	if (unlikely (ring->n.tail == 0))
-		return ring->n.slot[ ring->n.num_slots - 1 ].len;
-	return ring->n.slot[ ring->n.tail - 1 ].len;
 }
 
 /* Get the number of slots between cur and tail.
@@ -552,10 +463,9 @@ ifring_last_len (ifring* ring)
 uint32_t
 ifring_pending (ifring* ring)
 {
-        int ret = ring->n.tail - ring->n.cur;
-        if (ret < 0)
-                ret += ring->n.num_slots;
-        return (uint32_t) ret;
+	if (ring->n.tail > ring->n.cur)
+		return ring->n.tail - ring->n.cur;
+	return ring->n.num_slots + ring->n.tail - ring->n.cur;
 }
 
 /* Get the number of slots between head and cur.
@@ -564,10 +474,9 @@ ifring_pending (ifring* ring)
 uint32_t
 ifring_done (ifring* ring)
 {
-        int ret = ring->n.cur - ring->n.head;
-        if (ret < 0)
-                ret += ring->n.num_slots;
-        return (uint32_t) ret;
+	if (ring->n.cur > ring->n.head)
+		return ring->n.cur - ring->n.head;
+	return ring->n.num_slots + ring->n.cur - ring->n.head;
 }
 
 /* Get the number of slots between head and tail.
@@ -576,8 +485,7 @@ ifring_done (ifring* ring)
 uint32_t
 ifring_total (ifring* ring)
 {
-        int ret = ring->n.tail - ring->n.head;
-        if (ret < 0)
-                ret += ring->n.num_slots;
-        return (uint32_t) ret;
+	if (ring->n.tail > ring->n.head)
+		return ring->n.tail - ring->n.head;
+	return ring->n.num_slots + ring->n.tail - ring->n.head;
 }

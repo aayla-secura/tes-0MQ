@@ -35,6 +35,7 @@
  *         zsock_t*  frontend;     // clients
  *         const int front_type;   // one of ZMQ_*
  *         const char* front_addr; // the socket addresses, comma separated
+ *         int       id;
  *         u_int32_t head;
  *         u_int16_t cur_frame;
  *         bool      error;        // the frontend and packet handler set this
@@ -124,6 +125,7 @@ struct _task_t
 	zsock_t*  frontend;
 	const int front_type;
 	const char* front_addr;
+	int       id;
 	u_int32_t head;
 	u_int16_t cur_frame;
 	bool      error;
@@ -132,6 +134,12 @@ struct _task_t
 };
 
 /* -------------------------------- HELPERS -------------------------------- */
+
+/* Signals for communicating between coordinator and task threads */
+#define SIG_INIT   0 /* task -> coordinator thread when ready */
+#define SIG_STOP   1 /* coordinator -> task when error or shutting down */
+#define SIG_DIED   2 /* task -> coordinator when error */
+#define SIG_WAKEUP 3 /* coordinator -> task when new packets arrive */
 
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
@@ -219,11 +227,12 @@ tasks_start (ifring* rxring, zloop_t* c_loop)
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		DEBUG ("Starting task #%d", t);
+		tasks[t].id = t + 1;
+		s_msgf (0, LOG_DEBUG, 0, "Starting task #%d", t);
 		rc = s_task_start (rxring, &tasks[t]);
 		if (rc)
 		{
-			ERROR ("Could not start tasks");
+			s_msg (errno, LOG_ERR, 0, "Could not start tasks");
 			return -1;
 		}
 	}
@@ -240,12 +249,14 @@ tasks_read (zloop_t* loop)
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
+		s_msgf (0, LOG_DEBUG, 0, "Registering reader for task #%d", t);
 		task_t* self = &tasks[t];
 		rc = zloop_reader (loop, zactor_sock(self->shim),
 			s_die_hn, NULL);
 		if (rc)
 		{
-			ERROR ("Could not register the zloop readers");
+			s_msg (errno, LOG_ERR, 0,
+				"Could not register the zloop readers");
 			return -1;
 		}
 	}
@@ -258,6 +269,8 @@ tasks_mute (zloop_t* loop)
 	assert (loop != NULL);
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
+		s_msgf (0, LOG_DEBUG, 0,
+			"Unregistering reader for task #%d", t);
 		task_t* self = &tasks[t];
 		zloop_reader_end (loop, zactor_sock(self->shim));
 	}
@@ -274,7 +287,8 @@ tasks_wakeup (void)
 			int rc = zsock_signal (self->shim, SIG_WAKEUP);
 			if (rc)
 			{
-				ERROR ("Could not signal task #%d", t);
+				s_msgf (errno, LOG_ERR, 0,
+					"Could not signal task #%d", t);
 				return -1;
 			}
 		}
@@ -287,6 +301,7 @@ tasks_destroy (void)
 {
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
+		s_msgf (0, LOG_DEBUG, 0, "Stopping task #%d", t);
 		task_t* self = &tasks[t];
 		s_task_stop (self);
 	}
@@ -329,7 +344,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
-		DEBUG ("Receive interrupted");
+		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
 		return -1;
 	}
 	int sig = zmsg_signal (msg);
@@ -337,7 +352,8 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	assert (sig >= 0);
 	if (sig == SIG_STOP)
 	{
-		DEBUG ("Coordinator thread is terminating us");
+		s_msg (0, LOG_DEBUG, self->id,
+			"Coordinator thread is terminating us");
 		return -1;
 	}
 	assert (sig == SIG_WAKEUP);
@@ -346,43 +362,32 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	self->busy = true;
 	/* Process packets */
-	while (true)
+	do
 	{
 		/* TO DO: is it faster if ifring_buf does no checks and instead
 		 * we check if head == tail at the end */
 		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
 			self->rxring, self->head);
-#ifndef MIN_CHECKS
-		if (pkt == NULL)
-			break;
-#endif
 
 		uint16_t len = ifring_len (self->rxring, self->head);
 		if (len != pkt_len (pkt))
 		{
-			WARN ("Packet length mismatch: header says %hu, "
+			s_msgf (0, LOG_WARNING, self->id,
+				"Packet length mismatch: header says %hu, "
 				"netmap slot is %hu", pkt_len (pkt), len);
 			if (len < pkt_len (pkt))
 				len = pkt_len (pkt);
 		}
 		int rc;
 		/* TO DO: check packet */
-		// int rc = __check_fpga_pkt (pkt);
-		// if (rc)
-		// {
-		//         ;
-		// }
 
 		rc = self->pkt_handler (loop, pkt, len, self);
 		if (rc)
 			break;
 
 		self->head = ifring_following (self->rxring, self->head);
-#ifdef MIN_CHECKS
-		if (self->head == ifring_tail (self->rxring))
-			break;
-#endif
-	}
+	} while (self->head != ifring_tail (self->rxring));
+
 	if (self->error)
 		self->active = false;
 
@@ -403,7 +408,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
-		DEBUG ("Receive interrupted");
+		s_msg (0, LOG_DEBUG, 0, "Receive interrupted");
 		return -1;
 	}
 	int sig = zmsg_signal (msg);
@@ -412,7 +417,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 
 	if (sig == SIG_DIED)
 	{
-		DEBUG ("Task thread encountered an error");
+		s_msg (0, LOG_DEBUG, 0, "Task thread encountered an error");
 		return -1;
 	}
 	assert (0); // we only deal with SIG_DIED 
@@ -433,6 +438,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	assert (self->data == NULL);
 	assert (self->rxring != NULL);
 	assert (self->frontend == NULL);
+	assert (self->id > 0);
 	assert (self->head == 0);
 	assert (self->cur_frame == 0);
 	assert (self->error == 0);
@@ -444,7 +450,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	 * SIG_STOP. */
 	zloop_set_nonstop (loop, 1);
 
-	// DEBUG ("Simulating error");
+	// s_msg (0, LOG_DEBUG, self->id, "Simulating error");
 	// self->error = true;
 	// goto cleanup;
 	if (self->task_init_fn)
@@ -452,7 +458,8 @@ s_task_shim (zsock_t* pipe, void* self_)
 		rc = self->task_init_fn (self);
 		if (rc)
 		{
-			ERROR ("Could not initialize thread data");
+			s_msg (errno, LOG_ERR, self->id,
+				"Could not initialize thread data");
 			self->error = true;
 			goto cleanup;
 		}
@@ -468,14 +475,16 @@ s_task_shim (zsock_t* pipe, void* self_)
 		self->frontend = zsock_new (self->front_type);
 		if (self->frontend == NULL)
 		{
-			ERROR ("Could not open the public interface");
+			s_msg (errno, LOG_ERR, self->id,
+				"Could not open the public interface");
 			self->error = true;
 			goto cleanup;
 		}
 		rc = zsock_attach (self->frontend, self->front_addr, true);
 		if (rc)
 		{
-			ERROR ("Could not bind the public interface");
+			s_msg (errno, LOG_ERR, self->id,
+				"Could not bind the public interface");
 			self->error = true;
 			goto cleanup;
 		}
@@ -484,13 +493,14 @@ s_task_shim (zsock_t* pipe, void* self_)
 	rc |= zloop_reader (loop, self->frontend, self->client_handler, self);
 	if (rc)
 	{
-		ERROR ("Could not register the zloop readers");
+		s_msg (errno, LOG_ERR, self->id,
+			"Could not register the zloop readers");
 		self->error = true;
 		goto cleanup;
 	}
 
 	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
-	DEBUG ("Polling");
+	s_msg (0, LOG_DEBUG, self->id, "Polling");
 	rc = zloop_start (loop);
 	assert (rc == -1); /* we don't get interrupted */
 
@@ -510,13 +520,14 @@ cleanup:
 		rc = self->task_fin_fn (self);
 		if (rc)
 		{
-			ERROR ("Could not cleanup thread data");
+			s_msg (errno, LOG_ERR, self->id,
+				"Could not cleanup thread data");
 		}
 		assert (self->data == NULL);
 	}
 	zloop_destroy (&loop);
 	zsock_destroy (&self->frontend);
-	DEBUG ("Done");
+	s_msg (0, LOG_DEBUG, self->id, "Done");
 }
 
 /*
@@ -543,11 +554,12 @@ s_task_start (ifring* rxring, task_t* self)
 	int rc = zsock_wait (self->shim);
 	if (rc == SIG_DIED)
 	{
-		DEBUG ("Task thread failed to initialize");
+		s_msg (0, LOG_DEBUG, self->id,
+			"Task thread failed to initialize");
 		return -1;
 	}
 	assert (rc == SIG_INIT);
-	DEBUG ("Task thread initialized");
+	s_msg (0, LOG_DEBUG, self->id, "Task thread initialized");
 
 	return 0;
 }
@@ -562,12 +574,10 @@ s_task_stop (task_t* self)
 	assert (self != NULL);
 	if (self->shim == NULL)
 	{
-		DEBUG ("Task had already exited");
+		s_msg (0, LOG_DEBUG, self->id, "Task had already exited");
 		return;
 	}
 
-	DEBUG ("Terminating task");
-	
 	zsock_set_sndtimeo (self->shim, 0);
 	zsock_signal (self->shim, SIG_STOP);
 	/* Wait for the final signal from zactor's s_thread_shim.
@@ -604,12 +614,12 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{ /* would also return -1 if picture contained a pointer (p) or a null
 	   * frame (z) but message received did not match this signature; this
 	   * is irrelevant in this case */
-		DEBUG ("Receive interrupted");
+		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
 		return -1;
 	}
 	if (sjob->filename == NULL || job_mode > 1)
 	{
-		INFO ("Received a malformed request");
+		s_msg (0, LOG_INFO, self->id, "Received a malformed request");
 		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
 		return 0;
 	}
@@ -632,13 +642,15 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	 */
 	if (sjob->max_ticks == 0)
 	{ /* status */
-		INFO ("Received request for status");
+		s_msg (0, LOG_INFO, self->id, "Received request for status");
 		fmode = O_RDONLY;
 		exp_errno = ENOENT;
 	}
 	else
 	{
-		INFO ("Received request to write %lu ticks", sjob->max_ticks);
+		s_msgf (0, LOG_INFO, self->id,
+			"Received request to write %lu ticks",
+			sjob->max_ticks);
 		fmode = O_RDWR | O_CREAT;
 		if (job_mode == 0)
 		{ /* do not overwrite */
@@ -652,15 +664,15 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		if (errno != exp_errno)
 		{
-			ERROR ("Could not open file %s",
-				sjob->filename);
+			s_msgf (errno, LOG_ERR, self->id,
+				"Could not open file %s", sjob->filename);
 		}
 		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
 		s_task_save_close (sjob);
 		return 0;
 	}
-	INFO ("Opened file %s for %s", sjob->filename,
-		(fmode & O_RDWR ) ? "writing" : "reading" );
+	s_msgf (0, LOG_INFO, self->id, "Opened file %s for %s",
+		sjob->filename, (fmode & O_RDWR ) ? "writing" : "reading" );
 
 	if (sjob->max_ticks == 0)
 	{ /* just read in stats and send reply */
@@ -697,7 +709,8 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 	int rc = write (sjob->fd, pkt, len);
 	if (rc == -1)
 	{
-		ERROR ("Could not write to file [%d]", sjob->fd);
+		s_msgf (errno, LOG_ERR, self->id,
+			"Could not write to file [%d]", sjob->fd);
 		self->error = true;
 		return -1;
 	}
@@ -730,7 +743,8 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 				self->client_handler, self);
 		if (rc == -1)
 		{
-			ERROR ("Could not re-enable the zloop reader");
+			s_msg (errno, LOG_ERR, self->id,
+				"Could not re-enable the zloop reader");
 			self->error = true;
 			return -1;
 		}
@@ -750,7 +764,7 @@ s_task_save_init (task_t* self)
 	self->data = malloc (sizeof (struct s_task_save_data_t));
 	if (self->data == NULL)
 	{
-		ERROR ("Cannot allocate data");
+		s_msg (errno, LOG_ERR, self->id, "Cannot allocate data");
 		return -1;
 	}
 	memset (self->data, 0, sizeof (struct s_task_save_data_t));
@@ -804,17 +818,12 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	sjob->fd = open (sjob->filename, fmode,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (sjob->fd == -1)
-	{ /* do not print warning, maybe request was for status */
 		return -1;
-	}
 
 	int rc;
 	rc = lseek (sjob->fd, FDATA_OFF, 0);
 	if (rc == (off_t)-1 || rc < FDATA_OFF)
-	{
-		ERROR ("Could not adjust file cursor");
 		return -1;
-	}
 
 	return 0;
 }
@@ -838,16 +847,12 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 
 	int rc = lseek (sjob->fd, 0, 0);
 	if (rc)
-	{
-		ERROR ("Could not seek to beginning of file");
 		return rc;
-	}
+	
 	rc = read (sjob->fd, &sjob->st, FDATA_OFF);
 	if (rc < FDATA_OFF)
-	{
-		ERROR ("Could not read from beginning of file");
 		return rc;
-	}
+	
 	return 0;
 }
 
@@ -863,16 +868,12 @@ s_task_save_write (struct s_task_save_data_t* sjob)
 
 	int rc = lseek (sjob->fd, 0, 0);
 	if (rc)
-	{
-		ERROR ("Could not seek to beginning of file");
 		return rc;
-	}
+	
 	rc = write (sjob->fd, &sjob->st, FDATA_OFF);
 	if (rc < FDATA_OFF)
-	{
-		ERROR ("Could not write to beginning of file");
 		return rc;
-	}
+	
 	return 0;
 }
 
