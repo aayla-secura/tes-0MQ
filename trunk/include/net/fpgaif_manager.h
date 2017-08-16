@@ -17,49 +17,34 @@ int if_close (ifdesc* ifd);
 /* Get the file descriptor */
 int if_fd (ifdesc* ifd);
 
-/* Set the current tx or rx ring to first, next, last or <idx>.
- * Returns 0 on succes, -1 on error. */
-int if_reset_cur_txring (ifdesc* ifd);
-int if_inc_cur_txring (ifdesc* ifd);
-int if_set_cur_txring_to_last (ifdesc* ifd);
-int if_set_cur_txring (ifdesc* ifd, uint16_t idx);
-int if_reset_cur_rxring (ifdesc* ifd);
-int if_inc_cur_rxring (ifdesc* ifd);
-int if_set_cur_rxring_to_last (ifdesc* ifd);
-int if_set_cur_rxring (ifdesc* ifd, uint16_t idx);
-
-/* Set and get the current tx or rx ring. It is not done in a circular fashion,
- * next and following may return NULL if the last one is reached. */
+/* Set and get the first, next, <idx> or last tx or rx ring.
+ * It is not done in a circular fashion.
+ * Returns NULL for rings beyond the last one. */
+ifring* if_rewind_txring (ifdesc* ifd);
 ifring* if_next_txring (ifdesc* ifd);
+ifring* if_goto_txring (ifdesc* ifd, uint16_t idx);
+ifring* if_goto_last_txring (ifdesc* ifd);
+ifring* if_rewind_rxring (ifdesc* ifd);
 ifring* if_next_rxring (ifdesc* ifd);
+ifring* if_goto_rxring (ifdesc* ifd, uint16_t idx);
+ifring* if_goto_last_rxring (ifdesc* ifd);
 
-/* Set the current buffer idx of a ring to head, next or tail+num.
- * Return the set id. */
-uint32_t ifring_rewind (ifring* ring);
-uint32_t ifring_next (ifring* ring);
-uint32_t ifring_wait_for_more (ifring* ring, uint32_t num); /* 0 for cur to tail */
-
-/* Set the head buffer idx of a ring to next or cur.
- * Return the set id. */
-uint32_t ifring_release_one (ifring* ring);
-uint32_t ifring_release_done (ifring* ring);
-
-/* Set both the head and cursor to tail.
- * Return the set id. */
-uint32_t ifring_release_all (ifring* ring);
-
-/* Set the cursor and optionally head to <idx>. */
-void ifring_goto (ifring* ring, uint32_t idx, int sync_h);
-
-/* Set the head to <idx>. */
-void ifring_release_to (ifring* ring, uint32_t idx);
-
-/* Get the next buffer of a ring, incrementing cursor. Wraps around. */
+/* Set and get the current buffer of a ring to head, next, <idx> or tail-1. */
+char* ifring_rewind_buf (ifring* ring);
 char* ifring_next_buf (ifring* ring);
+char* ifring_goto_buf (ifring* ring, uint32_t idx);
+char* ifring_goto_last_buf (ifring* ring);
 
-/* Get the next buffer length of a ring, incrementing cursor.  Wraps around.
- * Returns 0 when reaching the tail.*/
-uint16_t ifring_next_len (ifring* ring);
+/* Set and get the head buffer of a ring to next, <idx> or cur. */
+char* ifring_release_one_buf (ifring* ring);
+char* ifring_release_to_buf (ifring* ring, uint32_t idx);
+char* ifring_release_done_buf (ifring* ring);
+
+/* Set the current buffer of a ring to tail+num. */
+void ifring_wait_for_more (ifring* ring, uint32_t num);
+
+/* Set both the head and cursor to tail. */
+void ifring_release_all (ifring* ring);
 
 /* Same as nm_inject. */
 int if_inject (ifdesc* ifd, const void* buf, size_t len);

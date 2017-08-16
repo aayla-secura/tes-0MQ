@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <syslog.h>
 #include <string.h>
+#include <stdarg.h>
 // #include <signal.h>
 // #include <poll.h>
 // #include <pthread.h>
@@ -21,108 +22,114 @@
 #define FPGAPKT_DEBUG
 #include <net/fpgapkt.h>
 
-/* Signals for communicating between coordinator and task threads */
-#define SIG_INIT   0 /* task -> coordinator thread when ready */
-#define SIG_STOP   1 /* coordinator -> task when error or shutting down */
-#define SIG_DIED   2 /* task -> coordinator when error */
-#define SIG_WAKEUP 3 /* coordinator -> task when new packets arrive */
+#include "daemon.h"
+
+/* ------------------------------------------------------------------------- */
 
 /*
- * The verbosity and the daemon state will eventually be taken from
- * command-line options passed when the server is started. They'll then be
- * saved in external variables (probably), and the methods for printing
- * messages will use the daemon's state.
+ * The verbosity and the daemon state are taken from command-line options
+ * passed when the server is started. They're saved in these external variables
+ * and the methods for printing messages use the daemon's state.
  */
 
-// #define FULL_DBG    // will use assert throughout
-#define VERBOSE     // will print debugging messages
-#define MULTITHREAD // will print thread id in debug messages
-// #define BE_DAEMON  // will go into background
+int is_daemon;
+int is_verbose;
 
-/* ------------------------------------------------------------------------- */
+/*
+ * Print fixed or formatted messages of a given priority (one of syslog's
+ * levels.). If errnum is not 0, it will be included using strerror_r.  When
+ * running as a daemon, messages are printed using syslog's corresponding
+ * level. Facility is not changed, set it when opening syslog.
+ *
+ * If is_verbose is false, debugging messages are suppressed.
+ * Otherwise, they are sent to stdout or stderr, depending on the verbosity level:
+ * if is_verbose is false, warnings and errors are sent to stderr,
+ * informational messages to stdout;
+ * if is_verbose is true, debugging messages are sent to stderr, all others to
+ * stdout.
+ */
 
-// #ifdef FULL_DBG
-// #  define DBG_ASSERT(..) assert (__VA_ARGS__)
-// #else
-// #  define DBG_ASSERT(..)
-// #endif
+#define MAX_MSG_LEN 512
 
-/* ------------------------------------------------------------------------- */
+static void
+s_msg (int errnum, int priority, int task, const char* msg)
+{
+	if ( ! is_verbose && priority == LOG_DEBUG )
+		return;
 
-/* When not using syslog and being verbose, debugging output will go to stderr,
- * and errors will go to stdout */
-#define DBG_STREAM stderr
+	char err[MAX_MSG_LEN];
+	memset (err, 0, MAX_MSG_LEN);
+	if (errnum != 0)
+	{
+		int len = snprintf (err, MAX_MSG_LEN, ": ");
+		/* Thread-safe version of strerror. */
+		strerror_r (errnum, err + len, MAX_MSG_LEN - len);
+	}
 
-#ifdef VERBOSE
-#  define ERR_STREAM stdout
-#else
-#  define ERR_STREAM stderr
-#endif
+	if (is_daemon)
+	{
+		if (task > 0)
+			syslog (priority, "Task #%d:    %s%s", task, msg, err);
+		else
+			syslog (priority, "Coordinator: %s%s", msg, err);
+	}
+	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
+	{
+		if (task > 0)
+			fprintf (stderr, "Task #%d:    %s%s\n", task, msg, err);
+		else
+			fprintf (stderr, "Coordinator: %s%s\n", msg, err);
+	}
+	else
+	{
+		if (task > 0)
+			fprintf (stdout, "Task #%d:    %s%s\n", task, msg, err);
+		else
+			fprintf (stdout, "Coordinator: %s%s\n", msg, err);
+	}
+}
 
-/* The '%s' following msg in the PRIV versions corresponds to the empty string
- * passed by the non PRIV version. It is done in order to handle the case of
- * only one argument (no format specifiers) */
+static void
+s_msgf (int errnum, int priority, int task, const char* format, ...)
+{
+	if ( ! is_verbose && priority == LOG_DEBUG )
+		return;
 
-/* ------------------------------------------------------------------------- */
-#ifdef SYSLOG
+	va_list args;
+	va_start (args, format);
+	char msg[MAX_MSG_LEN];
+	memset (msg, 0, MAX_MSG_LEN);
+	int len = vsnprintf (msg, MAX_MSG_LEN, format, args);
 
-#define ERROR_PRIV(msg, ...) if (1) { \
-	if (errno) \
-		syslog (LOG_ERR, msg"%s: %m", __VA_ARGS__); \
-	else \
-		syslog (LOG_ERR, msg"%s", __VA_ARGS__); \
-	} else (void)0
+	if ( (len < MAX_MSG_LEN - 10)  && errnum != 0 )
+	{
+		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
+		/* Thread-safe version of strerror. */
+		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
+	}
 
-#define WARN_PRIV(msg, ...) \
-	syslog (LOG_WARN, msg"%s", __VA_ARGS__)
-#define INFO_PRIV(msg, ...) \
-	syslog (LOG_WARN, msg"%s", __VA_ARGS__)
-
-#ifdef MULTITHREAD
-#  define DEBUG_PRIV(msg, ...) \
-	syslog(LOG_DEBUG, "Thread %p: "msg"%s", (void*)pthread_self(), \
-		__VA_ARGS__)
-#else /* MULTITHREAD */
-#  define DEBUG_PRIV(msg, ...) \
-	syslog(LOG_DEBUG, msg"%s", __VA_ARGS__)
-#endif /* MULTITHREAD */
-
-/* ------------------------------------------------------------------------- */
-#else /* SYSLOG */
-
-#define ERROR_PRIV(msg, ...) if (1) { \
-	if (errno) \
-		fprintf (ERR_STREAM, msg"%s: %s\n", __VA_ARGS__, \
-			strerror (errno)); \
-	else \
-		fprintf (ERR_STREAM, msg"%s\n", __VA_ARGS__); \
-	} else (void)0
-
-#define WARN_PRIV(msg, ...) \
-	fprintf (ERR_STREAM, msg"%s\n", __VA_ARGS__)
-#define INFO_PRIV(msg, ...) \
-	fprintf (stdout, msg"%s\n", __VA_ARGS__)
-
-#ifdef MULTITHREAD
-#  define DEBUG_PRIV(msg, ...) \
-	fprintf(DBG_STREAM, "Thread %p: "msg"%s\n", (void*)pthread_self(), \
-		__VA_ARGS__)
-#else /* MULTITHREAD */
-#  define DEBUG_PRIV(msg, ...) \
-	fprintf(DBG_STREAM, msg"%s\n", __VA_ARGS__)
-#endif /* MULTITHREAD */
-
-/* ------------------------------------------------------------------------- */
-#endif /* SYSLOG */
-
-#define ERROR(...) ERROR_PRIV(__VA_ARGS__, "")
-#define WARN(...)  WARN_PRIV(__VA_ARGS__, "")
-#define INFO(...)  INFO_PRIV(__VA_ARGS__, "")
-
-#ifdef VERBOSE
-#  define DEBUG(...) DEBUG_PRIV(__VA_ARGS__, "")
-#else
-#  define DEBUG(...)
-#endif
+	if (is_daemon)
+	{
+		if (task > 0)
+			syslog (priority, "Task #%d: %s", task, msg);
+		else
+			syslog (priority, "Coordinator: %s", msg);
+	}
+	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
+	{
+		if (task > 0)
+			fprintf (stderr, "Task #%d: %s\n", task, msg);
+		else
+			fprintf (stderr, "Coordinator: %s\n", msg);
+	}
+	else
+	{
+		if (task > 0)
+			fprintf (stdout, "Task #%d: %s\n", task, msg);
+		else
+			fprintf (stdout, "Coordinator: %s\n", msg);
+	}
+	va_end (args);
+}
 
 #endif

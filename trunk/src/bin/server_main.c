@@ -34,22 +34,20 @@
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
  * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * Try
+ *   aio_write
+ *   buffering to a separate (mmapped) area and writing bigger chunks to disk
+ *   zsys_io_threads
  */
 
 #include "fpgatasks.h"
 #include "net/fpgaif_manager.h"
 #include "common.h"
+#include <net/if.h> /* IFNAMSIZ */
 
-#ifdef BE_DAEMON
-#  define SYSLOG /* print to syslog */
-#  include "daemon.h"
-#else /* BE_DAEMON */
-#  define UPDATE_INTERVAL 1  /* in seconds */
-#endif /* BE_DAEMON */
+#define UPDATE_INTERVAL 1             // in seconds
+#define FPGA_IF         "vale:fpga}1" // default
 
-#define FPGA_IF      "vale:fpga}1"
-
-#ifndef BE_DAEMON
 /*
  * Statistics, only used in foreground mode
  */
@@ -59,25 +57,34 @@ struct stats_t
 	u_int64_t received;
 	u_int64_t missed;
 };
-#endif /* BE_DAEMON */
 
 struct data_t
 {
-#ifndef BE_DAEMON
 	struct stats_t stats;
-#endif
 	ifring* rxring;
 };
 
-#ifndef BE_DAEMON
-static int print_stats (zloop_t* loop, int timer_id, void* stats_);
-#endif /* BE_DAEMON */
-static int new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
-static int coordinator_body (void);
+static void usage (const char* self);
+static int  print_stats (zloop_t* loop, int timer_id, void* stats_);
+static int  new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
+static int  coordinator_body (const char* ifname);
 
 /* ------------------------------------------------------------------------- */
 
-#ifndef BE_DAEMON
+static void
+usage (const char* self)
+{
+	fprintf (stderr,
+		"Usage: %s [options]\n\n"
+		"Options:\n"
+		"    -i <if>              Read packets from <if> interface\n"
+		"                         Defaults to "FPGA_IF"\n"
+		"    -f                   Run in foreground\n"
+		"    -v                   Print debugging messages\n", self
+		);
+	exit (EXIT_FAILURE);
+}
+
 /*
  * When working in foreground, print statistics (bandwidth, etc) every
  * UPDATE_INTERVAL.
@@ -100,7 +107,7 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 	timersub (&tnow, &stats->last_update, &tdiff);
 	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
 	
-	INFO (
+	s_msgf (0, LOG_INFO, 0, 
 		"elapsed: %2.5f received: %7lu dropped: %7lu "
 		"avg bandwidth: %10.3e pps",
 		tdelta,
@@ -115,7 +122,6 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 
 	return 0;
 }
-#endif /* BE_DAEMON */
 
 /*
  * Called when new packets arrive in the ring.
@@ -132,66 +138,46 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	int rc = tasks_wakeup ();
 	if (rc)
 	{
-		printf ("Could not send SIG_WAKEUP to all waiting tasks.");
+		s_msg (0, LOG_DEBUG, 0,
+			"Could not wake up all waiting tasks.");
 		return -1;
 	}
 
-#ifndef BE_DAEMON
-	/* Save statistics */
-	uint32_t num_new = ifring_pending (data->rxring);
-	data->stats.received += num_new;
-	do
+	if ( ! is_daemon )
 	{
+		/* Save statistics */
+		uint32_t num_new = ifring_pending (data->rxring);
+		data->stats.received += num_new;
 		fpga_pkt* pkt = (fpga_pkt*) ifring_cur_buf (data->rxring);
-		if (pkt == NULL)
-		{
-			WARN ("Got a NULL bufer: "
-				"head at %hu, cur at %hu, tail at %hu",
-					ifring_head (data->rxring),
-					ifring_cur (data->rxring),
-					ifring_tail (data->rxring)
-			     );
-			break;
-		}
 		uint16_t fseqA = frame_seq (pkt);
-		pkt = (fpga_pkt*) ifring_last_buf (data->rxring);
-		if (pkt == NULL)
-		{
-			WARN ("Got a NULL buffer: "
-				"head at %hu, cur at %hu, tail at %hu",
-					ifring_head (data->rxring),
-					ifring_cur (data->rxring),
-					ifring_tail (data->rxring)
-			     );
-			break;
-		}
 		uint16_t fseqB = frame_seq (pkt);
 		data->stats.missed += (u_int64_t) ( num_new - 1 -
 				(uint16_t)(fseqB - fseqA) );
-	} while (0);
-#endif /* BE_DAEMON */
+	}
 
 	/* Set the head and cursor */
-	ifring_goto (data->rxring, head, 1);
+	ifring_goto_buf (data->rxring, head);
+	ifring_release_to_buf (data->rxring, head);
 
 	return 0;
 }
 
 static int
-coordinator_body (void)
+coordinator_body (const char* ifname)
 {
 	int rc;
 	struct data_t data;
 	memset (&data, 0, sizeof (data));
 
 	/* Open the interface */
-	ifdesc* ifd = if_open (FPGA_IF, NULL, 0, 0);
+	ifdesc* ifd = if_open (ifname, NULL, 0, 0);
 	if (ifd == NULL)
 	{
-		ERROR ("Could not open interface %s", FPGA_IF);
+		s_msgf (errno, LOG_ERR, 0, "Could not open interface %s",
+			ifname);
 		return -1;
 	}
-	INFO ("Opened interface %s", FPGA_IF);
+	s_msgf (0, LOG_INFO, 0, "Opened interface %s", ifname);
 
 	/* Get the ring, we support only one for now */
 	assert (if_rxrings (ifd) == 1);
@@ -203,7 +189,7 @@ coordinator_body (void)
 	rc = tasks_start (data.rxring, loop);
 	if (rc)
 	{
-		DEBUG ("Tasks failed to start");
+		s_msg (0, LOG_DEBUG, 0, "Tasks failed to start");
 		goto cleanup;
 	}
 
@@ -215,63 +201,100 @@ coordinator_body (void)
 	rc = zloop_poller (loop, &pitem, new_pkts_hn, &data);
 	if (rc == -1)
 	{
-		ERROR ("Could not register the zloop poller");
+		s_msg (errno, LOG_ERR, 0,
+			"Could not register the zloop poller");
 		goto cleanup;
 	}
 
-#ifndef BE_DAEMON
-	/* Set the timer */
-	rc = zloop_timer (loop, 1000 * UPDATE_INTERVAL, 0,
-		print_stats, &data.stats);
-	if (rc == -1)
+	if ( ! is_daemon )
 	{
-		ERROR ("Could not set a timer");
-		goto cleanup;
+		/* Set the timer */
+		rc = zloop_timer (loop, 1000 * UPDATE_INTERVAL, 0,
+			print_stats, &data.stats);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, 0, "Could not set a timer");
+			goto cleanup;
+		}
+		s_msgf (0, LOG_DEBUG, 0, "Will print stats every %d seconds",
+			UPDATE_INTERVAL);
 	}
-	DEBUG ("Will print stats every %d seconds", UPDATE_INTERVAL);
-#endif /* BE_DAEMON */
 
-	DEBUG ("All threads initialized");
+	s_msg (0, LOG_DEBUG, 0, "All threads initialized");
 	rc = zloop_start (loop);
 
 	if (rc)
 	{
-		DEBUG ("Terminated by handler");
+		s_msg (0, LOG_DEBUG, 0, "Terminated by handler");
 	}
 	else
 	{
-		DEBUG ("Interrupted");
+		s_msg (0, LOG_DEBUG, 0, "Interrupted");
 	}
 
 cleanup:
 	tasks_destroy ();
 	zloop_destroy (&loop);
 	if_close (ifd);
-	DEBUG ("Done");
+	s_msg (0, LOG_DEBUG, 0, "Done");
 	return rc;
 }
 
 int
-main (void)
+main (int argc, char **argv)
 {
 	// __fpga_self_test ();
 	int rc;
 
-#ifdef BE_DAEMON
-	/* Go into background */
-	rc = daemonize ();
-	if (rc == -1)
+	/* Process command-line options */
+	is_daemon = 1;
+	is_verbose = 0;
+	int opt;
+	char ifname[IFNAMSIZ + 1];
+	memset (ifname, 0, sizeof (ifname));
+	while ( (opt = getopt (argc, argv, "i:fv")) != -1 )
 	{
-		ERROR ("Failed to go into background");
-		exit (EXIT_FAILURE);
+		switch (opt)
+		{
+			case 'i':
+				snprintf (ifname, sizeof (ifname),
+					"%s", optarg);
+				break;
+			case 'f':
+				is_daemon = 0;
+				break;
+			case 'v':
+				is_verbose = 1;
+				break;
+			case '?':
+				usage (argv[0]);
+				break;
+			default:
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+	if (strlen (ifname) == 0)
+	{
+		sprintf (ifname, FPGA_IF);
 	}
 
-	/* Start syslog */
-	openlog ("FPGA server", 0, LOG_DAEMON);
-#endif /* BE_DAEMON */
+	if (is_daemon)
+	{
+		/* Go into background */
+		/* TO DO: set a pidfile */
+		rc = daemonize (NULL);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Failed to go into background");
+			exit (EXIT_FAILURE);
+		}
 
-	/* TO DO: Process command-line options */
+		/* Start syslog */
+		openlog ("FPGA server", 0, LOG_DAEMON);
+	}
 
-	rc = coordinator_body ();
+	rc = coordinator_body (ifname);
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
