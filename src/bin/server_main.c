@@ -58,6 +58,7 @@ struct stats_t
 	uint64_t received;
 	uint64_t missed;
 	uint64_t polled;
+	uint64_t skipped;
 };
 
 struct data_t
@@ -113,12 +114,18 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
 	
 	s_msgf (0, LOG_INFO, 0, 
-		"elapsed: %2.5fs received: %7lu dropped: %7lu polled: %7lu "
-		"avg pkts per poll: %7lu avg bandwidth: %10.3e pps",
-		tdelta,
-		stats->received,
+		// "elapsed: %2.5fs   | "
+		// "received: %10lu   | "
+		"missed: %10lu   | "
+		// "polled: %10lu   | "
+		"skipped polls: %10lu   | "
+		"avg pkts per poll: %10lu   | "
+		"avg bandwidth: %10.3e pps",
+		// tdelta,
+		// stats->received,
 		stats->missed,
-		stats->polled,
+		// stats->polled,
+		stats->skipped,
 		(stats->polled) ? stats->received / stats->polled : 0,
 		(double) stats->received / tdelta
 		);
@@ -126,6 +133,8 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 	memcpy (&stats->last_update, &tnow, sizeof (struct timeval));
 	stats->received = 0;
 	stats->missed = 0;
+	stats->polled = 0;
+	stats->skipped = 0;
 
 	return 0;
 }
@@ -158,13 +167,13 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	pkt = (fpga_pkt*) ifring_preceding_buf (data->rxring, nhead);
 	if (pkt == NULL)
 	{
-		// assert (nhead == ifring_head (data->rxring));
-		// s_msg (0, LOG_DEBUG, 0, "Keeping same head");
+		assert (nhead == ifring_head (data->rxring));
+		data->stats.skipped++;
 		return 0;
 	}
 	uint16_t fseqB = frame_seq (pkt);
 
-	// uint32_t cur = ifring_cur (data->rxring);
+	uint32_t cur = ifring_cur (data->rxring);
 	ifring_goto_buf (data->rxring, nhead); /* cursor -> new head */
 	uint32_t num_new = ifring_done (data->rxring); /* cursor - old head */
 
@@ -178,8 +187,7 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 			uint16_t fseq = frame_seq (pkt);
 			s_msgf (0, LOG_DEBUG, 0,
 					"Buffer %u, frame %hu", cur, fseq);
-			pkt->length = FPGA_HDR_LEN;
-			s_dump_pkt (pkt);
+			s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
 		}
 		assert (0);
 	}

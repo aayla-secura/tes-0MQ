@@ -1,6 +1,9 @@
 #ifndef __NET_FPGA_H_INCLUDED__
 #define __NET_FPGA_H_INCLUDED__
 
+// Temporary switching
+#define KEEP_BYTEORDER
+
 #include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <arpa/inet.h>
@@ -446,111 +449,159 @@ src_addr_u (fpga_pkt* pkt)
 static inline uint16_t
 pkt_len (fpga_pkt* pkt)
 {
-	// return pkt->length;
+#ifdef KEEP_BYTEORDER
+	return pkt->length;
+#else
 	return ntohs (pkt->length);
+#endif
 }
 
 static inline uint16_t
 frame_seq (fpga_pkt* pkt)
 {
-	// return pkt->fpga_hdr.frame_seq;
+#ifdef KEEP_BYTEORDER
+	return pkt->fpga_hdr.frame_seq;
+#else
 	return ntohs (pkt->fpga_hdr.frame_seq);
+#endif
 }
 
 static inline uint16_t
 proto_seq (fpga_pkt* pkt)
 {
-	// return pkt->fpga_hdr.proto_seq;
+#ifdef KEEP_BYTEORDER
+	return pkt->fpga_hdr.proto_seq;
+#else
 	return ntohs (pkt->fpga_hdr.proto_seq);
+#endif
 }
 
 static inline uint16_t
 evt_size (fpga_pkt* pkt)
 {
-	// return pkt->fpga_hdr.evt_size;
+#ifdef KEEP_BYTEORDER
+	return pkt->fpga_hdr.evt_size;
+#else
 	return ntohs (pkt->fpga_hdr.evt_size);
+#endif
 }
 
 static inline uint16_t
 mca_size (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->size;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->size;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->size);
+#endif
 }
 
 static inline uint16_t
 mca_num_bins (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->last_bin + 1;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->last_bin + 1;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->last_bin + 1);
+#endif
 }
 
 static inline uint32_t
 mca_lvalue (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->lowest_value;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->lowest_value;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->lowest_value);
+#endif
 }
 
 static inline uint16_t
 mca_mostfreq (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->most_frequent;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->most_frequent;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->most_frequent);
+#endif
 }
 
 static inline uint64_t
 mca_total (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->total;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->total;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->total);
+#endif
 }
 
 static inline uint64_t
 mca_startt (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->start_time;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->start_time;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->start_time);
+#endif
 }
 
 static inline uint64_t
 mca_stopt (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->stop_time;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->stop_time;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->stop_time);
+#endif
 }
 
 static inline uint32_t
 mca_bin (fpga_pkt* pkt, uint16_t bin)
 {
 	if (is_header (pkt))
-		// return pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ];
+#ifdef KEEP_BYTEORDER
+		return pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ];
+	#else
 		return ntohl (pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ]);
+	#endif
 	else
-		// return pkt->body[ bin*BIN_LEN ];
+#ifdef KEEP_BYTEORDER
+		return pkt->body[ bin*BIN_LEN ];
+	#else
 		return ntohl (pkt->body[ bin*BIN_LEN ]);
+	#endif
 }
 
 static inline uint32_t
 mca_flags_u (fpga_pkt* pkt)
 {
-	// return ((struct mca_header*)(void*) &pkt->body)->flags;
+#ifdef KEEP_BYTEORDER
+	return ((struct mca_header*)(void*) &pkt->body)->flags;
+#else
 	return ntohl (((struct mca_header*)(void*) &pkt->body)->flags);
+#endif
 }
 
 /* Event and tick flags are in the same location. */
 static inline uint16_t
 evt_flags_u (fpga_pkt* pkt)
 {
-	// return ((struct evt_header*)(void*) &pkt->body)->flags;
+#ifdef KEEP_BYTEORDER
+	return ((struct evt_header*)(void*) &pkt->body)->flags;
+#else
 	return ntohs (((struct evt_header*)(void*) &pkt->body)->flags);
+#endif
 }
 
 static inline uint16_t
 trace_flags_u (fpga_pkt* pkt)
 {
-	// return ((struct trace_header*)(void*) &pkt->body)->tr_flags;
+#ifdef KEEP_BYTEORDER
+	return ((struct trace_header*)(void*) &pkt->body)->tr_flags;
+#else
 	return ntohs (((struct trace_header*)(void*) &pkt->body)->tr_flags);
+#endif
 }
 
 static inline struct mca_flags*
@@ -584,127 +635,181 @@ trace_flags_r (fpga_pkt* pkt)
 static inline uint16_t
 evt_toff (fpga_pkt* pkt)
 {
-	// return ((struct evt_header*)(void*) &pkt->body)->toff;
+#ifdef KEEP_BYTEORDER
+	return ((struct evt_header*)(void*) &pkt->body)->toff;
+#else
 	return ntohs (((struct evt_header*)(void*) &pkt->body)->toff);
+#endif
 }
 
 static inline uint32_t
 tick_period (fpga_pkt* pkt)
 {
-	// return ((struct tick_header*)(void*) &pkt->body)->period;
+#ifdef KEEP_BYTEORDER
+	return ((struct tick_header*)(void*) &pkt->body)->period;
+#else
 	return ntohs (((struct tick_header*)(void*) &pkt->body)->period);
+#endif
 }
 
 static inline uint64_t
 tick_ts (fpga_pkt* pkt)
 {
-	// return ((struct tick_header*)(void*) &pkt->body)->ts;
+#ifdef KEEP_BYTEORDER
+	return ((struct tick_header*)(void*) &pkt->body)->ts;
+#else
 	return ntohs (((struct tick_header*)(void*) &pkt->body)->ts);
+#endif
 }
 
 static inline uint8_t
 tick_ovrfl (fpga_pkt* pkt)
 {
-	// return ((struct tick_header*)(void*) &pkt->body)->ovrfl;
+#ifdef KEEP_BYTEORDER
+	return ((struct tick_header*)(void*) &pkt->body)->ovrfl;
+#else
 	return ntohs (((struct tick_header*)(void*) &pkt->body)->ovrfl);
+#endif
 }
 
 static inline uint8_t
 tick_err (fpga_pkt* pkt)
 {
-	// return ((struct tick_header*)(void*) &pkt->body)->err;
+#ifdef KEEP_BYTEORDER
+	return ((struct tick_header*)(void*) &pkt->body)->err;
+#else
 	return ntohs (((struct tick_header*)(void*) &pkt->body)->err);
+#endif
 }
 
 static inline uint8_t
 tick_cfd (fpga_pkt* pkt)
 {
-	// return ((struct tick_header*)(void*) &pkt->body)->cfd;
+#ifdef KEEP_BYTEORDER
+	return ((struct tick_header*)(void*) &pkt->body)->cfd;
+#else
 	return ntohs (((struct tick_header*)(void*) &pkt->body)->cfd);
+#endif
 }
 
 static inline uint32_t
 tick_lost (fpga_pkt* pkt)
 {
-	// return ((struct tick_header*)(void*) &pkt->body)->lost;
+#ifdef KEEP_BYTEORDER
+	return ((struct tick_header*)(void*) &pkt->body)->lost;
+#else
 	return ntohs (((struct tick_header*)(void*) &pkt->body)->lost);
+#endif
 }
 
 static inline uint16_t
 peak_h (fpga_pkt* pkt)
 {
-	// return ((struct peak_header*)(void*) &pkt->body)->height;
+#ifdef KEEP_BYTEORDER
+	return ((struct peak_header*)(void*) &pkt->body)->height;
+#else
 	return ntohs (((struct peak_header*)(void*) &pkt->body)->height);
+#endif
 }
 
 static inline uint16_t
 peak_riset (fpga_pkt* pkt)
 {
-	// return ((struct peak_header*)(void*) &pkt->body)->rise_time;
+#ifdef KEEP_BYTEORDER
+	return ((struct peak_header*)(void*) &pkt->body)->rise_time;
+#else
 	return ntohs (((struct peak_header*)(void*) &pkt->body)->rise_time);
+#endif
 }
 
 static inline uint32_t
 area_size (fpga_pkt* pkt)
 {
-	// return ((struct area_header*)(void*) &pkt->body)->area;
+#ifdef KEEP_BYTEORDER
+	return ((struct area_header*)(void*) &pkt->body)->area;
+#else
 	return ntohs (((struct area_header*)(void*) &pkt->body)->area);
+#endif
 }
 
 static inline uint16_t
 pulse_size (fpga_pkt* pkt)
 {
-	// return ((struct pulse_header*)(void*) &pkt->body)->size;
+#ifdef KEEP_BYTEORDER
+	return ((struct pulse_header*)(void*) &pkt->body)->size;
+#else
 	return ntohs (((struct pulse_header*)(void*) &pkt->body)->size);
+#endif
 }
 
 static inline uint32_t
 pulse_area (fpga_pkt* pkt)
 {
-	// return ((struct pulse_header*)(void*) &pkt->body)->pulse.area;
+#ifdef KEEP_BYTEORDER
+	return ((struct pulse_header*)(void*) &pkt->body)->pulse.area;
+#else
 	return ntohs (((struct pulse_header*)(void*) &pkt->body)->pulse.area);
+#endif
 }
 
 static inline uint16_t
 pulse_len (fpga_pkt* pkt)
 {
-	// return ((struct pulse_header*)(void*) &pkt->body)->pulse.length;
+#ifdef KEEP_BYTEORDER
+	return ((struct pulse_header*)(void*) &pkt->body)->pulse.length;
+#else
 	return ntohs (((struct pulse_header*)(void*) &pkt->body)->pulse.length);
+#endif
 }
 
 static inline uint16_t
 pulse_toff (fpga_pkt* pkt)
 {
-	// return ((struct pulse_header*)(void*) &pkt->body)->pulse.toffset;
+#ifdef KEEP_BYTEORDER
+	return ((struct pulse_header*)(void*) &pkt->body)->pulse.toffset;
+#else
 	return ntohs (((struct pulse_header*)(void*) &pkt->body)->pulse.toffset);
+#endif
 }
 
 static inline uint16_t
 trace_size (fpga_pkt* pkt)
 {
-	// return ((struct trace_header*)(void*) &pkt->body)->size;
+#ifdef KEEP_BYTEORDER
+	return ((struct trace_header*)(void*) &pkt->body)->size;
+#else
 	return ntohs (((struct trace_header*)(void*) &pkt->body)->size);
+#endif
 }
 
 static inline uint32_t
 trace_area (fpga_pkt* pkt)
 {
-	// return ((struct trace_full_header*)(void*) &pkt->body)->pulse.area;
+#ifdef KEEP_BYTEORDER
+	return ((struct trace_full_header*)(void*) &pkt->body)->pulse.area;
+#else
 	return ntohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.area);
+#endif
 }
 
 static inline uint16_t
 trace_len (fpga_pkt* pkt)
 {
-	// return ((struct trace_full_header*)(void*) &pkt->body)->pulse.length;
+#ifdef KEEP_BYTEORDER
+	return ((struct trace_full_header*)(void*) &pkt->body)->pulse.length;
+#else
 	return ntohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.length);
+#endif
 }
 
 static inline uint16_t
 trace_toff (fpga_pkt* pkt)
 {
-	// return ((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset;
+#ifdef KEEP_BYTEORDER
+	return ((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset;
+#else
 	return ntohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset);
+#endif
 }
 
 static void

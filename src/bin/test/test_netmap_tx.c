@@ -55,46 +55,67 @@
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
+// Temporary switching
+#define KEEP_BYTEORDER
+
 static void
 pkt_set_frame_seq (fpga_pkt* pkt, uint16_t seq)
 {
-	// pkt->fpga_hdr.frame_seq = seq;
+#ifdef KEEP_BYTEORDER
+	pkt->fpga_hdr.frame_seq = seq;
+#else
 	pkt->fpga_hdr.frame_seq = htons (seq);
+#endif
 }
 
 static void
 pkt_set_proto_seq (fpga_pkt* pkt, uint16_t seq)
 {
-	// pkt->fpga_hdr.proto_seq = seq;
+#ifdef KEEP_BYTEORDER
+	pkt->fpga_hdr.proto_seq = seq;
+#else
 	pkt->fpga_hdr.proto_seq = htons (seq);
+#endif
 }
 
 static void
 pkt_inc_frame_seq (fpga_pkt* pkt, uint16_t seq)
 {
-	// pkt->fpga_hdr.frame_seq++;
+#ifdef KEEP_BYTEORDER
+	pkt->fpga_hdr.frame_seq++;
+#else
 	pkt->fpga_hdr.frame_seq = htons (frame_seq (pkt) + seq);
+#endif
 }
 
 static void
 pkt_inc_proto_seq (fpga_pkt* pkt, uint16_t seq)
 {
-	// pkt->fpga_hdr.proto_seq++;
+#ifdef KEEP_BYTEORDER
+	pkt->fpga_hdr.proto_seq++;
+#else
 	pkt->fpga_hdr.proto_seq = htons (proto_seq (pkt) + seq);
+#endif
 }
 
 static void
 pkt_set_len (fpga_pkt* pkt, uint16_t len)
 {
-	// pkt->length = len;
+#ifdef KEEP_BYTEORDER
+	pkt->length = len;
+#else
 	pkt->length = htons (len);
+#endif
 }
 
 static void
 pkt_inc_len (fpga_pkt* pkt, uint16_t len)
 {
-	// pkt->length += len;
+#ifdef KEEP_BYTEORDER
+	pkt->length += len;
+#else
 	pkt->length = htons (pkt_len (pkt) + len);
+#endif
 }
 
 /*
