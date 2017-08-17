@@ -111,21 +111,21 @@ s_msgf (int errnum, int priority, int task, const char* format, ...)
 	if (is_daemon)
 	{
 		if (task > 0)
-			syslog (priority, "Task #%d: %s", task, msg);
+			syslog (priority, "Task #%d:    %s", task, msg);
 		else
 			syslog (priority, "Coordinator: %s", msg);
 	}
 	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
 	{
 		if (task > 0)
-			fprintf (stderr, "Task #%d: %s\n", task, msg);
+			fprintf (stderr, "Task #%d:    %s\n", task, msg);
 		else
 			fprintf (stderr, "Coordinator: %s\n", msg);
 	}
 	else
 	{
 		if (task > 0)
-			fprintf (stdout, "Task #%d: %s\n", task, msg);
+			fprintf (stdout, "Task #%d:    %s\n", task, msg);
 		else
 			fprintf (stdout, "Coordinator: %s\n", msg);
 	}
@@ -142,26 +142,24 @@ s_msgf (int errnum, int priority, int task, const char* format, ...)
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 
 static void
-s_dump_pkt (const fpga_pkt* pkt)
+s_dump_buf (const unsigned char* buf, uint32_t len)
 {
 	if ( ! is_verbose || is_daemon )
 		return;
 
-	u_int16_t len = pkt->length;
-	const char* buf = (const char*)pkt;
 	char line[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
 
 	memset (line, 0, sizeof (line));
-	for (int r = 0; r < len; r += DUMP_ROW_LEN) {
+	for (uint32_t r = 0; r < len; r += DUMP_ROW_LEN) {
 		sprintf (line, "%0*x: ", DUMP_OFF_LEN, r);
 
 		/* hexdump */
-		for (int b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
+		for (uint32_t b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
 			sprintf (line + DUMP_OFF_LEN + 2 + 3*b, "%02x ",
 				(u_int8_t)(buf[b+r]));
 
 		/* ASCII dump */
-		for (int b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
+		for (uint32_t b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
 			sprintf (line + DUMP_OFF_LEN + 2 + b + 3*DUMP_ROW_LEN,
 				"%c", isprint (buf[b+r]) ? buf[b+r] : '.');
 
