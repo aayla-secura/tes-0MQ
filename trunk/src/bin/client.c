@@ -32,11 +32,11 @@ main (int argc, char **argv)
 	char filename[128];
 	char* buf = NULL;
 	memset (filename, 0, sizeof (filename));
-	u_int64_t max_ticks = 0;
-	u_int8_t ovrwrt = 0, status = 0;
+	uint64_t max_ticks = 0;
+	uint8_t ovrwrt = 0, status = 0;
 
 	int opt;
-	while ( (opt = getopt (argc, argv, "t:f:os")) != -1 )
+	while ( (opt = getopt (argc, argv, "t:f:osh")) != -1 )
 	{
 		switch (opt)
 		{
@@ -70,6 +70,7 @@ main (int argc, char **argv)
 				max_ticks = 0;
 				status = 1;
 				break;
+			case 'h':
 			case '?':
 				usage (argv[0]);
 				break;
@@ -124,8 +125,8 @@ main (int argc, char **argv)
 
 	puts ("Waiting for reply");
 
-	u_int8_t fstat;
-	u_int64_t ticks, size, frames, missed;
+	uint8_t fstat;
+	uint64_t ticks, size, frames, missed;
 	int rc = zsock_recv (server, REP_PIC, &fstat, &ticks, &size, &frames, &missed); 
 	if (rc == -1)
 	{

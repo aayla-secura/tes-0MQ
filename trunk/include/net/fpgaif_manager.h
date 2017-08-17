@@ -17,20 +17,25 @@ int if_close (ifdesc* ifd);
 /* Get the file descriptor */
 int if_fd (ifdesc* ifd);
 
-/* Set and get the first, next, <idx> or last tx or rx ring.
+/* Set and get the first, previous, next, <idx> or last tx or rx ring.
  * It is not done in a circular fashion.
  * Returns NULL for rings beyond the last one. */
 ifring* if_rewind_txring (ifdesc* ifd);
+ifring* if_previous_txring (ifdesc* ifd);
 ifring* if_next_txring (ifdesc* ifd);
 ifring* if_goto_txring (ifdesc* ifd, uint16_t idx);
 ifring* if_goto_last_txring (ifdesc* ifd);
 ifring* if_rewind_rxring (ifdesc* ifd);
+ifring* if_previous_rxring (ifdesc* ifd);
 ifring* if_next_rxring (ifdesc* ifd);
 ifring* if_goto_rxring (ifdesc* ifd, uint16_t idx);
 ifring* if_goto_last_rxring (ifdesc* ifd);
 
-/* Set and get the current buffer of a ring to head, next, <idx> or tail-1. */
+/* Set and get the current buffer of a ring to head, previous, next, <idx> or
+ * tail-1.
+ * previous and next return NULL when reaching the head-1 or tail. */
 char* ifring_rewind_buf (ifring* ring);
+char* ifring_previous_buf (ifring* ring);
 char* ifring_next_buf (ifring* ring);
 char* ifring_goto_buf (ifring* ring, uint32_t idx);
 char* ifring_goto_last_buf (ifring* ring);
