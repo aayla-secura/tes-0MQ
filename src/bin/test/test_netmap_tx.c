@@ -55,6 +55,48 @@
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
+static void
+pkt_set_frame_seq (fpga_pkt* pkt, uint16_t seq)
+{
+	// pkt->fpga_hdr.frame_seq = seq;
+	pkt->fpga_hdr.frame_seq = htons (seq);
+}
+
+static void
+pkt_set_proto_seq (fpga_pkt* pkt, uint16_t seq)
+{
+	// pkt->fpga_hdr.proto_seq = seq;
+	pkt->fpga_hdr.proto_seq = htons (seq);
+}
+
+static void
+pkt_inc_frame_seq (fpga_pkt* pkt, uint16_t seq)
+{
+	// pkt->fpga_hdr.frame_seq++;
+	pkt->fpga_hdr.frame_seq = htons (frame_seq (pkt) + seq);
+}
+
+static void
+pkt_inc_proto_seq (fpga_pkt* pkt, uint16_t seq)
+{
+	// pkt->fpga_hdr.proto_seq++;
+	pkt->fpga_hdr.proto_seq = htons (proto_seq (pkt) + seq);
+}
+
+static void
+pkt_set_len (fpga_pkt* pkt, uint16_t len)
+{
+	// pkt->length = len;
+	pkt->length = htons (len);
+}
+
+static void
+pkt_inc_len (fpga_pkt* pkt, uint16_t len)
+{
+	// pkt->length += len;
+	pkt->length = htons (pkt_len (pkt) + len);
+}
+
 /*
  * USEFUL:
  *   from system headers:
@@ -104,7 +146,7 @@ fpga_pkt* next_pkt (void)
 		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
 	} while (pkt == NULL);
 
-	pkt->fpga_hdr.frame_seq = gobj.pkts.sent; /* .sent is incremented
+	pkt_set_frame_seq (pkt, gobj.pkts.sent); /* .sent is incremented
 						   * before sending */
 	return pkt;
 }
@@ -131,8 +173,8 @@ new_fpga_pkt (void)
 	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETH_ALEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETH_ALEN);
-	pkt->fpga_hdr.frame_seq = 0; /* incremented as we send them */
-	pkt->length = FPGA_HDR_LEN;
+	pkt_set_frame_seq (pkt, 0); /* incremented as we send them */
+	pkt_set_len (pkt, FPGA_HDR_LEN); /* incremented later */
 
 	/* store a global pointer */
 	gobj.pkts.slots[gobj.pkts.first_free] = pkt;
@@ -168,12 +210,12 @@ new_mca_pkt (int seq, int num_bins,
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_MCA_TYPE;
-	pkt->length += num_bins * BIN_LEN;
+	pkt_inc_len (pkt, num_bins * BIN_LEN);
 
-	pkt->fpga_hdr.proto_seq = seq;
+	pkt_set_proto_seq (pkt, seq);
 	if (seq == 0)
 	{
-		pkt->length += MCA_HDR_LEN;
+		pkt_inc_len (pkt, MCA_HDR_LEN);
 		struct mca_header* mh = (struct mca_header*) &pkt->body;
 		mh->size = MCA_HDR_LEN + num_all_bins * BIN_LEN;
 		mh->last_bin = num_all_bins - 1;
@@ -195,7 +237,8 @@ new_tick_pkt (u_int16_t flags)
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += TICK_HDR_LEN;
+	pkt_inc_len (pkt, TICK_HDR_LEN);
+	// TO FIX byte order
 	pkt->fpga_hdr.evt_size = 3;
 	pkt->fpga_hdr.evt_type = EVT_TICK_TYPE;
 
@@ -219,7 +262,7 @@ new_peak_pkt (u_int16_t flags)
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += PEAK_HDR_LEN;
+	pkt_inc_len (pkt, PEAK_HDR_LEN);
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_PEAK_TYPE;
 
@@ -239,7 +282,7 @@ new_pulse_pkt (int num_peaks, u_int16_t flags)
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += PLS_HDR_LEN + num_peaks * PEAK_LEN;
+	pkt_inc_len (pkt, PLS_HDR_LEN + num_peaks * PEAK_LEN);
 	pkt->fpga_hdr.evt_size = num_peaks; /* is it?? */
 	pkt->fpga_hdr.evt_type = EVT_PLS_TYPE;
 
@@ -263,7 +306,7 @@ new_area_pkt (u_int16_t flags)
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += AREA_HDR_LEN;
+	pkt_inc_len (pkt, AREA_HDR_LEN);
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_AREA_TYPE;
 
@@ -286,8 +329,8 @@ new_trace_sgl_pkt (int num_peaks,
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += TR_FULL_HDR_LEN + num_peaks *
-		PEAK_LEN + num_samples * SMPL_LEN;
+	pkt_inc_len (pkt, TR_FULL_HDR_LEN + num_peaks *
+		PEAK_LEN + num_samples * SMPL_LEN);
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_TR_SGL_TYPE;
 
@@ -330,7 +373,7 @@ new_trace_dp_pkt (int num_peaks,
 	if (pkt == NULL)
 		return NULL;
 	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
-	pkt->length += TR_FULL_HDR_LEN + num_peaks * PEAK_LEN;
+	pkt_inc_len (pkt, TR_FULL_HDR_LEN + num_peaks * PEAK_LEN);
 	pkt->fpga_hdr.evt_size = 1;
 	pkt->fpga_hdr.evt_type = EVT_TR_DP_TYPE;
 
@@ -347,7 +390,7 @@ new_trace_dp_pkt (int num_peaks,
 	/* peaks */
 
 	struct dot_prod* dp = (struct dot_prod*)(
-		(u_char*) pkt + pkt->length );
+		(u_char*) pkt + pkt_len (pkt) );
 	/* Don't know how to cast to 48-bit integer and don't want to write to
 	 * reserved bits, so write 64-bits to a temporary struct and copy only
 	 * the used field */
@@ -355,7 +398,7 @@ new_trace_dp_pkt (int num_peaks,
 	u_int64_t rand = random ();
 	memcpy (&dptmp, &rand, DP_LEN);
 	dp->dot_prod = dptmp.dot_prod;
-	pkt->length += DP_LEN;
+	pkt_inc_len (pkt, DP_LEN);
 
 	return pkt;
 }
@@ -396,7 +439,7 @@ destroy_pkt (int id)
 static void
 dump_pkt (fpga_pkt* _pkt)
 {
-	u_int16_t len = _pkt->length;
+	u_int16_t len = pkt_len (_pkt);
 	const char* pkt = (const char*)_pkt;
 	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
 
@@ -416,7 +459,7 @@ dump_pkt (fpga_pkt* _pkt)
 
 		DEBUG ("%s\n", buf);
 	}
-	puts ("");
+	DEBUG ("\n");
 }
 
 static void
@@ -577,6 +620,8 @@ main (void)
 	do
 	{
 		fpga_pkt* pkt; /* for checking is max is reached */
+		// pkt = new_fpga_pkt ();
+		// break;
 
 		/* --------------- A full MCA histogram --------------- */
 		/* the header frame */
@@ -671,9 +716,9 @@ main (void)
 				&txring->slot[ txring->cur ];
 			nm_pkt_copy (pkt,
 				     NETMAP_BUF (txring, cur_slot->buf_idx),
-				     pkt->length);
+				     pkt_len (pkt));
 		
-			cur_slot->len = pkt->length;
+			cur_slot->len = pkt_len (pkt);
 			txring->head = txring->cur =
 				nm_ring_next (txring, txring->cur);
 			gobj.pkts.sent++;

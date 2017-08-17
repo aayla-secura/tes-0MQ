@@ -132,4 +132,42 @@ s_msgf (int errnum, int priority, int task, const char* format, ...)
 	va_end (args);
 }
 
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Dump packet (only in foreground and verbose mode).
+ */
+
+#define DUMP_ROW_LEN   16 /* how many bytes per row */
+#define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
+
+static void
+s_dump_pkt (const fpga_pkt* pkt)
+{
+	if ( ! is_verbose || is_daemon )
+		return;
+
+	u_int16_t len = pkt->length;
+	const char* buf = (const char*)pkt;
+	char line[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
+
+	memset (line, 0, sizeof (line));
+	for (int r = 0; r < len; r += DUMP_ROW_LEN) {
+		sprintf (line, "%0*x: ", DUMP_OFF_LEN, r);
+
+		/* hexdump */
+		for (int b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
+			sprintf (line + DUMP_OFF_LEN + 2 + 3*b, "%02x ",
+				(u_int8_t)(buf[b+r]));
+
+		/* ASCII dump */
+		for (int b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
+			sprintf (line + DUMP_OFF_LEN + 2 + b + 3*DUMP_ROW_LEN,
+				"%c", isprint (buf[b+r]) ? buf[b+r] : '.');
+
+		fprintf (stderr, "%s\n", line);
+	}
+	fprintf (stderr, "\n");
+}
+
 #endif

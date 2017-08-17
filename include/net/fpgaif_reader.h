@@ -20,17 +20,19 @@ typedef void (ifpkt_hn)(unsigned char *, const ifhdr*,
 uint16_t if_txrings (ifdesc* ifd);
 uint16_t if_rxrings (ifdesc* ifd);
 
-/* Get the first, current, <idx>, following <idx> or last tx or rx ring.
- * It is not done in a circular fashion.
+/* Get the first, current, <idx>, preceding <idx>, following <idx> or last tx
+ * or rx ring. It is not done in a circular fashion.
  * Returns NULL for rings beyond the last one. */
 ifring* if_first_txring (ifdesc* ifd);
 ifring* if_cur_txring (ifdesc* ifd);
 ifring* if_txring (ifdesc* ifd, uint16_t idx);
+ifring* if_preceding_txring (ifdesc* ifd, uint16_t idx);
 ifring* if_following_txring (ifdesc* ifd, uint16_t idx);
 ifring* if_last_txring (ifdesc* ifd);
 ifring* if_first_rxring (ifdesc* ifd);
 ifring* if_cur_rxring (ifdesc* ifd);
 ifring* if_rxring (ifdesc* ifd, uint16_t idx);
+ifring* if_preceding_rxring (ifdesc* ifd, uint16_t idx);
 ifring* if_following_rxring (ifdesc* ifd, uint16_t idx);
 ifring* if_last_rxring (ifdesc* ifd);
 
@@ -51,19 +53,21 @@ int ifring_compare_ids (ifring* ring, uint32_t ida, uint32_t idb);
 uint32_t ifring_earlier_id (ifring* ring, uint32_t ida, uint32_t idb);
 uint32_t ifring_later_id (ifring* ring, uint32_t ida, uint32_t idb);
 
-/* Get the head, current, following <idx> or tail buffer id of a ring.
- * Wraps around. */
+/* Get the head, current, preceding <idx>, following <idx> or tail buffer id of
+ * a ring. Wraps around. */
 uint32_t ifring_head (ifring* ring);
 uint32_t ifring_cur (ifring* ring);
+uint32_t ifring_preceding (ifring* ring, uint32_t idx);
 uint32_t ifring_following (ifring* ring, uint32_t idx);
 uint32_t ifring_tail (ifring* ring);
 
-/* Get the head, current, <idx>, following <idx> or tail buffer of a ring.
- * Wraps around.
- * ifring_following_buf returns NULL when reaching the tail. */
+/* Get the head, current, <idx>, preceding <idx>, following <idx> or tail
+ * buffer of a ring. Wraps around.
+ * preceding and following return NULL when reaching the head-1 or tail. */
 char* ifring_head_buf (ifring* ring);
 char* ifring_cur_buf (ifring* ring);
 char* ifring_buf (ifring* ring, uint32_t idx);
+char* ifring_preceding_buf (ifring* ring, uint32_t idx);
 char* ifring_following_buf (ifring* ring, uint32_t idx);
 char* ifring_last_buf (ifring* ring);
 

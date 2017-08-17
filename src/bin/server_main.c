@@ -45,17 +45,19 @@
 #include "common.h"
 #include <net/if.h> /* IFNAMSIZ */
 
+/* Defaults */
 #define UPDATE_INTERVAL 1             // in seconds
-#define FPGA_IF         "vale:fpga}1" // default
+#define FPGA_IF         "vale:fpga}1"
 
 /*
  * Statistics, only used in foreground mode
  */
 struct stats_t
 {
-	struct    timeval last_update;
-	u_int64_t received;
-	u_int64_t missed;
+	struct   timeval last_update;
+	uint64_t received;
+	uint64_t missed;
+	uint64_t polled;
 };
 
 struct data_t
@@ -67,7 +69,7 @@ struct data_t
 static void usage (const char* self);
 static int  print_stats (zloop_t* loop, int timer_id, void* stats_);
 static int  new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
-static int  coordinator_body (const char* ifname);
+static int  coordinator_body (const char* ifname, uint64_t stat_period);
 
 /* ------------------------------------------------------------------------- */
 
@@ -80,14 +82,17 @@ usage (const char* self)
 		"    -i <if>              Read packets from <if> interface\n"
 		"                         Defaults to "FPGA_IF"\n"
 		"    -f                   Run in foreground\n"
-		"    -v                   Print debugging messages\n", self
+		"    -u <n>               Print statistics every <n> seconds\n"
+		"                         Set to 0 to disable. Default is %d\n"
+		"                         in foreground and 0 in daemon mode\n"
+		"    -v                   Print debugging messages\n",
+		self, UPDATE_INTERVAL
 		);
 	exit (EXIT_FAILURE);
 }
 
 /*
- * When working in foreground, print statistics (bandwidth, etc) every
- * UPDATE_INTERVAL.
+ * When working in foreground, print statistics (bandwidth, etc).
  */
 static int
 print_stats (zloop_t* loop, int timer_id, void* stats_)
@@ -108,11 +113,13 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
 	
 	s_msgf (0, LOG_INFO, 0, 
-		"elapsed: %2.5f received: %7lu dropped: %7lu "
-		"avg bandwidth: %10.3e pps",
+		"elapsed: %2.5fs received: %7lu dropped: %7lu polled: %7lu "
+		"avg pkts per poll: %7lu avg bandwidth: %10.3e pps",
 		tdelta,
 		stats->received,
 		stats->missed,
+		stats->polled,
+		(stats->polled) ? stats->received / stats->polled : 0,
 		(double) stats->received / tdelta
 		);
 
@@ -133,8 +140,8 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	struct data_t* data = (struct data_t*) data_;
 
 	/* Signal the waiting tasks and find the head of the slowest one */
-	u_int32_t head = ifring_tail (data->rxring); /* if no active tasks */
-	tasks_get_head (&head);
+	uint32_t nhead = ifring_tail (data->rxring); /* if no active tasks */
+	tasks_get_head (&nhead);
 	int rc = tasks_wakeup ();
 	if (rc)
 	{
@@ -143,27 +150,55 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		return -1;
 	}
 
-	if ( ! is_daemon )
-	{
-		/* Save statistics */
-		uint32_t num_new = ifring_pending (data->rxring);
-		data->stats.received += num_new;
-		fpga_pkt* pkt = (fpga_pkt*) ifring_cur_buf (data->rxring);
-		uint16_t fseqA = frame_seq (pkt);
-		uint16_t fseqB = frame_seq (pkt);
-		data->stats.missed += (u_int64_t) ( num_new - 1 -
-				(uint16_t)(fseqB - fseqA) );
-	}
+	/* Save statistics */
+	fpga_pkt* pkt = (fpga_pkt*) ifring_cur_buf (data->rxring); /* old head */
+	assert (pkt);
+	uint16_t fseqA = frame_seq (pkt);
 
-	/* Set the head and cursor */
-	ifring_goto_buf (data->rxring, head);
-	ifring_release_to_buf (data->rxring, head);
+	pkt = (fpga_pkt*) ifring_preceding_buf (data->rxring, nhead);
+	if (pkt == NULL)
+	{
+		// assert (nhead == ifring_head (data->rxring));
+		// s_msg (0, LOG_DEBUG, 0, "Keeping same head");
+		return 0;
+	}
+	uint16_t fseqB = frame_seq (pkt);
+
+	// uint32_t cur = ifring_cur (data->rxring);
+	ifring_goto_buf (data->rxring, nhead); /* cursor -> new head */
+	uint32_t num_new = ifring_done (data->rxring); /* cursor - old head */
+
+#if 0
+	if ((uint32_t) ((uint16_t)(fseqB - fseqA) - num_new + 1) != 0)
+	{
+		s_msgf (0, LOG_DEBUG, 0, "%hu -> %hu", cur, nhead);
+		for (; cur != nhead; cur = ifring_following (data->rxring, cur))
+		{
+			pkt = (fpga_pkt*) ifring_buf (data->rxring, cur);
+			uint16_t fseq = frame_seq (pkt);
+			s_msgf (0, LOG_DEBUG, 0,
+					"Buffer %u, frame %hu", cur, fseq);
+			pkt->length = FPGA_HDR_LEN;
+			s_dump_pkt (pkt);
+		}
+		assert (0);
+	}
+#endif
+
+	data->stats.received += num_new;
+	data->stats.missed += (u_int64_t) (
+			(uint16_t)(fseqB - fseqA) - num_new + 1);
+	data->stats.polled++;
+
+	ifring_release_done_buf (data->rxring); /* head -> new head */
+	assert (ifring_head (data->rxring) == ifring_cur (data->rxring));
+	assert (ifring_head (data->rxring) == nhead);
 
 	return 0;
 }
 
 static int
-coordinator_body (const char* ifname)
+coordinator_body (const char* ifname, uint64_t stat_period)
 {
 	int rc;
 	struct data_t data;
@@ -209,7 +244,7 @@ coordinator_body (const char* ifname)
 	if ( ! is_daemon )
 	{
 		/* Set the timer */
-		rc = zloop_timer (loop, 1000 * UPDATE_INTERVAL, 0,
+		rc = zloop_timer (loop, 1000 * stat_period, 0,
 			print_stats, &data.stats);
 		if (rc == -1)
 		{
@@ -217,7 +252,7 @@ coordinator_body (const char* ifname)
 			goto cleanup;
 		}
 		s_msgf (0, LOG_DEBUG, 0, "Will print stats every %d seconds",
-			UPDATE_INTERVAL);
+			stat_period);
 	}
 
 	s_msg (0, LOG_DEBUG, 0, "All threads initialized");
@@ -250,9 +285,11 @@ main (int argc, char **argv)
 	is_daemon = 1;
 	is_verbose = 0;
 	int opt;
+	char* buf = NULL;
+	long int stat_period = -1;
 	char ifname[IFNAMSIZ + 1];
 	memset (ifname, 0, sizeof (ifname));
-	while ( (opt = getopt (argc, argv, "i:fv")) != -1 )
+	while ( (opt = getopt (argc, argv, "i:u:fvh")) != -1 )
 	{
 		switch (opt)
 		{
@@ -260,12 +297,20 @@ main (int argc, char **argv)
 				snprintf (ifname, sizeof (ifname),
 					"%s", optarg);
 				break;
+			case 'u':
+				stat_period = strtoul (optarg, &buf, 10);
+				if (strlen (buf))
+				{
+					usage (argv[0]);
+				}
+				break;
 			case 'f':
 				is_daemon = 0;
 				break;
 			case 'v':
 				is_verbose = 1;
 				break;
+			case 'h':
 			case '?':
 				usage (argv[0]);
 				break;
@@ -277,6 +322,10 @@ main (int argc, char **argv)
 	if (strlen (ifname) == 0)
 	{
 		sprintf (ifname, FPGA_IF);
+	}
+	if (stat_period == -1 && ! is_daemon)
+	{
+		stat_period = UPDATE_INTERVAL;
 	}
 
 	if (is_daemon)
@@ -295,6 +344,6 @@ main (int argc, char **argv)
 		openlog ("FPGA server", 0, LOG_DAEMON);
 	}
 
-	rc = coordinator_body (ifname);
+	rc = coordinator_body (ifname, stat_period);
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
