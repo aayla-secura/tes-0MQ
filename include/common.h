@@ -3,7 +3,7 @@
 
 #include <sys/types.h>
 // #include <sys/time.h>
-// #include <sys/mman.h>
+#include <sys/mman.h>
 #include <errno.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -23,6 +23,13 @@
 #include <net/fpgapkt.h>
 
 #include "daemon.h"
+
+#define FULL_DBG
+#ifdef FULL_DBG
+#  define dbg_assert(...) assert (__VA_ARGS__)
+#else
+#  define dbg_assert(...)
+#endif
 
 /* ------------------------------------------------------------------------- */
 
@@ -69,23 +76,23 @@ s_msg (int errnum, int priority, int task, const char* msg)
 	if (is_daemon)
 	{
 		if (task > 0)
-			syslog (priority, "Task #%d:    %s%s", task, msg, err);
+			syslog (priority, "[Task #%d]     %s%s", task, msg, err);
 		else
-			syslog (priority, "Coordinator: %s%s", msg, err);
+			syslog (priority, "[Coordinator] %s%s", msg, err);
 	}
 	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
 	{
 		if (task > 0)
-			fprintf (stderr, "Task #%d:    %s%s\n", task, msg, err);
+			fprintf (stderr, "[Task #%d]     %s%s\n", task, msg, err);
 		else
-			fprintf (stderr, "Coordinator: %s%s\n", msg, err);
+			fprintf (stderr, "[Coordinator] %s%s\n", msg, err);
 	}
 	else
 	{
 		if (task > 0)
-			fprintf (stdout, "Task #%d:    %s%s\n", task, msg, err);
+			fprintf (stdout, "[Task #%d]     %s%s\n", task, msg, err);
 		else
-			fprintf (stdout, "Coordinator: %s%s\n", msg, err);
+			fprintf (stdout, "[Coordinator] %s%s\n", msg, err);
 	}
 }
 
@@ -111,23 +118,23 @@ s_msgf (int errnum, int priority, int task, const char* format, ...)
 	if (is_daemon)
 	{
 		if (task > 0)
-			syslog (priority, "Task #%d:    %s", task, msg);
+			syslog (priority, "[Task #%d]     %s", task, msg);
 		else
-			syslog (priority, "Coordinator: %s", msg);
+			syslog (priority, "[Coordinator] %s", msg);
 	}
 	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
 	{
 		if (task > 0)
-			fprintf (stderr, "Task #%d:    %s\n", task, msg);
+			fprintf (stderr, "[Task #%d]     %s\n", task, msg);
 		else
-			fprintf (stderr, "Coordinator: %s\n", msg);
+			fprintf (stderr, "[Coordinator] %s\n", msg);
 	}
 	else
 	{
 		if (task > 0)
-			fprintf (stdout, "Task #%d:    %s\n", task, msg);
+			fprintf (stdout, "[Task #%d]     %s\n", task, msg);
 		else
-			fprintf (stdout, "Coordinator: %s\n", msg);
+			fprintf (stdout, "[Coordinator] %s\n", msg);
 	}
 	va_end (args);
 }
@@ -136,6 +143,7 @@ s_msgf (int errnum, int priority, int task, const char* format, ...)
 
 /*
  * Dump packet (only in foreground and verbose mode).
+ * TO DO: print more than one line at a time.
  */
 
 #define DUMP_ROW_LEN   16 /* how many bytes per row */
@@ -147,7 +155,14 @@ s_dump_buf (const unsigned char* buf, uint32_t len)
 	if ( ! is_verbose || is_daemon )
 		return;
 
-	char line[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
+	/*
+	 * DUMP_OFF_LEN chars for starting byte
+	 * 2 chars for ": "
+	 * 3 chars per byte for hex
+	 * 1 char  per byte for ASCII
+	 * 1 char  for terminating null
+	 */
+	char line[ DUMP_OFF_LEN + 2 + 4*DUMP_ROW_LEN + 1 ];
 
 	memset (line, 0, sizeof (line));
 	for (uint32_t r = 0; r < len; r += DUMP_ROW_LEN) {
@@ -156,7 +171,7 @@ s_dump_buf (const unsigned char* buf, uint32_t len)
 		/* hexdump */
 		for (uint32_t b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
 			sprintf (line + DUMP_OFF_LEN + 2 + 3*b, "%02x ",
-				(u_int8_t)(buf[b+r]));
+				(uint8_t)(buf[b+r]));
 
 		/* ASCII dump */
 		for (uint32_t b = 0; b < DUMP_ROW_LEN && b+r < len; b++)
