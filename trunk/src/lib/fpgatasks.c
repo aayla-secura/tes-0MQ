@@ -25,22 +25,23 @@
  * struct _task_t
  * {
  *         zloop_reader_fn* client_handler;
- *         s_pkt_hn*        pkt_handler;
- *         s_data_hn*       task_init_fn; // initialize data
- *         s_data_hn*       task_fin_fn;  // cleanup data
- *         void*     data;         // task-specific
- *         ifring*   rxring;       // we support only one ring for now
- *         zactor_t* shim;         // coordinator's end of the pipe, signals
- *                                 // sent on behalf of the coordinator go here
- *         zsock_t*  frontend;     // clients
- *         const int front_type;   // one of ZMQ_*
- *         const char* front_addr; // the socket addresses, comma separated
- *         int       id;
- *         uint32_t head;
- *         uint16_t cur_frame;
- *         bool      error;        // the frontend and packet handler set this
- *         bool      busy;
- *         bool      active;
+ *         s_pkt_fn*        pkt_handler;
+ *         s_data_fn*       data_init; // initialize data
+ *         s_data_fn*       data_fin;  // cleanup data
+ *         void*       data;           // task-specific
+ *         ifring*     rxring;         // we support only one ring for now
+ *         zactor_t*   shim;           // coordinator's end of the pipe, signals
+ *                                     // sent on behalf of coordinator go here
+ *         zsock_t*    frontend;       // clients
+ *         const int   front_type;     // one of ZMQ_*
+ *         const char* front_addr;     // the socket addresses, comma separated
+ *         int         id;
+ *         uint32_t    head;
+ *         uint16_t    cur_frame;
+ *         bool        error;          // client_ and pkt_handler should set this
+ *         bool        busy;
+ *         bool        active;         // client_handler or data_init should
+ *                                     // enable this
  * };
  *
  * If the task defines a public interface address, s_task_shim will open the
@@ -69,6 +70,14 @@
  * and exits with -1.
  * pkt_handler may exit with -1 without setting error, if it simply is not
  * interested in more packets for now.
+ *
+ * If the task is not interested in receiving packets, is sets its active flag
+ * to false. It won't receive SIG_WAKEUP if it is not active and its head won't
+ * be synchronized with the real head. When it needs to process packets, it
+ * must set its private head to the global head (by calling ifring_head) and
+ * then set its active flag to true.
+ * Tasks are initialized as inactive, the task should enable the flag either in
+ * its initializer or in its client frontend handler.
  *
  * Tasks are defined in a static global array, see THE FULL LIST.
  *
@@ -104,33 +113,37 @@
 
 #include "fpgatasks.h"
 #include "net/fpgaif_reader.h"
-#include "api.h" /* defines the public interfaces */
 #include "common.h"
+#include "aio.h"
+
+/* From netmap_user.h */
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
 
 /* ---------------------------------- API ---------------------------------- */
 
-typedef int (s_data_hn)(task_t*);
-typedef int (s_pkt_hn)(zloop_t*, fpga_pkt*, uint16_t, task_t*);
+typedef int (s_data_fn)(task_t*);
+typedef int (s_pkt_fn)(zloop_t*, fpga_pkt*, uint16_t, task_t*);
 
 /* See DEV NOTES */
 struct _task_t
 {
 	zloop_reader_fn* client_handler;
-	s_pkt_hn*        pkt_handler;
-	s_data_hn*       task_init_fn;
-	s_data_hn*       task_fin_fn;
-	void*     data;
-	ifring*   rxring;
-	zactor_t* shim;
-	zsock_t*  frontend;
-	const int front_type;
+	s_pkt_fn*        pkt_handler;
+	s_data_fn*       data_init;
+	s_data_fn*       data_fin;
+	void*       data;
+	ifring*     rxring;
+	zactor_t*   shim;
+	zsock_t*    frontend;
+	const int   front_type;
 	const char* front_addr;
-	int       id;
-	uint32_t head;
-	uint16_t cur_frame;
-	bool      error;
-	bool      busy;
-	bool      active;
+	int         id;
+	uint32_t    head;
+	uint16_t    cur_frame;
+	bool        error;
+	bool        busy;
+	bool        active;
 };
 
 /* -------------------------------- HELPERS -------------------------------- */
@@ -156,16 +169,17 @@ static void s_task_stop (task_t* self);
 #define REQ_PIC      "s81"
 #define REP_PIC    "18888"
 
-#define FDATA_OFF   48 // beginning of file reserved for statistics
+#define TSAVE_SOFFSET  48 // beginning of file reserved for statistics
+#define TSAVE_BUFSIZE  157286400UL // 150 MB 
 
 /*
- * Statistics saved to the file. 
+ * Statistics sent as a reply and saved to the file. 
  */
 struct s_task_save_stats_t
 {	uint64_t ticks;
 	uint64_t size;           // number of written bytes 
 	uint64_t frames;
-	uint64_t frames_lost;    // missed frames 
+	uint64_t frames_lost;    // total frames lost (includes dropped)
 	uint64_t frames_dropped; // dropped frames (invalid ones)
 	uint64_t errors;         // TO DO: last 8-bytes of the tick header 
 };
@@ -176,20 +190,33 @@ struct s_task_save_stats_t
  */
 struct s_task_save_data_t
 {
+	struct aiocb aios;
 	struct s_task_save_stats_t st;
+	struct
+	{
+		unsigned char* base; // mmapped, size of TSAVE_BUFSIZE
+		unsigned char* tail; // start address queued for aio_write
+		unsigned char* head; // end address queued for aio_write
+		unsigned char* cur;  // address where next packet will be coppied to
+		unsigned char* ceil; // base + TSAVE_BUFSIZE
+	} bufzone;
 	uint64_t max_ticks;
-	char*     filename;
-	int       fd;
+#ifdef FULL_DBG
+	uint64_t batches;
+#endif
+	char*    filename;
 };
 
 static zloop_reader_fn s_task_save_req_hn;
-static s_pkt_hn        s_task_save_pkt_hn;
-static s_data_hn       s_task_save_init;
-static s_data_hn       s_task_save_fin;
+static s_pkt_fn        s_task_save_pkt_hn;
+static s_data_fn       s_task_save_init;
+static s_data_fn       s_task_save_fin;
 
-static int  s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode);
-static int  s_task_save_read (struct s_task_save_data_t* sjob);
+static int  s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
+static int  s_task_save_read  (struct s_task_save_data_t* sjob);
 static int  s_task_save_write (struct s_task_save_data_t* sjob);
+static int  s_task_save_send  (struct s_task_save_data_t* sjob,
+	zsock_t* frontend);
 static void s_task_save_close (struct s_task_save_data_t* sjob);
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
@@ -201,8 +228,8 @@ static task_t tasks[] = {
 	{ // SAVE TO FILE 
 		.client_handler = s_task_save_req_hn,
 		.pkt_handler    = s_task_save_pkt_hn,
-		.task_init_fn   = s_task_save_init,
-		.task_fin_fn    = s_task_save_fin,
+		.data_init      = s_task_save_init,
+		.data_fin       = s_task_save_fin,
 		.front_type     = ZMQ_REP,
 		.front_addr     = "tcp://*:55555",
 	}
@@ -220,10 +247,8 @@ static task_t tasks[] = {
 int
 tasks_start (ifring* rxring, zloop_t* c_loop)
 {
-	// TO DO in data constructor
-	// assert (sizeof (struct sjob_stats_t) == FDATA_OFF);
-	assert (rxring != NULL);
-	assert (NUM_TASKS == sizeof (tasks)/sizeof (task_t));
+	dbg_assert (rxring != NULL);
+	dbg_assert (NUM_TASKS == sizeof (tasks)/sizeof (task_t));
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
@@ -245,7 +270,7 @@ tasks_start (ifring* rxring, zloop_t* c_loop)
 int
 tasks_read (zloop_t* loop)
 {
-	assert (loop != NULL);
+	dbg_assert (loop != NULL);
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
@@ -266,7 +291,7 @@ tasks_read (zloop_t* loop)
 void
 tasks_mute (zloop_t* loop)
 {
-	assert (loop != NULL);
+	dbg_assert (loop != NULL);
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		s_msgf (0, LOG_DEBUG, 0,
@@ -332,15 +357,14 @@ tasks_get_head (uint32_t* head)
 static int
 s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 {
-	assert (self_ != NULL);
+	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
-	assert (self->busy == 0);
+	dbg_assert (self->busy == 0);
 	
-	// int sig = zsock_wait (reader);
+#ifdef FULL_DBG
 	/* Catch bugs by receiving a message and asserting it's a signal.
 	 * zsock_wait discards messages until a signal arrives. */
-
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
@@ -350,13 +374,24 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	int sig = zmsg_signal (msg);
 	zmsg_destroy (&msg);
 	assert (sig >= 0);
+#else
+	int sig = zsock_wait (reader);
+	if (sig == -1)
+	{
+		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		return -1;
+	}
+#endif
 	if (sig == SIG_STOP)
 	{
 		s_msg (0, LOG_DEBUG, self->id,
 			"Coordinator thread is terminating us");
 		return -1;
 	}
-	assert (sig == SIG_WAKEUP);
+	dbg_assert (sig == SIG_WAKEUP);
+	// dbg_assert (self->active == 0);
+	/* TO DO: why do signals arrive right after setting active to false in
+	 * the packet handler? */
 	if (self->active == 0)
 		return 0;
 
@@ -364,27 +399,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	/* Process packets */
 	do
 	{
-		/* TO DO: is it faster if ifring_buf does no checks and instead
-		 * we check if head == tail at the end */
 		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
 			self->rxring, self->head);
 
-		uint16_t blen = ifring_len (self->rxring, self->head);
-		uint16_t plen = pkt_len (pkt);
-		if (blen != plen)
-		{
-			s_msgf (0, LOG_WARNING, self->id,
-				"Packet length mismatch: header says %hu, "
-				"ring slot is %hu", plen, blen);
-			if (plen > blen)
-				plen = blen;
-		}
-		int rc;
-		/* TO DO: check packet */
+		uint16_t len = ifring_len (self->rxring, self->head);
+		int rc = self->pkt_handler (loop, pkt, len, self);
 
-		rc = self->pkt_handler (loop, pkt, plen, self);
 		self->head = ifring_following (self->rxring, self->head);
-
 		if (rc)
 			break;
 
@@ -404,7 +425,9 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 static int
 s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 {
-	// int sig = zsock_wait (reader);
+	dbg_assert (ignored == NULL);
+
+#ifdef FULL_DBG
 	/* Catch bugs by receiving a message and asserting it's a signal.
 	 * zsock_wait discards messages until a signal arrives. */
 	zmsg_t* msg = zmsg_recv (reader);
@@ -416,13 +439,21 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	int sig = zmsg_signal (msg);
 	zmsg_destroy (&msg);
 	assert (sig >= 0);
+#else
+	int sig = zsock_wait (reader);
+	if (sig == -1)
+	{
+		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		return -1;
+	}
+#endif
 
 	if (sig == SIG_DIED)
 	{
 		s_msg (0, LOG_DEBUG, 0, "Task thread encountered an error");
 		return -1;
 	}
-	assert (0); // we only deal with SIG_DIED 
+	dbg_assert (0); // we only deal with SIG_DIED 
 }
 
 /*
@@ -431,21 +462,21 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 static void
 s_task_shim (zsock_t* pipe, void* self_)
 {
-	assert (self_ != NULL);
+	dbg_assert (self_ != NULL);
 	zsock_signal (pipe, 0); /* zactor_new will wait for this */
 
 	int rc;
 	task_t* self = (task_t*) self_;
-	assert (self->pkt_handler != NULL);
-	assert (self->data == NULL);
-	assert (self->rxring != NULL);
-	assert (self->frontend == NULL);
-	assert (self->id > 0);
-	assert (self->head == 0);
-	assert (self->cur_frame == 0);
-	assert (self->error == 0);
-	assert (self->busy == 0);
-	assert (self->active == 0);
+	dbg_assert (self->pkt_handler != NULL);
+	dbg_assert (self->data == NULL);
+	dbg_assert (self->rxring != NULL);
+	dbg_assert (self->frontend == NULL);
+	dbg_assert (self->id > 0);
+	dbg_assert (self->head == 0);
+	dbg_assert (self->cur_frame == 0);
+	dbg_assert (self->error == 0);
+	dbg_assert (self->busy == 0);
+	dbg_assert (self->active == 0);
 	
 	zloop_t* loop = zloop_new ();
 	/* Only the coordinator thread should get interrupted, we wait for
@@ -460,8 +491,8 @@ s_task_shim (zsock_t* pipe, void* self_)
 	if (self->front_addr || self->client_handler)
 	{
 		/* Did we forget to set one? */
-		assert (self->client_handler != NULL);
-		assert (self->front_addr != NULL);
+		dbg_assert (self->client_handler != NULL);
+		dbg_assert (self->front_addr != NULL);
 
 		self->frontend = zsock_new (self->front_type);
 		if (self->frontend == NULL)
@@ -491,9 +522,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 	}
 
 	/* Call initializer */
-	if (self->task_init_fn)
+	if (self->data_init)
 	{
-		rc = self->task_init_fn (self);
+		rc = self->data_init (self);
 		if (rc)
 		{
 			s_msg (errno, LOG_ERR, self->id,
@@ -503,10 +534,10 @@ s_task_shim (zsock_t* pipe, void* self_)
 		}
 	}
 
-	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
 	s_msg (0, LOG_DEBUG, self->id, "Polling");
+	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
 	rc = zloop_start (loop);
-	assert (rc == -1); /* we don't get interrupted */
+	dbg_assert (rc == -1); /* we don't get interrupted */
 
 cleanup:
 	self->active = 0;
@@ -519,15 +550,15 @@ cleanup:
 	if (self->error)
 		zsock_signal (pipe, SIG_DIED);
 
-	if (self->task_fin_fn)
+	if (self->data_fin)
 	{
-		rc = self->task_fin_fn (self);
+		rc = self->data_fin (self);
 		if (rc)
 		{
 			s_msg (errno, LOG_ERR, self->id,
 				"Could not cleanup thread data");
 		}
-		assert (self->data == NULL);
+		dbg_assert (self->data == NULL);
 	}
 	zloop_destroy (&loop);
 	zsock_destroy (&self->frontend);
@@ -543,15 +574,14 @@ cleanup:
 static int
 s_task_start (ifring* rxring, task_t* self)
 {
-	assert (self != NULL);
-	assert (rxring != NULL);
+	dbg_assert (self != NULL);
+	dbg_assert (rxring != NULL);
 
 	self->rxring = rxring;
-	/* TO DO: set the head */
 
 	/* Start the thread, will block until the handler signals */
 	self->shim = zactor_new (s_task_shim, self);
-	assert (self->shim);
+	dbg_assert (self->shim);
 	/* zactor_new does not check the signal, so no way to know if there was
 	 * an error. As a workaroung the task thread will send a second signal
 	 * when it is ready (or when it fails) and we wait for it here. */
@@ -562,7 +592,7 @@ s_task_start (ifring* rxring, task_t* self)
 			"Task thread failed to initialize");
 		return -1;
 	}
-	assert (rc == SIG_INIT);
+	dbg_assert (rc == SIG_INIT);
 	s_msg (0, LOG_DEBUG, self->id, "Task thread initialized");
 
 	return 0;
@@ -575,7 +605,7 @@ s_task_start (ifring* rxring, task_t* self)
 static void
 s_task_stop (task_t* self)
 {
-	assert (self != NULL);
+	dbg_assert (self != NULL);
 	if (self->shim == NULL)
 	{
 		s_msg (0, LOG_DEBUG, self->id, "Task had already exited");
@@ -603,11 +633,11 @@ s_task_stop (task_t* self)
 static int
 s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 {
-	assert (self_ != NULL);
+	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
-	assert (self->busy == 0);
-	assert (self->active == 0);
+	dbg_assert (self->busy == 0);
+	dbg_assert (self->active == 0);
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 	uint8_t job_mode;
@@ -625,7 +655,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	if (sjob->filename == NULL || job_mode > 1)
 	{
 		s_msg (0, LOG_INFO, self->id, "Received a malformed request");
-		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		zsock_send (reader, REP_PIC, REQ_FAIL);
 		return 0;
 	}
 
@@ -672,7 +702,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			s_msgf (errno, LOG_ERR, self->id,
 				"Could not open file %s", sjob->filename);
 		}
-		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		zsock_send (reader, REP_PIC, REQ_FAIL);
 		s_task_save_close (sjob);
 		return 0;
 	}
@@ -681,12 +711,8 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	if (sjob->max_ticks == 0)
 	{ /* just read in stats and send reply */
-		s_task_save_read (sjob);
-		zsock_send (reader, REP_PIC, REQ_OK, 
-			sjob->st.ticks,
-			sjob->st.size,
-			sjob->st.frames,
-			sjob->st.frames_lost);
+		s_task_save_read  (sjob);
+		s_task_save_send  (sjob, self->frontend);
 		s_task_save_close (sjob);
 		return 0;
 	}
@@ -699,55 +725,125 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 }
 
 /*
- * Saves packets to a file.
+ * Saves packets to a file. len is the buffer length. Will drop frames that say
+ * packet is longer than this. Will not write more than what the frame header
+ * says.
  */
 static int
 s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 {
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
-	assert (sjob->filename != NULL);
-	assert (sjob->fd != -1);
-	assert (self->active);
+	dbg_assert (sjob->filename != NULL);
+	dbg_assert (sjob->aios.aio_fildes != -1);
+	dbg_assert (self->active);
 
-	/* TO DO: how to handle errors */
-	int rc = write (sjob->fd, pkt, len);
-	if (rc == -1)
-	{
-		s_msgf (errno, LOG_ERR, self->id,
-			"Could not write to file [%d]", sjob->fd);
-		self->error = 1;
-		return -1;
+	uint16_t plen = pkt_len (pkt);
+	if (plen > len)
+	{ /* drop the frame */
+		s_msgf (0, LOG_DEBUG, self->id,
+			"Packet too long (header says %hu, "
+			"ring slot is %hu)", plen, len);
+		sjob->st.frames_dropped++;
+		return 0;
 	}
+	/* TO DO: check packet */
 
 	uint16_t prev_frame = self->cur_frame;
 	self->cur_frame = frame_seq (pkt);
 
 	/* TO DO: save err flags */
+	/* size is updated in batches as write operations finish */
 	if (is_tick (pkt))
 		sjob->st.ticks++;
-	sjob->st.size += len;
 	sjob->st.frames++;
 	sjob->st.frames_lost += (uint64_t) (
 			(uint16_t)(self->cur_frame - prev_frame) - 1);
 
+	int done = 0;
+	/* TO DO: save this last tick as well? */
 	if (sjob->st.ticks == sjob->max_ticks)
 	{
 		self->active = 0;
+		done = 1;
+	}
+
+	/*
+	 * Check if previous job finished. Do nothing if it hasn't and there is
+	 * sufficient space for the next frame. Block in a tight loop if there
+	 * is no space for the frame until the write is done. Also block if we
+	 * are finalizing.
+	 *
+	 * head will always be numerically larger than tail, since a single
+	 * aio_write operation cannot deal wil wrapping around. So
+	 * TSAVE_BUFSIZE + tail - head always gives the free space left.
+	 */
+	uint64_t enqueued = sjob->bufzone.head - sjob->bufzone.tail;
+	int jobrc;
+	do
+	{
+		jobrc = aio_error (&sjob->aios);
+		if (jobrc == 0)
+		{ /* previous batch written, queue the next one */
+
+			/* tail -> head */
+			if (unlikely (sjob->bufzone.head = sjob->bufzone.ceil))
+			{
+				sjob->bufzone.tail = sjob->bufzone.base;
+			}
+			else
+			{
+				sjob->bufzone.tail = sjob->bufzone.head;
+			}
+
+			/* head -> min (cursor, ceil) */
+			if (unlikely (sjob->bufzone.cur < sjob->bufzone.head))
+			{ /* cursor had wrapped around, queue until the end of
+			   * the bufzone */
+				sjob->bufzone.head = sjob->bufzone.ceil;
+			}
+			else
+			{
+				sjob->bufzone.head = sjob->bufzone.cur;
+			}
+
+			sjob->st.size += enqueued;
+			enqueued = sjob->bufzone.head - sjob->bufzone.tail;
+#ifdef FULL_DBG
+			sjob->batches++;
+#endif
+
+			sjob->aios.aio_offset = sjob->st.size;
+			sjob->aios.aio_buf = sjob->bufzone.tail;
+			sjob->aios.aio_nbytes = enqueued;
+		}
+		else if (jobrc != EINPROGRESS)
+		{
+			/* TO DO: how to handle errors */
+			s_msg (jobrc, LOG_ERR, self->id,
+				"Could not write to file");
+			self->error = 1;
+			return -1;
+		}
+	} while ( plen > TSAVE_BUFSIZE - enqueued || (done && jobrc != 0) );
+
+	if (done)
+	{
+		assert (jobrc == 0);
 		s_msgf (0, LOG_INFO, self->id,
 			"Finished writing %lu ticks to file %s",
 			sjob->st.ticks, sjob->filename);
-		/* Send message to client */
+#ifdef FULL_DBG
+		s_msgf (0, LOG_DEBUG, self->id,
+			"Wrote %lu packets in %lu batches",
+			sjob->st.frames, sjob->batches);
+#endif
 		/* TO DO: check rc */
-		zsock_send (self->frontend, REP_PIC, REQ_OK, 
-			sjob->st.ticks,
-			sjob->st.size,
-			sjob->st.frames,
-			sjob->st.frames_lost);
 		s_task_save_write (sjob);
+		s_task_save_send  (sjob, self->frontend);
 		s_task_save_close (sjob);
 		/* Enable polling on the reader */
-		rc = zloop_reader (loop, self->frontend,
+		int rc = zloop_reader (loop, self->frontend,
 				self->client_handler, self);
 		if (rc == -1)
 		{
@@ -758,79 +854,104 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 		return -1;
 	}
 
+	/* Wrap cursor if needed */
+	uint16_t space = sjob->bufzone.ceil - sjob->bufzone.cur;
+	if (likely (plen < space))
+	{
+		memcpy (sjob->bufzone.cur, pkt, plen); 
+		sjob->bufzone.cur += plen;
+	}
+	else
+	{
+		memcpy (sjob->bufzone.cur, pkt, space); 
+		memcpy (sjob->bufzone.base, pkt + space, plen - space); 
+		sjob->bufzone.cur = sjob->bufzone.ceil + plen - space;
+	}
+
 	return 0;
 }
 
-/*
- * data is a struct s_task_save_data_t.
- */
 static int
 s_task_save_init (task_t* self)
 {
-	assert (self != NULL);
-	self->data = malloc (sizeof (struct s_task_save_data_t));
-	if (self->data == NULL)
+	dbg_assert (sizeof (struct s_task_save_stats_t) == TSAVE_SOFFSET);
+	dbg_assert (self != NULL);
+
+	static struct s_task_save_data_t data;
+	data.aios.aio_sigevent.sigev_notify = SIGEV_NONE;
+	data.aios.aio_fildes = -1;
+
+	void* buf = mmap (NULL, TSAVE_BUFSIZE, PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (buf == (void*)-1)
 	{
-		s_msg (errno, LOG_ERR, self->id, "Cannot allocate data");
+		s_msgf (errno, LOG_ERR, self->id,
+			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
 		return -1;
 	}
-	memset (self->data, 0, sizeof (struct s_task_save_data_t));
+	data.bufzone.base = data.bufzone.tail = data.bufzone.head =
+		data.bufzone.cur = (unsigned char*) buf;
+	data.bufzone.ceil = data.bufzone.base + TSAVE_BUFSIZE;
 
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
-	sjob->fd = -1;
+	self->data = &data;
 	return 0;
 }
 static int
 s_task_save_fin (task_t* self)
 {
-	assert (self != NULL);
-	assert (self->active == 0);
+	dbg_assert (self != NULL);
+	dbg_assert (self->active == 0);
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
-	assert (sjob != NULL);
-	if (sjob->fd != -1)
+	dbg_assert (sjob != NULL);
+	if (sjob->aios.aio_fildes != -1)
 	{
-		assert (sjob->filename != NULL);
-		zsock_send (self->frontend, REP_PIC, REQ_OK, 
-			sjob->st.ticks,
-			sjob->st.size,
-			sjob->st.frames,
-			sjob->st.frames_lost);
+		dbg_assert (sjob->filename != NULL);
 		s_task_save_write (sjob);
+		s_task_save_send  (sjob, self->frontend);
 		s_task_save_close (sjob);
 	}
 
-	free (self->data);
+	/* Unmap bufzone */
+	if (sjob->bufzone.base != NULL)
+	{
+		munmap (sjob->bufzone.base, TSAVE_BUFSIZE);
+		/* free (sjob->bufzone.base); */
+		sjob->bufzone.base = NULL;
+	}
+
 	self->data = NULL;
 	return 0;
 }
 
 /*
- * Opens the file and sets max_ticks. Returns 0 on success, -1 on error.
+ * Opens the file. Returns 0 on success, -1 on error.
  */
 static int
 s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 {
-	assert (sjob != NULL);
-	assert (sjob->filename != NULL);
-	assert (sjob->fd == -1);
-	assert (sjob->st.ticks == 0);
-	assert (sjob->st.size == 0);
-	assert (sjob->st.frames == 0);
-	assert (sjob->st.frames_lost == 0);
-	assert (sjob->st.frames_dropped == 0);
-	assert (sjob->st.errors == 0);
+	dbg_assert (sjob != NULL);
+	dbg_assert (sjob->filename != NULL);
+	dbg_assert (sjob->aios.aio_fildes == -1);
+#ifdef FULL_DBG
+	dbg_assert (sjob->batches == 0);
+#endif
+	dbg_assert (sjob->st.ticks == 0);
+	dbg_assert (sjob->st.size == 0);
+	dbg_assert (sjob->st.frames == 0);
+	dbg_assert (sjob->st.frames_lost == 0);
+	dbg_assert (sjob->st.frames_dropped == 0);
+	dbg_assert (sjob->st.errors == 0);
 
 	/* Open the file */
-	sjob->fd = open (sjob->filename, fmode,
+	sjob->aios.aio_fildes = open (sjob->filename, fmode,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-	if (sjob->fd == -1)
+	if (sjob->aios.aio_fildes == -1)
 		return -1;
 
 	int rc;
-	rc = lseek (sjob->fd, FDATA_OFF, 0);
-	if (rc == (off_t)-1 || rc < FDATA_OFF)
+	rc = lseek (sjob->aios.aio_fildes, TSAVE_SOFFSET, 0);
+	if (rc == (off_t)-1 || rc < TSAVE_SOFFSET)
 		return -1;
 
 	return 0;
@@ -843,22 +964,26 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 static int
 s_task_save_read (struct s_task_save_data_t* sjob)
 {
-	assert (sjob != NULL);
-	assert (sjob->filename != NULL);
-	assert (sjob->fd != -1);
-	assert (sjob->st.ticks == 0);
-	assert (sjob->st.size == 0);
-	assert (sjob->st.frames == 0);
-	assert (sjob->st.frames_lost == 0);
-	assert (sjob->st.frames_dropped == 0);
-	assert (sjob->st.errors == 0);
+	dbg_assert (sjob != NULL);
+	dbg_assert (sjob->filename != NULL);
+	dbg_assert (sjob->aios.aio_fildes != -1);
+	dbg_assert (sjob->max_ticks == 0);
+#ifdef FULL_DBG
+	dbg_assert (sjob->batches == 0);
+#endif
+	dbg_assert (sjob->st.ticks == 0);
+	dbg_assert (sjob->st.size == 0);
+	dbg_assert (sjob->st.frames == 0);
+	dbg_assert (sjob->st.frames_lost == 0);
+	dbg_assert (sjob->st.frames_dropped == 0);
+	dbg_assert (sjob->st.errors == 0);
 
-	int rc = lseek (sjob->fd, 0, 0);
+	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
 	if (rc)
 		return rc;
 	
-	rc = read (sjob->fd, &sjob->st, FDATA_OFF);
-	if (rc < FDATA_OFF)
+	rc = read (sjob->aios.aio_fildes, &sjob->st, TSAVE_SOFFSET);
+	if (rc < TSAVE_SOFFSET)
 		return rc;
 	
 	return 0;
@@ -870,19 +995,38 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 static int
 s_task_save_write (struct s_task_save_data_t* sjob)
 {
-	assert (sjob != NULL);
-	assert (sjob->filename != NULL);
-	assert (sjob->fd != -1);
+	dbg_assert (sjob != NULL);
+	dbg_assert (sjob->filename != NULL);
+	dbg_assert (sjob->aios.aio_fildes != -1);
 
-	int rc = lseek (sjob->fd, 0, 0);
+	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
 	if (rc)
 		return rc;
 	
-	rc = write (sjob->fd, &sjob->st, FDATA_OFF);
-	if (rc < FDATA_OFF)
+	rc = write (sjob->aios.aio_fildes, &sjob->st, TSAVE_SOFFSET);
+	if (rc < TSAVE_SOFFSET)
 		return rc;
 	
 	return 0;
+}
+
+/*
+ * Sends the statistics to the client.
+ */
+static int
+s_task_save_send  (struct s_task_save_data_t* sjob, zsock_t* frontend)
+{
+	dbg_assert (sjob != NULL);
+	dbg_assert (sjob->filename != NULL);
+	/* When the file is closed, the stats are reset.
+	 * Call _send before _close. */
+	dbg_assert (sjob->aios.aio_fildes != -1);
+
+	return zsock_send (frontend, REP_PIC, REQ_OK, 
+			sjob->st.ticks,
+			sjob->st.size,
+			sjob->st.frames,
+			sjob->st.frames_lost);
 }
 
 /*
@@ -891,16 +1035,19 @@ s_task_save_write (struct s_task_save_data_t* sjob)
 static void
 s_task_save_close (struct s_task_save_data_t* sjob)
 {
-	assert (sjob != NULL);
+	dbg_assert (sjob != NULL);
 
-	if (sjob->fd >= 0)
+	if (sjob->aios.aio_fildes >= 0)
 	{
-		close (sjob->fd);
-		sjob->fd = -1;
+		close (sjob->aios.aio_fildes);
+		sjob->aios.aio_fildes = -1;
 	}
 
-	zstr_free (&sjob->filename);
+	zstr_free (&sjob->filename); /* nullifies the pointer */
 	sjob->max_ticks = 0;
+#ifdef FULL_DBG
+	sjob->batches = 0;
+#endif
 	sjob->st.ticks = 0;
 	sjob->st.size = 0;
 	sjob->st.frames = 0;

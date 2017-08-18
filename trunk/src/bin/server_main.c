@@ -34,7 +34,7 @@
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
  * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * Try
+ * Try:
  *   aio_write
  *   buffering to a separate (mmapped) area and writing bigger chunks to disk
  *   zsys_io_threads
@@ -49,12 +49,14 @@
 #define UPDATE_INTERVAL 1             // in seconds
 #define FPGA_IF         "vale:fpga}1"
 
+// #define DEBUG_MISSED
+
 /*
  * Statistics, only used in foreground mode
  */
 struct stats_t
 {
-	struct   timeval last_update;
+	struct timeval last_update;
 	uint64_t received;
 	uint64_t missed;
 	uint64_t polled;
@@ -93,12 +95,12 @@ usage (const char* self)
 }
 
 /*
- * When working in foreground, print statistics (bandwidth, etc).
+ * Print statistics (bandwidth, etc).
  */
 static int
 print_stats (zloop_t* loop, int timer_id, void* stats_)
 {
-	assert (stats_);
+	dbg_assert (stats_);
 	struct stats_t* stats = (struct stats_t*) stats_;
 
 	if ( ! timerisset (&stats->last_update) )
@@ -132,9 +134,9 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 
 	memcpy (&stats->last_update, &tnow, sizeof (struct timeval));
 	stats->received = 0;
-	stats->missed = 0;
-	stats->polled = 0;
-	stats->skipped = 0;
+	stats->missed   = 0;
+	stats->polled   = 0;
+	stats->skipped  = 0;
 
 	return 0;
 }
@@ -145,7 +147,7 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 static int
 new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 {
-	assert (data_);
+	dbg_assert (data_);
 	struct data_t* data = (struct data_t*) data_;
 
 	/* Signal the waiting tasks and find the head of the slowest one */
@@ -161,23 +163,25 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 
 	/* Save statistics */
 	fpga_pkt* pkt = (fpga_pkt*) ifring_cur_buf (data->rxring); /* old head */
-	assert (pkt);
+	dbg_assert (pkt);
 	uint16_t fseqA = frame_seq (pkt);
 
 	pkt = (fpga_pkt*) ifring_preceding_buf (data->rxring, nhead);
 	if (pkt == NULL)
 	{
-		assert (nhead == ifring_head (data->rxring));
+		dbg_assert (nhead == ifring_head (data->rxring));
 		data->stats.skipped++;
 		return 0;
 	}
 	uint16_t fseqB = frame_seq (pkt);
 
-	uint32_t cur = ifring_cur (data->rxring);
+#ifdef DEBUG_MISSED
+	uint32_t cur = ifring_cur (data->rxring); /* save it */
+#endif
 	ifring_goto_buf (data->rxring, nhead); /* cursor -> new head */
 	uint32_t num_new = ifring_done (data->rxring); /* cursor - old head */
 
-#if 0
+#ifdef DEBUG_MISSED
 	if ((uint32_t) ((uint16_t)(fseqB - fseqA) - num_new + 1) != 0)
 	{
 		s_msgf (0, LOG_DEBUG, 0, "%hu -> %hu", cur, nhead);
@@ -194,13 +198,13 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 #endif
 
 	data->stats.received += num_new;
-	data->stats.missed += (u_int64_t) (
+	data->stats.missed   += (u_int64_t) (
 			(uint16_t)(fseqB - fseqA) - num_new + 1);
 	data->stats.polled++;
 
 	ifring_release_done_buf (data->rxring); /* head -> new head */
-	assert (ifring_head (data->rxring) == ifring_cur (data->rxring));
-	assert (ifring_head (data->rxring) == nhead);
+	dbg_assert (ifring_head (data->rxring) == ifring_cur (data->rxring));
+	dbg_assert (ifring_head (data->rxring) == nhead);
 
 	return 0;
 }
@@ -249,7 +253,7 @@ coordinator_body (const char* ifname, uint64_t stat_period)
 		goto cleanup;
 	}
 
-	if ( ! is_daemon )
+	if (stat_period > 0)
 	{
 		/* Set the timer */
 		rc = zloop_timer (loop, 1000 * stat_period, 0,
