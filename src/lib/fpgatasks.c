@@ -170,7 +170,11 @@ static void s_task_stop (task_t* self);
 #define REP_PIC    "18888"
 
 #define TSAVE_SOFFSET  48 // beginning of file reserved for statistics
-#define TSAVE_BUFSIZE  157286400UL // 150 MB 
+/* Employ a buffer zone for asynchronous writing. We memcpy frames into the
+ * bufzone, between its head and cursor (see s_task_save_data_t below) and
+ * queue batches with aio_write. */
+#define TSAVE_BUFSIZE  15728640UL // 15 MB 
+#define TSAVE_MINBATCH 1496000UL  // 1000 maximum-sized frames
 
 /*
  * Statistics sent as a reply and saved to the file. 
@@ -194,6 +198,8 @@ struct s_task_save_data_t
 	struct s_task_save_stats_t st;
 	struct
 	{
+		uint64_t waiting;    // copied into buffer since the last aio_write
+		uint64_t enqueued;   // queued for writing at the last aio_write
 		unsigned char* base; // mmapped, size of TSAVE_BUFSIZE
 		unsigned char* tail; // start address queued for aio_write
 		unsigned char* head; // end address queued for aio_write
@@ -203,6 +209,7 @@ struct s_task_save_data_t
 	uint64_t max_ticks;
 #ifdef FULL_DBG
 	uint64_t batches;
+	unsigned char prev_hdr[FPGA_HDR_LEN];
 #endif
 	char*    filename;
 };
@@ -373,7 +380,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 	int sig = zmsg_signal (msg);
 	zmsg_destroy (&msg);
-	assert (sig >= 0);
+	dbg_assert (sig >= 0);
 #else
 	int sig = zsock_wait (reader);
 	if (sig == -1)
@@ -390,9 +397,10 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 	dbg_assert (sig == SIG_WAKEUP);
 	// dbg_assert (self->active == 0);
-	/* TO DO: why do signals arrive right after setting active to false in
-	 * the packet handler? */
-	if (self->active == 0)
+	/* FIX: signals seem to arrive with a short delay, so right after
+	 * setting active to false, or reaching the ring's tail we may receive
+	 * a WAKEUP. */
+	if ( self->active == 0 || self->head == ifring_tail (self->rxring) )
 		return 0;
 
 	self->busy = 1;
@@ -412,10 +420,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	} while (self->head != ifring_tail (self->rxring));
 
 	if (self->error)
+	{
 		self->active = 0;
+		return -1;
+	}
 
 	self->busy = 0;
-	return self->error;
+	return 0;
 }
 
 /*
@@ -438,7 +449,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	}
 	int sig = zmsg_signal (msg);
 	zmsg_destroy (&msg);
-	assert (sig >= 0);
+	dbg_assert (sig >= 0);
 #else
 	int sig = zsock_wait (reader);
 	if (sig == -1)
@@ -738,6 +749,13 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 	dbg_assert (sjob->aios.aio_fildes != -1);
 	dbg_assert (self->active);
 
+	dbg_assert (sjob->bufzone.enqueued + sjob->bufzone.waiting <=
+		TSAVE_BUFSIZE + FPGA_HDR_LEN);
+	dbg_assert (sjob->bufzone.tail <= sjob->bufzone.head);
+	dbg_assert (sjob->bufzone.enqueued == sjob->bufzone.head
+		- sjob->bufzone.tail);
+
+	/* TO DO: check packet */
 	uint16_t plen = pkt_len (pkt);
 	if (plen > len)
 	{ /* drop the frame */
@@ -747,96 +765,160 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 		sjob->st.frames_dropped++;
 		return 0;
 	}
-	/* TO DO: check packet */
-
-	uint16_t prev_frame = self->cur_frame;
-	self->cur_frame = frame_seq (pkt);
 
 	/* TO DO: save err flags */
-	/* size is updated in batches as write operations finish */
+	/* Update statistics. Size is updated in batches as write operations
+	 * finish. */
+	uint16_t prev_frame = self->cur_frame;
+	self->cur_frame = frame_seq (pkt);
+	if (sjob->st.frames > 0)
+		sjob->st.frames_lost += (uint64_t) (
+				(uint16_t)(self->cur_frame - prev_frame) - 1);
+#ifdef FULL_DBG
+	if (sjob->st.frames_lost)
+	{
+		s_msgf (0, LOG_DEBUG, self->id, "Head at: %hu, %hu -> %hu",
+			self->head, prev_frame, self->cur_frame);
+		s_dump_buf (sjob->prev_hdr, FPGA_HDR_LEN);
+		s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
+		self->error = 1;
+		return -1;
+	}
+	memcpy (sjob->prev_hdr, pkt, FPGA_HDR_LEN);
+#endif
+
+	sjob->st.frames++;
 	if (is_tick (pkt))
 		sjob->st.ticks++;
-	sjob->st.frames++;
-	sjob->st.frames_lost += (uint64_t) (
-			(uint16_t)(self->cur_frame - prev_frame) - 1);
 
-	int done = 0;
-	/* TO DO: save this last tick as well? */
-	if (sjob->st.ticks == sjob->max_ticks)
+	/* Wrap cursor if needed */
+	int reserve = plen - (sjob->bufzone.ceil - sjob->bufzone.cur);
+	if (likely (reserve < 0))
 	{
-		self->active = 0;
-		done = 1;
+		memcpy (sjob->bufzone.cur, pkt, plen); 
+		sjob->bufzone.cur += plen;
 	}
-
-	/*
-	 * Check if previous job finished. Do nothing if it hasn't and there is
-	 * sufficient space for the next frame. Block in a tight loop if there
-	 * is no space for the frame until the write is done. Also block if we
-	 * are finalizing.
-	 *
-	 * head will always be numerically larger than tail, since a single
-	 * aio_write operation cannot deal wil wrapping around. So
-	 * TSAVE_BUFSIZE + tail - head always gives the free space left.
-	 */
-	uint64_t enqueued = sjob->bufzone.head - sjob->bufzone.tail;
-	int jobrc;
-	do
+	else
 	{
+		memcpy (sjob->bufzone.cur, pkt, plen - reserve); 
+		if (reserve > 0)
+			memcpy (sjob->bufzone.base,
+					(char*)pkt + plen - reserve, reserve); 
+		sjob->bufzone.cur = sjob->bufzone.base + reserve;
+	}
+	sjob->bufzone.waiting += plen;
+
+#if 0 /* 0 to skip writing */
+	int jobrc = EINPROGRESS;
+	/* Only check if there is more than TSAVE_MINBATCH to write. */
+	if (sjob->waiting > TSAVE_MINBATCH)
+	{
+		if (sjob->st.ticks >= sjob->max_ticks)
+			self->active = 0;
+
 		jobrc = aio_error (&sjob->aios);
-		if (jobrc == 0)
-		{ /* previous batch written, queue the next one */
 
-			/* tail -> head */
-			if (unlikely (sjob->bufzone.head = sjob->bufzone.ceil))
-			{
-				sjob->bufzone.tail = sjob->bufzone.base;
-			}
+		/* If there is no space for a full frame or we are finalizing,
+		 * block until the write is done. */
+		uint64_t bufspace = TSAVE_BUFSIZE - sjob->bufzone.enqueued
+			- sjob->bufzone.waiting;
+		if ( ( bufspace < FPGA_HDR_LEN || ! self->active ) && jobrc != 0 )
+		{
+			dbg_assert (sjob->batches > 0);
+#if 1 /* 1 to use suspend */
+			const struct aiocb* aiol =  &sjob->aios;
+			jobrc = aio_suspend (&aiol, 1, NULL);
+			if (jobrc == 0)
+				jobrc = aio_error (&sjob->aios);
 			else
+				jobrc = errno;
+#else
+			while (jobrc != 0)
 			{
-				sjob->bufzone.tail = sjob->bufzone.head;
+#if 0 /* 1 to poll for 1 ms */
+#include <poll.h>
+				poll (NULL, 0, 1);
+#endif
+				jobrc = aio_error (&sjob->aios);
 			}
+#endif /* use suspend */
+		}
+	}
+	if (jobrc == 0)
+	{ /* previous batch written, queue the next one */
+		dbg_assert (sjob->bufzone.waiting > TSAVE_MINBATCH);
+		sjob->st.size += sjob->bufzone.enqueued;
+		sjob->bufzone.tail += sjob->bufzone.enqueued;
+		if (sjob->bufzone.waiting > TSAVE_MAXBATCH)
+			sjob->bufzone.enqueued = TSAVE_MAXBATCH;
+		else
+			sjob->bufzone.enqueued = sjob->bufzone.waiting;
+		sjob->bufzone.waiting -= sjob.bufzone.enqueued;
 
-			/* head -> min (cursor, ceil) */
-			if (unlikely (sjob->bufzone.cur < sjob->bufzone.head))
-			{ /* cursor had wrapped around, queue until the end of
-			   * the bufzone */
+		/* head will always be numerically larger than tail, since
+		 * a single write operation cannot wrap after the top of the
+		 * buffer */
+
+		if (unlikely (sjob->bufzone.cur < sjob->bufzone.tail))
+		{ /* cursor had wrapped around */
+			if (sjob->bufzone.head < sjob->bufzone.ceil)
+			{ /* first time, queue until the end of the bufzone */
+				sjob->bufzone.tail = sjob->bufzone.head;
 				sjob->bufzone.head = sjob->bufzone.ceil;
 			}
 			else
-			{
+			{ /* second time, queue the rest */
+				sjob->bufzone.tail = sjob->bufzone.base;
 				sjob->bufzone.head = sjob->bufzone.cur;
 			}
+		}
+		else
+		{ /* tail -> head, head -> cursor */
+			sjob->bufzone.tail = sjob->bufzone.head;
+			sjob->bufzone.head = sjob->bufzone.cur;
+		}
 
-			sjob->st.size += enqueued;
-			enqueued = sjob->bufzone.head - sjob->bufzone.tail;
+		dbg_assert (sjob->bufzone.waiting == sjob->bufzone.head
+			- sjob->bufzone.tail);
+		sjob->bufzone.enqueued = sjob->bufzone.waiting;
+		sjob->bufzone.waiting = 0;
 #ifdef FULL_DBG
-			sjob->batches++;
+		sjob->batches++;
 #endif
 
+		if (sjob->bufzone.enqueued > 0)
+		{
 			sjob->aios.aio_offset = sjob->st.size;
 			sjob->aios.aio_buf = sjob->bufzone.tail;
-			sjob->aios.aio_nbytes = enqueued;
+			sjob->aios.aio_nbytes = sjob->bufzone.enqueued;
+			aio_write (&sjob->aios);
 		}
-		else if (jobrc != EINPROGRESS)
-		{
-			/* TO DO: how to handle errors */
-			s_msg (jobrc, LOG_ERR, self->id,
-				"Could not write to file");
-			self->error = 1;
-			return -1;
-		}
-	} while ( plen > TSAVE_BUFSIZE - enqueued || (done && jobrc != 0) );
-
-	if (done)
+	}
+	else if (jobrc != EINPROGRESS)
 	{
-		assert (jobrc == 0);
+		/* TO DO: how to handle errors */
+		s_msg (jobrc, LOG_ERR, self->id, "Could not write to file");
+		self->active = 0;
+	}
+#else
+	sjob->st.size += sjob->bufzone.waiting;
+	sjob->bufzone.waiting = 0;
+	if (sjob->st.ticks >= sjob->max_ticks)
+		self->active = 0;
+	int jobrc = 0;
+#endif /* skip writing */
+
+	if ( ! self->active )
+	{
+		assert (jobrc != EINPROGRESS);
 		s_msgf (0, LOG_INFO, self->id,
 			"Finished writing %lu ticks to file %s",
 			sjob->st.ticks, sjob->filename);
 #ifdef FULL_DBG
 		s_msgf (0, LOG_DEBUG, self->id,
-			"Wrote %lu packets in %lu batches",
-			sjob->st.frames, sjob->batches);
+			"Wrote %lu packets in %lu batches, dropped %lu",
+			sjob->st.frames, sjob->batches,
+			sjob->st.frames_dropped);
 #endif
 		/* TO DO: check rc */
 		s_task_save_write (sjob);
@@ -854,20 +936,6 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 		return -1;
 	}
 
-	/* Wrap cursor if needed */
-	uint16_t space = sjob->bufzone.ceil - sjob->bufzone.cur;
-	if (likely (plen < space))
-	{
-		memcpy (sjob->bufzone.cur, pkt, plen); 
-		sjob->bufzone.cur += plen;
-	}
-	else
-	{
-		memcpy (sjob->bufzone.cur, pkt, space); 
-		memcpy (sjob->bufzone.base, pkt + space, plen - space); 
-		sjob->bufzone.cur = sjob->bufzone.ceil + plen - space;
-	}
-
 	return 0;
 }
 
@@ -875,6 +943,7 @@ static int
 s_task_save_init (task_t* self)
 {
 	dbg_assert (sizeof (struct s_task_save_stats_t) == TSAVE_SOFFSET);
+	/* TO DO: check bufzone macros */
 	dbg_assert (self != NULL);
 
 	static struct s_task_save_data_t data;
@@ -980,11 +1049,11 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 
 	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
 	if (rc)
-		return rc;
+		return -1;
 	
 	rc = read (sjob->aios.aio_fildes, &sjob->st, TSAVE_SOFFSET);
 	if (rc < TSAVE_SOFFSET)
-		return rc;
+		return -1;
 	
 	return 0;
 }
@@ -1001,11 +1070,11 @@ s_task_save_write (struct s_task_save_data_t* sjob)
 
 	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
 	if (rc)
-		return rc;
+		return -1;
 	
 	rc = write (sjob->aios.aio_fildes, &sjob->st, TSAVE_SOFFSET);
 	if (rc < TSAVE_SOFFSET)
-		return rc;
+		return -1;
 	
 	return 0;
 }

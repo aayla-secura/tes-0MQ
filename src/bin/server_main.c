@@ -49,8 +49,6 @@
 #define UPDATE_INTERVAL 1             // in seconds
 #define FPGA_IF         "vale:fpga}1"
 
-// #define DEBUG_MISSED
-
 /*
  * Statistics, only used in foreground mode
  */
@@ -175,30 +173,27 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	}
 	uint16_t fseqB = frame_seq (pkt);
 
-#ifdef DEBUG_MISSED
+#ifdef FULL_DBG
 	uint32_t cur = ifring_cur (data->rxring); /* save it */
+	uint16_t cur_seq;
+	for (int p = 0; cur != nhead; cur = ifring_following (data->rxring, cur), p++)
+	{
+		pkt = (fpga_pkt*) ifring_buf (data->rxring, cur);
+		uint16_t prev_seq = cur_seq;
+		cur_seq = frame_seq (pkt);
+		if ( (uint16_t)(cur_seq - prev_seq) != 1 && p > 0 )
+		{
+			s_msgf (0, LOG_DEBUG, 0, "Buf #%hu, %hu -> %hu",
+					cur, prev_seq, cur_seq);
+			return -1;
+		}
+	}
 #endif
 	ifring_goto_buf (data->rxring, nhead); /* cursor -> new head */
 	uint32_t num_new = ifring_done (data->rxring); /* cursor - old head */
 
-#ifdef DEBUG_MISSED
-	if ((uint32_t) ((uint16_t)(fseqB - fseqA) - num_new + 1) != 0)
-	{
-		s_msgf (0, LOG_DEBUG, 0, "%hu -> %hu", cur, nhead);
-		for (; cur != nhead; cur = ifring_following (data->rxring, cur))
-		{
-			pkt = (fpga_pkt*) ifring_buf (data->rxring, cur);
-			uint16_t fseq = frame_seq (pkt);
-			s_msgf (0, LOG_DEBUG, 0,
-					"Buffer %u, frame %hu", cur, fseq);
-			s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
-		}
-		assert (0);
-	}
-#endif
-
 	data->stats.received += num_new;
-	data->stats.missed   += (u_int64_t) (
+	data->stats.missed   += (uint64_t) (
 			(uint16_t)(fseqB - fseqA) - num_new + 1);
 	data->stats.polled++;
 
