@@ -24,7 +24,7 @@
 
 #include "daemon.h"
 
-// #define FULL_DBG
+#define FULL_DBG
 #ifdef FULL_DBG
 #  define dbg_assert(...) assert (__VA_ARGS__)
 #else
