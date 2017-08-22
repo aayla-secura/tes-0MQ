@@ -1113,7 +1113,7 @@ queue_as_is:
 		return 0;
 	}
 
-	sjob->aios.aio_offset = sjob->st.size;
+	sjob->aios.aio_offset = sjob->st.size + TSAVE_SOFFSET;
 	sjob->aios.aio_buf = sjob->bufzone.tail;
 	sjob->aios.aio_nbytes = sjob->bufzone.enqueued;
 	do
