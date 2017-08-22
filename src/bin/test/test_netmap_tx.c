@@ -26,9 +26,9 @@
 			* signal handler */
 
 
-#define MAX_MCA_FRAMES      45
+#define MAX_MCA_FRAMES        45
 // #define MAX_TRACE_FRAMES
-#define MAX_MCA_BINS_ALL    1 << 14
+#define MAX_MCA_BINS_ALL      ((UINT16_MAX - MCA_HDR_LEN) / BIN_LEN)
 #define MAX_MCA_BINS_HFR      ((MAX_FPGA_FRAME_LEN - MCA_HDR_LEN - \
 				FPGA_HDR_LEN) / BIN_LEN)
 #define MAX_MCA_BINS_SFR      ((MAX_FPGA_FRAME_LEN - \
@@ -224,8 +224,8 @@ new_fpga_pkt (void)
 
 static fpga_pkt*
 new_mca_pkt (int seq, int num_bins,
-			      int num_all_bins,
-			      u_int32_t flags)
+		      int num_all_bins,
+		      u_int32_t flags)
 {
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
@@ -646,20 +646,33 @@ main (void)
 
 		/* --------------- A full MCA histogram --------------- */
 		/* the header frame */
+		int nbins_left = MAX_MCA_BINS_ALL;
 		pkt = new_mca_pkt (0, MAX_MCA_BINS_HFR, MAX_MCA_BINS_ALL, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
 		dump_pkt (pkt);
 		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		nbins_left -= MAX_MCA_BINS_HFR;
 		/* the rest of the frames */
-		for (int f = 1; f < MAX_MCA_FRAMES; f++)
+		for (int f = 1; ; f++)
 		{
-			fpga_pkt* pkt = new_mca_pkt (f, MAX_MCA_BINS_SFR,
-				MAX_MCA_BINS_ALL, 0);
+			assert (f < MAX_MCA_FRAMES);
+			if (nbins_left > MAX_MCA_BINS_SFR)
+			{
+				pkt = new_mca_pkt (f,
+					MAX_MCA_BINS_SFR, MAX_MCA_BINS_ALL, 0);
+			}
+			else
+			{
+				pkt = new_mca_pkt (f,
+					nbins_left, MAX_MCA_BINS_ALL, 0);
+				break;
+			}
 			if (pkt == NULL)
 				break; /* Reached max */
 			dump_pkt (pkt);
 			assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+			nbins_left -= MAX_MCA_BINS_SFR;
 		}
 
 		/* ---------------- Some event packets ---------------- */

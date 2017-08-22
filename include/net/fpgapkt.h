@@ -38,6 +38,7 @@ static inline uint16_t proto_seq (fpga_pkt* pkt);
 static inline uint16_t evt_size (fpga_pkt* pkt);
 static inline uint16_t mca_size (fpga_pkt* pkt);
 static inline uint16_t mca_num_bins (fpga_pkt* pkt);
+static inline uint16_t mca_num_allbins (fpga_pkt* pkt);
 static inline uint32_t mca_lvalue (fpga_pkt* pkt);
 static inline uint16_t mca_mostfreq (fpga_pkt* pkt);
 static inline uint64_t mca_total (fpga_pkt* pkt);
@@ -499,6 +500,15 @@ mca_size (fpga_pkt* pkt)
 static inline uint16_t
 mca_num_bins (fpga_pkt* pkt)
 {
+	if (is_header (pkt))
+		return ( (pkt_len (pkt) - FPGA_HDR_LEN - MCA_HDR_LEN ) / BIN_LEN);
+	else
+		return ( (pkt_len (pkt) - FPGA_HDR_LEN) / BIN_LEN);
+}
+
+static inline uint16_t
+mca_num_allbins (fpga_pkt* pkt)
+{
 #ifdef KEEP_BYTEORDER
 	return ((struct mca_header*)(void*) &pkt->body)->last_bin + 1;
 #else
@@ -832,7 +842,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 		fprintf (stream, "Flag T:              %hhu\n", mf->T);
 		fprintf (stream, "Flag N:              %hhu\n", mf->N);
 		fprintf (stream, "Flag C:              %hhu\n", mf->C);
-		fprintf (stream, "Number of bins:      %u\n",   mca_num_bins (pkt));
+		fprintf (stream, "Number of bins:      %u\n",   mca_num_allbins (pkt));
 		fprintf (stream, "Lowest value:        %hu\n",  mca_lvalue (pkt));
 		fprintf (stream, "Most frequent bin:   %hu\n",  mca_mostfreq (pkt));
 		fprintf (stream, "Total:               %lu\n",  mca_total (pkt));

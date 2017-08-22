@@ -18,10 +18,6 @@
  * Tasks are largely similar, so we pass the same handler, s_task_shim, to
  * zactor_new. It is responsible for doing most of the work.
  * Tasks are described by the following structure:
- *
- * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
- * from the coordinator. Upon SIG_STOP it exits, upon SIG_WAKEUP it calls
- * if_dispatch with the task's specific packet handler.
  * struct _task_t
  * {
  *         zloop_reader_fn* client_handler;
@@ -37,28 +33,36 @@
  *         const char* front_addr;     // the socket addresses, comma separated
  *         int         id;
  *         uint32_t    head;
- *         uint16_t    cur_frame;
+ *         uint16_t    prev_fseq;      // previous frame sequence
+ *         uint16_t    prev_pseq_mca;  // previous MCA protocol sequence
+ *         uint16_t    prev_pseq_tr;   // previous trace protocol sequence
+ *         uint16_t    prev_pseq_pls;  // previous pulse protocol sequence
  *         bool        error;          // client_ and pkt_handler should set this
  *         bool        busy;
  *         bool        active;         // client_handler or data_init should
  *                                     // enable this
+ *         bool        autoactivate;   // s_task_shim will activate task
  * };
  *
- * If the task defines a public interface address, s_task_shim will open the
- * socket and register the client handler for the task. Each task has a pointer
- * for its own data.
+ * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
+ * from the coordinator. Upon SIG_STOP it exits, upon SIG_WAKEUP it calls
+ * calls the task's specific packet handler for each packet in the ring.
  *
- * Right before entering the loop, s_task_shim will call the task initializer,
- * if it is set. So it can allocate the pointer to its data and do anything
- * else it wishes (talk to clients, etc).
+ * If the task defines a public interface address, s_task_shim will open the
+ * socket, and if it defines a client handler, it will register it with the
+ * task's loop. Each task has a pointer for its own data.
+ *
+ * Before entering the loop, s_task_shim will call the task initializer, if it
+ * is set. So it can allocate the pointer to its data and do anything else it
+ * wishes (talk to clients, etc).
  *
  * Right after the loop terminates, s_task_shim will call the task finalizer,
  * so it can cleanup its data and possibly send final messages to clients.
  *
  * The actual task is done inside client_handler and pkt_handler.
  *
- *   client_handler processes messages on the public socket. If neither
- *   client_handler not front_addr is set, the task has no public interface.
+ *   client_handler processes messages on the public socket. If front_addr is
+ *   not set, the task has no public interface.
  *
  *   pkt_handler is called by the generic socket reader for each packet in each
  *   ring and does whatever.
@@ -67,9 +71,11 @@
  * (e.g. the client_handler can disable itself after receiving a job and the
  * pkt_handler can re-enable it when done).
  * If either handler encounters an error, it sets the task's error flag to true
- * and exits with -1.
- * pkt_handler may exit with -1 without setting error, if it simply is not
- * interested in more packets for now.
+ * and returns with -1.
+ * pkt_handler may return with -1 without setting error, if it wants to wait
+ * for the next WAKEUP. s_sig_hn will only deactivate the task if error is set,
+ * the pkt_handler should set active to false if it won't be processing packets
+ * for some time.
  *
  * If the task is not interested in receiving packets, is sets its active flag
  * to false. It won't receive SIG_WAKEUP if it is not active and its head won't
@@ -140,10 +146,14 @@ struct _task_t
 	const char* front_addr;
 	int         id;
 	uint32_t    head;
-	uint16_t    cur_frame;
+	uint16_t    prev_fseq;
+	uint16_t    prev_pseq_mca;
+	uint16_t    prev_pseq_tr;
+	uint16_t    prev_pseq_pls;
 	bool        error;
 	bool        busy;
 	bool        active;
+	bool        autoactivate;
 };
 
 /* -------------------------------- HELPERS -------------------------------- */
@@ -160,6 +170,7 @@ static zactor_fn       s_task_shim;
 
 static int  s_task_start (ifring* rxring, task_t* self);
 static void s_task_stop (task_t* self);
+static inline void s_task_activate (task_t* self);
 
 /* --------------------------- SAVE-TO-FILE TASK --------------------------- */
 
@@ -169,7 +180,7 @@ static void s_task_stop (task_t* self);
 #define REQ_PIC      "s81"
 #define REP_PIC    "18888"
 
-#define TSAVE_SOFFSET  48 // beginning of file reserved for statistics
+#define TSAVE_SOFFSET  40 // beginning of file reserved for statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
  * queue batches with aio_write. */
@@ -181,9 +192,8 @@ static void s_task_stop (task_t* self);
 struct s_task_save_stats_t
 {	uint64_t ticks;
 	uint64_t size;           // number of written bytes 
-	uint64_t frames;
+	uint64_t frames;         // total frames saved
 	uint64_t frames_lost;    // total frames lost (includes dropped)
-	uint64_t frames_dropped; // dropped frames (invalid ones)
 	uint64_t errors;         // TO DO: last 8-bytes of the tick header 
 };
 
@@ -223,7 +233,7 @@ static s_data_fn       s_task_save_init;
 static s_data_fn       s_task_save_fin;
 
 static int  s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
-static int  s_task_save_queue (struct s_task_save_data_t* sjob, int force);
+static int  s_task_save_queue (struct s_task_save_data_t* sjob, bool force);
 static int  s_task_save_read  (struct s_task_save_data_t* sjob);
 static int  s_task_save_write (struct s_task_save_data_t* sjob);
 static int  s_task_save_send  (struct s_task_save_data_t* sjob,
@@ -232,9 +242,30 @@ static void s_task_save_close (struct s_task_save_data_t* sjob);
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 
+#define THIST_MAXSIZE UINT16_MAX
+
+/*
+ * Data for currently built histogram.
+ */
+struct s_task_hist_data_t
+{
+	uint64_t      dropped;   // number of aborted histograms
+	int      nbins;     // total number of bins in histogram
+	int      size;      // size of histogram including header
+	int      cur_nbins; // number of received bins so far
+	int      cur_size;  // number of received bytes so far
+	bool          discard;   // discard all frames until the next header
+	unsigned char buf[THIST_MAXSIZE];
+};
+
+/* There is no handler for the PUB socket. */
+static s_pkt_fn        s_task_hist_pkt_hn;
+static s_data_fn       s_task_hist_init;
+// static s_data_fn       s_task_hist_fin;
+
 /* ----------------------------- THE FULL LIST ----------------------------- */
 
-#define NUM_TASKS 1
+#define NUM_TASKS 2
 static task_t tasks[] = {
 	{ // SAVE TO FILE 
 		.client_handler = s_task_save_req_hn,
@@ -243,6 +274,13 @@ static task_t tasks[] = {
 		.data_fin       = s_task_save_fin,
 		.front_type     = ZMQ_REP,
 		.front_addr     = "tcp://*:55555",
+	},
+	{ // PUBLISH HIST
+		.pkt_handler    = s_task_hist_pkt_hn,
+		.data_init      = s_task_hist_init,
+		.front_type     = ZMQ_PUB,
+		.front_addr     = "tcp://*:55556",
+		.autoactivate   = 1,
 	}
 };
 
@@ -414,8 +452,26 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
 			self->rxring, self->head);
 
+		/* TO DO: check packet */
 		uint16_t len = ifring_len (self->rxring, self->head);
-		int rc = self->pkt_handler (loop, pkt, len, self);
+		uint16_t plen = pkt_len (pkt);
+		if (plen > len)
+		{ /* drop the frame */
+			s_msgf (0, LOG_DEBUG, self->id,
+				"Packet too long (header says %hu, "
+				"ring slot is %hu)", plen, len);
+			return 0;
+		}
+		dbg_assert (plen <= MAX_FPGA_FRAME_LEN);
+		int rc = self->pkt_handler (loop, pkt, plen, self);
+
+		self->prev_fseq = frame_seq (pkt);
+		if (is_mca (pkt))
+			self->prev_pseq_mca = proto_seq (pkt);
+		else if (is_trace (pkt))
+			self->prev_pseq_tr = proto_seq (pkt);
+		else
+			self->prev_pseq_pls = proto_seq (pkt);
 
 		self->head = ifring_following (self->rxring, self->head);
 		if (rc)
@@ -488,7 +544,10 @@ s_task_shim (zsock_t* pipe, void* self_)
 	dbg_assert (self->frontend == NULL);
 	dbg_assert (self->id > 0);
 	dbg_assert (self->head == 0);
-	dbg_assert (self->cur_frame == 0);
+	dbg_assert (self->prev_fseq == 0);
+	dbg_assert (self->prev_pseq_mca == 0);
+	dbg_assert (self->prev_pseq_tr == 0);
+	dbg_assert (self->prev_pseq_pls == 0);
 	dbg_assert (self->error == 0);
 	dbg_assert (self->busy == 0);
 	dbg_assert (self->active == 0);
@@ -502,13 +561,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 	// self->error = 1;
 	// goto cleanup;
 
-	/* Register the readers */
-	if (self->front_addr || self->client_handler)
+	/* Open the public interface */
+	if (self->front_addr != NULL)
 	{
-		/* Did we forget to set one? */
-		dbg_assert (self->client_handler != NULL);
-		dbg_assert (self->front_addr != NULL);
-
 		self->frontend = zsock_new (self->front_type);
 		if (self->frontend == NULL)
 		{
@@ -525,9 +580,15 @@ s_task_shim (zsock_t* pipe, void* self_)
 			self->error = 1;
 			goto cleanup;
 		}
-		rc = zloop_reader (loop, pipe, s_sig_hn, self);
 	}
-	rc |= zloop_reader (loop, self->frontend, self->client_handler, self);
+	/* Register the readers */
+	rc = zloop_reader (loop, pipe, s_sig_hn, self);
+	if (self->client_handler != NULL)
+	{
+		dbg_assert (self->frontend != NULL);
+		rc |= zloop_reader (loop, self->frontend,
+				self->client_handler, self);
+	}
 	if (rc)
 	{
 		s_msg (errno, LOG_ERR, self->id,
@@ -537,7 +598,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	}
 
 	/* Call initializer */
-	if (self->data_init)
+	if (self->data_init != NULL)
 	{
 		rc = self->data_init (self);
 		if (rc)
@@ -551,6 +612,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 
 	s_msg (0, LOG_DEBUG, self->id, "Polling");
 	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
+	
+	if (self->autoactivate)
+		s_task_activate (self);
 	rc = zloop_start (loop);
 	dbg_assert (rc == -1); /* we don't get interrupted */
 
@@ -565,7 +629,7 @@ cleanup:
 	if (self->error)
 		zsock_signal (pipe, SIG_DIED);
 
-	if (self->data_fin)
+	if (self->data_fin != NULL)
 	{
 		rc = self->data_fin (self);
 		if (rc)
@@ -585,7 +649,6 @@ cleanup:
  * Registers the task's back end of the pipe with the coordinator's loop.
  * Returns 0 on success, -1 on error.
  */
-
 static int
 s_task_start (ifring* rxring, task_t* self)
 {
@@ -634,6 +697,17 @@ s_task_stop (task_t* self)
 	 * a problem. */
 	zactor_destroy (&self->shim);
 }
+
+/*
+ * Synchronizes the task's head with the ring's head and sets active to true.
+ */
+ static inline void
+ s_task_activate (task_t* self)
+ {
+	dbg_assert (self != NULL);
+	self->head = ifring_head (self->rxring);
+	self->active = 1;
+ }
 
 /* ------------------------------------------------------------------------- */
 /* --------------------------- SAVE-TO-FILE TASK --------------------------- */
@@ -735,19 +809,20 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	/* Disable polling on the reader until the job is done */
 	zloop_reader_end (loop, reader);
-	self->head = ifring_head (self->rxring);
-	self->active = 1;
+	s_task_activate (self);
 	return 0;
 }
 
 /*
- * Saves packets to a file. len is the buffer length. Will drop frames that say
+ * Saves packets to a file. plen is the frame length. Will drop frames that say
  * packet is longer than this. Will not write more than what the frame header
  * says.
  */
 static int
-s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
+s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 {
+	dbg_assert (self != NULL);
+
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 	dbg_assert (sjob->filename != NULL);
@@ -782,31 +857,18 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 		+ sjob->bufzone.enqueued + sjob->bufzone.waiting -
 		((sjob->bufzone.cur < sjob->bufzone.tail) ? TSAVE_BUFSIZE : 0));
 
-	/* TO DO: check packet */
-	uint16_t plen = pkt_len (pkt);
-	if (plen > len)
-	{ /* drop the frame */
-		s_msgf (0, LOG_DEBUG, self->id,
-			"Packet too long (header says %hu, "
-			"ring slot is %hu)", plen, len);
-		sjob->st.frames_dropped++;
-		return 0;
-	}
-	dbg_assert (plen <= MAX_FPGA_FRAME_LEN);
-
 	/* TO DO: save err flags */
 	/* Update statistics. Size is updated in batches as write operations
 	 * finish. */
-	uint16_t prev_frame = self->cur_frame;
-	self->cur_frame = frame_seq (pkt);
+	uint16_t cur_fseq = frame_seq (pkt);
 	if (sjob->st.frames > 0)
 		sjob->st.frames_lost += (uint64_t) (
-				(uint16_t)(self->cur_frame - prev_frame) - 1);
+				(uint16_t)(cur_fseq - self->prev_fseq) - 1);
 #ifdef FULL_DBG
 	if (sjob->st.frames_lost)
 	{
 		s_msgf (0, LOG_DEBUG, self->id, "Head at: %hu, %hu -> %hu",
-			self->head, prev_frame, self->cur_frame);
+			self->head, self->prev_fseq, cur_fseq);
 		s_dump_buf (sjob->prev_hdr, FPGA_HDR_LEN);
 		s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
 		self->error = 1;
@@ -891,9 +953,8 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t len, task_t* self)
 #ifdef FULL_DBG
 		s_msgf (0, LOG_DEBUG, self->id,
 			"Wrote %lu packets in %lu batches (%lu repeated, "
-			"%lu cleared all), dropped %lu", sjob->st.frames,
-			sjob->batches, sjob->failed_batches, sjob->num_cleared,
-			sjob->st.frames_dropped);
+			"%lu cleared all)", sjob->st.frames,
+			sjob->batches, sjob->failed_batches, sjob->num_cleared);
 #endif
 		/* TO DO: check rc */
 		s_task_save_write (sjob);
@@ -939,6 +1000,7 @@ s_task_save_init (task_t* self)
 	self->data = &data;
 	return 0;
 }
+
 static int
 s_task_save_fin (task_t* self)
 {
@@ -988,7 +1050,6 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	dbg_assert (sjob->st.size == 0);
 	dbg_assert (sjob->st.frames == 0);
 	dbg_assert (sjob->st.frames_lost == 0);
-	dbg_assert (sjob->st.frames_dropped == 0);
 	dbg_assert (sjob->st.errors == 0);
 
 	/* Open the file */
@@ -1019,7 +1080,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
  * unexpected.
  */
 static int
-s_task_save_queue (struct s_task_save_data_t* sjob, int force)
+s_task_save_queue (struct s_task_save_data_t* sjob, bool force)
 {
 	/* If there was no previous job, no need to do checks. */
 	if (sjob->bufzone.enqueued == 0)
@@ -1148,7 +1209,6 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 	dbg_assert (sjob->st.size == 0);
 	dbg_assert (sjob->st.frames == 0);
 	dbg_assert (sjob->st.frames_lost == 0);
-	dbg_assert (sjob->st.frames_dropped == 0);
 	dbg_assert (sjob->st.errors == 0);
 
 	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
@@ -1230,10 +1290,130 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	sjob->st.size = 0;
 	sjob->st.frames = 0;
 	sjob->st.frames_lost = 0;
-	sjob->st.frames_dropped = 0;
 	sjob->st.errors = 0;
 }
 
 /* ------------------------------------------------------------------------- */
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 /* ------------------------------------------------------------------------- */
+
+/*
+ * Accumulates MCA frames and sends them out as soon as the last one is
+ * received. It aborts the whole histogram if an MCA frame is lost or if extra
+ * frames are received (i.e. the size field appears to small).
+ */
+static int
+s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
+{
+	dbg_assert (self != NULL);
+
+	if ( ! is_mca (pkt) )
+		return 0;
+
+	struct s_task_hist_data_t* hist =
+		(struct s_task_hist_data_t*) self->data;
+
+	if ( ! is_header (pkt) && hist->discard )
+		return 0;
+
+	if (is_header (pkt))
+	{
+		if (hist->cur_nbins > 0)
+		{
+			s_msgf (0, LOG_WARNING, self->id,
+				"Received new header frame while waiting for "
+				"%d more bins", hist->nbins - hist->cur_nbins);
+			hist->discard = 1;
+		}
+
+		if (hist->discard)
+		{
+			/* Drop the previous one. */
+			hist->size = 0;
+			hist->nbins = 0;
+			hist->cur_size = 0;
+			hist->cur_nbins = 0;
+			hist->discard = 0;
+			hist->dropped++;
+		}
+
+		dbg_assert (hist->nbins == 0);
+		dbg_assert (hist->size == 0);
+		dbg_assert (hist->cur_nbins == 0);
+		dbg_assert (hist->cur_size == 0);
+		dbg_assert (hist->discard == 0);
+
+		/* Inspect header */
+		hist->nbins = mca_num_allbins (pkt);
+		hist->size  = mca_size (pkt);
+
+		/* TO DO: move to generic packet checks */
+		if (hist->size != hist->nbins * BIN_LEN + MCA_HDR_LEN)
+		{
+			s_msgf (0, LOG_WARNING, self->id,
+				"Size field (%d B) does not match "
+				"number of bins (%d)", hist->size, hist->nbins);
+			hist->discard = 1;
+			return 0;
+		}
+	}
+	dbg_assert ( ! hist->discard );
+
+	/* Check protocol sequence */
+	uint16_t cur_pseq = proto_seq (pkt);
+	if ( ! is_header (pkt) && (uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
+	{
+		s_msgf (0, LOG_INFO, self->id,
+			"Frame out of protocol sequence: %hu -> %hu",
+			self->prev_pseq_mca, cur_pseq);
+		hist->discard = 1;
+		return 0;
+	}
+
+	hist->cur_nbins += mca_num_bins (pkt);
+	if (hist->cur_nbins > hist->nbins)
+	{
+		s_msgf (0, LOG_WARNING, self->id,
+			"Received extra bins: expected %d, so far got %d",
+			hist->nbins, hist->cur_nbins);
+		hist->discard = 1;
+		return 0;
+	}
+
+	/* Copy frame */
+	uint16_t fsize = pkt_len (pkt) - FPGA_HDR_LEN;
+	dbg_assert (hist->cur_size <= THIST_MAXSIZE - fsize);
+	memcpy (hist->buf + hist->cur_size,
+		(char*)pkt + FPGA_HDR_LEN, fsize);
+
+	hist->cur_size += fsize;
+
+	if (hist->cur_nbins == hist->nbins)
+	{
+		dbg_assert (hist->cur_size == hist->size);
+
+		/* Send the histogram */
+		zframe_t* frame = zframe_new (hist->buf, hist->cur_size);
+		/* TO DO: check rc */
+		zframe_send (&frame, self->frontend, 0);
+
+		hist->size = 0;
+		hist->nbins = 0;
+		hist->cur_size = 0;
+		hist->cur_nbins = 0;
+		return 0;
+	}
+
+	dbg_assert (hist->cur_size < hist->size);
+}
+
+static int
+s_task_hist_init (task_t* self)
+{
+	dbg_assert (self != NULL);
+
+	static struct s_task_hist_data_t data;
+	data.discard = 1;
+	self->data = &data;
+	return 0;
+}
