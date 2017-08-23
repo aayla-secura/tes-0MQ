@@ -207,8 +207,8 @@ struct s_task_save_data_t
 	struct s_task_save_stats_t st;
 	struct
 	{
-		uint64_t waiting;    // copied into buffer since the last aio_write
-		uint64_t enqueued;   // queued for writing at the last aio_write
+		size_t waiting;      // copied into buffer since the last aio_write
+		size_t enqueued;     // queued for writing at the last aio_write
 		unsigned char* base; // mmapped, size of TSAVE_BUFSIZE
 		unsigned char* tail; // start address queued for aio_write
 		unsigned char* cur;  // address where next packet will be coppied to
@@ -216,12 +216,12 @@ struct s_task_save_data_t
 	} bufzone;
 	uint64_t max_ticks;
 #ifdef FULL_DBG
-	uint64_t prev_enqueued;
-	uint64_t prev_waiting;
+	size_t prev_enqueued;
+	size_t prev_waiting;
+	size_t last_written;
 	uint64_t batches;
 	uint64_t failed_batches;
 	uint64_t num_cleared;
-	uint64_t last_written;
 	unsigned char prev_hdr[FPGA_HDR_LEN];
 #endif
 	char*    filename;
@@ -250,10 +250,10 @@ static void s_task_save_close (struct s_task_save_data_t* sjob);
 struct s_task_hist_data_t
 {
 	uint64_t      dropped;   // number of aborted histograms
-	int      nbins;     // total number of bins in histogram
-	int      size;      // size of histogram including header
-	int      cur_nbins; // number of received bins so far
-	int      cur_size;  // number of received bytes so far
+	uint16_t      nbins;     // total number of bins in histogram
+	uint16_t      size;      // size of histogram including header
+	uint16_t      cur_nbins; // number of received bins so far
+	uint16_t      cur_size;  // number of received bytes so far
 	bool          discard;   // discard all frames until the next header
 	unsigned char buf[THIST_MAXSIZE];
 };
@@ -1110,9 +1110,8 @@ s_task_save_queue (struct s_task_save_data_t* sjob, bool force)
 	}
 
 	/* Check completion status. */
-	rc = aio_return (&sjob->aios);
-	/* FIX */
-	if (rc == -1 && errno == EAGAIN)
+	ssize_t wrc = aio_return (&sjob->aios);
+	if (wrc == -1 && errno == EAGAIN)
 	{
 #ifdef FULL_DBG
 		sjob->failed_batches++;
@@ -1120,13 +1119,13 @@ s_task_save_queue (struct s_task_save_data_t* sjob, bool force)
 		goto queue_as_is; /* requeue previous batch */
 	}
 
-	if (rc == -1)
+	if (wrc == -1)
 		return -1; /* an error other than EAGAIN */
-	if (rc != sjob->bufzone.enqueued)
+	if ((size_t)wrc != sjob->bufzone.enqueued)
 	{
 		dbg_assert (sjob->bufzone.enqueued > 0);
 #ifdef FULL_DBG
-		sjob->last_written = rc;
+		sjob->last_written = wrc;
 #endif
 		return -2;
 	}
@@ -1313,10 +1312,22 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 	struct s_task_hist_data_t* hist =
 		(struct s_task_hist_data_t*) self->data;
 
-	if ( ! is_header (pkt) && hist->discard )
-		return 0;
+	if ( ! is_header (pkt) )
+	{
+		/* Check protocol sequence */
+		uint16_t cur_pseq = proto_seq (pkt);
+		if ((uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
+		{
+			s_msgf (0, LOG_INFO, self->id,
+				"Frame out of protocol sequence: %hu -> %hu",
+				self->prev_pseq_mca, cur_pseq);
+			hist->discard = 1;
+		}
 
-	if (is_header (pkt))
+		if (hist->discard) 
+			return 0;
+	}
+	else
 	{
 		if (hist->cur_nbins > 0)
 		{
@@ -1348,6 +1359,7 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 		hist->size  = mca_size (pkt);
 
 		/* TO DO: move to generic packet checks */
+#ifdef FULL_DBG
 		if (hist->size != hist->nbins * BIN_LEN + MCA_HDR_LEN)
 		{
 			s_msgf (0, LOG_WARNING, self->id,
@@ -1356,19 +1368,9 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 			hist->discard = 1;
 			return 0;
 		}
+#endif
 	}
 	dbg_assert ( ! hist->discard );
-
-	/* Check protocol sequence */
-	uint16_t cur_pseq = proto_seq (pkt);
-	if ( ! is_header (pkt) && (uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
-	{
-		s_msgf (0, LOG_INFO, self->id,
-			"Frame out of protocol sequence: %hu -> %hu",
-			self->prev_pseq_mca, cur_pseq);
-		hist->discard = 1;
-		return 0;
-	}
 
 	hist->cur_nbins += mca_num_bins (pkt);
 	if (hist->cur_nbins > hist->nbins)
@@ -1388,14 +1390,14 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 
 	hist->cur_size += fsize;
 
-	if (hist->cur_nbins == hist->nbins)
+	if (hist->cur_nbins == hist->nbins) 
 	{
 		dbg_assert (hist->cur_size == hist->size);
 
 		/* Send the histogram */
-		zframe_t* frame = zframe_new (hist->buf, hist->cur_size);
+		// zframe_t* frame = zframe_new (hist->buf, hist->cur_size);
 		/* TO DO: check rc */
-		zframe_send (&frame, self->frontend, 0);
+		// zframe_send (&frame, self->frontend, 0);
 
 		hist->size = 0;
 		hist->nbins = 0;
@@ -1405,6 +1407,7 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 	}
 
 	dbg_assert (hist->cur_size < hist->size);
+	return 0;
 }
 
 static int

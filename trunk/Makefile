@@ -15,5 +15,5 @@ so := $(libs:%=lib%.so)
 
 CC := gcc
 # should we filter CFLAGS or allow all?
-CFLAGS := -I$(CPATH) $(CFLAGS)
+CFLAGS := -I$(CPATH) -Wall -Wextra -Wno-unused $(CFLAGS)
 LDFLAGS := -L$(LIB_ROOT)
