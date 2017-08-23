@@ -4,11 +4,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <czmq.h>
 
 #define REQ_PIC        "s81"
 #define REP_PIC      "18888"
-#define MAX_HISTSIZE UINT16_MAX
+#define MAX_HISTSIZE 65528
 
 int interrupted;
 
@@ -71,6 +72,7 @@ int_hn (int sig)
 static int
 save_hist (const char* server, const char* filename, uint64_t cnt)
 {
+	/* Open the socket */
 	errno = 0;
 	zsock_t* sock = zsock_new_sub (server, "");
 	if (sock == NULL)
@@ -82,6 +84,7 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 		return -1;
 	}
 
+	/* Open the file */
 	int fd = open (filename, O_RDWR | O_APPEND | O_CREAT,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (fd == -1)
@@ -90,40 +93,75 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 		zsock_destroy (&sock);
 		return -1;
 	}
+	off_t fsize = lseek (fd, 0, SEEK_END);
+	if (fsize == (off_t)-1)
+	{
+		perror ("Could not seek to end of file");
+		close (fd);
+		zsock_destroy (&sock);
+		return -1;
+	}
+	printf ("Appending to file of size %lu\n", fsize);
+
+	/* Allocate space */
+	int rc = posix_fallocate (fd, fsize, cnt*MAX_HISTSIZE);
+	if (rc)
+	{
+		errno = rc; /* posix_fallocate does not set it */
+		perror ("Could not allocate sufficient space");
+		close (fd);
+		zsock_destroy (&sock);
+		return -1;
+	}
+
+	/* mmap it */
+	/* TO DO: map starting at the last page boundary before end of file */
+	unsigned char* map = (unsigned char*)mmap (NULL,
+		fsize + cnt*MAX_HISTSIZE, PROT_WRITE, MAP_SHARED, fd, 0);
+	if (map == (void*)-1)
+	{
+		perror ("Could not mmap file");
+		close (fd);
+		zsock_destroy (&sock);
+		return -1;
+	}
 
 	uint64_t h = 0;
+	size_t hsize = 0;
+	void* sock_h = zsock_resolve (sock);
+	assert (sock_h != NULL);
 	for (; ! interrupted && h < cnt; h++)
 	{
-		zframe_t* frame = zframe_recv (sock);	
-		if (frame == NULL)
-			break;
-		size_t len = zframe_size (frame);
-		ssize_t rc = write (fd, zframe_data (frame), len);
-		zframe_destroy (&frame);
+		rc = zmq_recv (sock_h, map + fsize + hsize, MAX_HISTSIZE, 0);
 		if (rc == -1)
 		{
 			perror ("Could not write to file");
 			break;
 		}
-		else if ((size_t)rc != len)
+		else if ((size_t)rc > MAX_HISTSIZE)
 		{
-			fprintf (stderr, "Frame is %lu bytes, wrote %ld\n",
-				len, rc);
+			fprintf (stderr, "Frame is too large: %lu bytes", (size_t)rc);
 			break;
 		}
+		hsize += (size_t)rc;
 	}
 	if (h < cnt - 1)
 		printf ("Saved %lu histograms\n", h);
 
 	zsock_destroy (&sock);
+	munmap (map, cnt*MAX_HISTSIZE);
+	rc = ftruncate (fd, fsize + hsize);
+	if (rc == -1)
+		perror ("Could not truncate file");
 	close (fd);
 	return 0;
 }
 
-static int
+	static int
 save_to_remote (const char* server, const char* filename,
-	uint64_t max_ticks, uint8_t ovrwrt)
+		uint64_t max_ticks, uint8_t ovrwrt)
 {
+	/* Open the socket */
 	errno = 0;
 	zsock_t* sock = zsock_new_req (server);
 	if (sock == NULL)
@@ -135,6 +173,7 @@ save_to_remote (const char* server, const char* filename,
 		return -1;
 	}
 
+	/* Send the request */
 	zsock_send (sock, REQ_PIC, filename, max_ticks, ovrwrt);
 	puts ("Waiting for reply");
 
@@ -147,10 +186,11 @@ save_to_remote (const char* server, const char* filename,
 		return -1;
 	}
 
+	/* Print reply */
 	if (!fstat)
 	{
 		printf ("File %s\n", max_ticks ?
-			 "exists" : "does not exist");
+			"exists" : "does not exist");
 	}
 	else
 	{
@@ -167,7 +207,7 @@ save_to_remote (const char* server, const char* filename,
 	return 0;
 }
 
-int
+	int
 main (int argc, char **argv)
 {
 	int rc;
@@ -205,7 +245,7 @@ main (int argc, char **argv)
 		{
 			case 'R':
 				snprintf (server, sizeof (server),
-					"%s", optarg);
+						"%s", optarg);
 				break;
 			case 'c':
 				if (mode == 0)
@@ -247,7 +287,7 @@ main (int argc, char **argv)
 				break;
 			case 'f':
 				snprintf (filename, sizeof (filename),
-					"%s", optarg);
+						"%s", optarg);
 				break;
 			case 'o':
 				if (mode == 1)

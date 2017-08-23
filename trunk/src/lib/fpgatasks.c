@@ -242,7 +242,7 @@ static void s_task_save_close (struct s_task_save_data_t* sjob);
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 
-#define THIST_MAXSIZE UINT16_MAX
+#define THIST_MAXSIZE 65528 // highest 16-bit number that is a multiple of 8 bytes
 
 /*
  * Data for currently built histogram.
@@ -1063,7 +1063,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 
 	int rc;
 	rc = lseek (sjob->aios.aio_fildes, TSAVE_SOFFSET, 0);
-	if (rc == (off_t)-1 || rc < TSAVE_SOFFSET)
+	if (rc != TSAVE_SOFFSET)
 		return -1;
 
 	return 0;
