@@ -209,7 +209,9 @@ daemonize (const char* pidfile)
 		errno = 0;
 		sigaction (sig, &sa, NULL);
 		if (errno)
+		{
 			DEBUG ("signal (%d, SIG_DFL): %m", sig);
+		}
 	}
 
 	/* We do not sanitize environment, that is the job of the caller */
