@@ -267,7 +267,18 @@ daemonize (const char* pidfile)
 			return -1;
 		}
 
-		rc = read (pipe_fds[0], &sig, 1);
+		ssize_t n = read (pipe_fds[0], &sig, 1);
+		if (n == -1)
+		{
+			ERROR ("Could not read from pipe: %m");
+			close (pipe_fds[0]);
+			return -1;
+		}
+		if (n != 1)
+		{
+			WARN ("Read %lu bytes, expected 1", (size_t)n);
+		}
+
 		close (pipe_fds[0]);
 		if ( memcmp (&sig, DAEMON_OK_MSG, 1) != 0 )
 		{
@@ -293,7 +304,16 @@ daemonize (const char* pidfile)
 		{
 			/* Something went wrong, tell parent */
 			ERROR ("setsid (): %m");
-			rc = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+			if (n == -1)
+			{
+				ERROR ("Could not write to pipe: %m");
+			}
+			if (n != 1)
+			{
+				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+			}
+
 			close (pipe_fds[1]);
 
 			_exit (EXIT_FAILURE);
@@ -306,7 +326,16 @@ daemonize (const char* pidfile)
 		{
 			/* Something went wrong, tell parent */
 			ERROR ("Could not fork a second time");
-			rc = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+			if (n == -1)
+			{
+				ERROR ("Could not write to pipe: %m");
+			}
+			if (n != 1)
+			{
+				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+			}
+
 			close (pipe_fds[1]);
 
 			_exit (EXIT_FAILURE);
@@ -334,7 +363,16 @@ daemonize (const char* pidfile)
 			{
 				/* Something went wrong, tell parent */
 				ERROR ("chdir (\"/\"): %m");
-				rc = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+				ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+				if (n == -1)
+				{
+					ERROR ("Could not write to pipe: %m");
+				}
+				if (n != 1)
+				{
+					WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				}
+
 				close (pipe_fds[1]);
 
 				_exit (EXIT_FAILURE);
@@ -353,7 +391,16 @@ daemonize (const char* pidfile)
 				/* Something went wrong, tell parent */
 				ERROR ("freopen (%s, ...): %m", _PATH_DEVNULL);
 				ERROR ("Failed to reopen stdin, stdout or stderr");
-				rc = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+				ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+				if (n == -1)
+				{
+					ERROR ("Could not write to pipe: %m");
+				}
+				if (n != 1)
+				{
+					WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				}
+
 				close (pipe_fds[1]);
 
 				_exit (EXIT_FAILURE);
@@ -368,7 +415,16 @@ daemonize (const char* pidfile)
 				{
 					ERROR ("Failed to open pidfile %s: %m",
 						pidfile);
-					rc = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+					if (n == -1)
+					{
+						ERROR ("Could not write to pipe: %m");
+					}
+					if (n != 1)
+					{
+						WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+					}
+
 					close (pipe_fds[1]);
 
 					_exit (EXIT_FAILURE);
@@ -376,14 +432,34 @@ daemonize (const char* pidfile)
 				
 				char pid_s[12];
 				pid = getpid();
-				int pid_l = snprintf (pid_s, 12, "%u", pid);
-				rc = write (fd, pid_s, pid_l);
+				size_t pid_l = snprintf (pid_s, 12, "%u", pid);
+				ssize_t n = write (fd, pid_s, pid_l);
+				if (n == -1)
+				{
+					ERROR ("Could not write to pipe: %m");
+				}
+				if ((size_t)n != pid_l)
+				{
+					WARN ("Wrote %lu bytes, expected %lu", (size_t)n, pid_l);
+				}
+
 				DEBUG ("Wrote pid (%u) to pidfile (%s)",
 					pid, pidfile);
 			}
 
 			/* Done, signal parent */
-			rc = write (pipe_fds[1], DAEMON_OK_MSG, 1);
+			ssize_t n = write (pipe_fds[1], DAEMON_OK_MSG, 1);
+			if (n == -1)
+			{
+				ERROR ("Could not write to pipe: %m");
+				close (pipe_fds[1]);
+				_exit (EXIT_FAILURE);
+			}
+			if (n != 1)
+			{
+				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+			}
+
 			close (pipe_fds[1]);
 			closelog ();
 
