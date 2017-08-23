@@ -261,7 +261,7 @@ struct s_task_hist_data_t
 /* There is no handler for the PUB socket. */
 static s_pkt_fn        s_task_hist_pkt_hn;
 static s_data_fn       s_task_hist_init;
-// static s_data_fn       s_task_hist_fin;
+static s_data_fn       s_task_hist_fin;
 
 /* ----------------------------- THE FULL LIST ----------------------------- */
 
@@ -278,6 +278,7 @@ static task_t tasks[] = {
 	{ // PUBLISH HIST
 		.pkt_handler    = s_task_hist_pkt_hn,
 		.data_init      = s_task_hist_init,
+		.data_fin       = s_task_hist_fin,
 		.front_type     = ZMQ_PUB,
 		.front_addr     = "tcp://*:55556",
 		.autoactivate   = 1,
@@ -580,6 +581,8 @@ s_task_shim (zsock_t* pipe, void* self_)
 			self->error = 1;
 			goto cleanup;
 		}
+		s_msgf (0, LOG_INFO, self->id,
+			"Listening on port(s) %s", self->front_addr);
 	}
 	/* Register the readers */
 	rc = zloop_reader (loop, pipe, s_sig_hn, self);
@@ -981,9 +984,9 @@ s_task_save_init (task_t* self)
 	dbg_assert (sizeof (struct s_task_save_stats_t) == TSAVE_SOFFSET);
 	dbg_assert (self != NULL);
 
-	static struct s_task_save_data_t data;
-	data.aios.aio_sigevent.sigev_notify = SIGEV_NONE;
-	data.aios.aio_fildes = -1;
+	static struct s_task_save_data_t sjob;
+	sjob.aios.aio_sigevent.sigev_notify = SIGEV_NONE;
+	sjob.aios.aio_fildes = -1;
 
 	void* buf = mmap (NULL, TSAVE_BUFSIZE, PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -993,11 +996,11 @@ s_task_save_init (task_t* self)
 			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
 		return -1;
 	}
-	data.bufzone.base = data.bufzone.tail =
-		data.bufzone.cur = (unsigned char*) buf;
-	data.bufzone.ceil = data.bufzone.base + TSAVE_BUFSIZE;
+	sjob.bufzone.base = sjob.bufzone.tail =
+		sjob.bufzone.cur = (unsigned char*) buf;
+	sjob.bufzone.ceil = sjob.bufzone.base + TSAVE_BUFSIZE;
 
-	self->data = &data;
+	self->data = &sjob;
 	return 0;
 }
 
@@ -1210,12 +1213,12 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 	dbg_assert (sjob->st.frames_lost == 0);
 	dbg_assert (sjob->st.errors == 0);
 
-	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
+	off_t rc = lseek (sjob->aios.aio_fildes, 0, 0);
 	if (rc)
 		return -1;
 	
 	rc = read (sjob->aios.aio_fildes, &sjob->st, TSAVE_SOFFSET);
-	if (rc < TSAVE_SOFFSET)
+	if (rc != TSAVE_SOFFSET)
 		return -1;
 	
 	return 0;
@@ -1231,12 +1234,12 @@ s_task_save_write (struct s_task_save_data_t* sjob)
 	dbg_assert (sjob->filename != NULL);
 	dbg_assert (sjob->aios.aio_fildes != -1);
 
-	int rc = lseek (sjob->aios.aio_fildes, 0, 0);
+	off_t rc = lseek (sjob->aios.aio_fildes, 0, 0);
 	if (rc)
 		return -1;
 	
 	rc = write (sjob->aios.aio_fildes, &sjob->st, TSAVE_SOFFSET);
-	if (rc < TSAVE_SOFFSET)
+	if (rc != TSAVE_SOFFSET)
 		return -1;
 	
 	return 0;
@@ -1314,6 +1317,9 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 
 	if ( ! is_header (pkt) )
 	{
+		if (hist->discard) 
+			return 0;
+
 		/* Check protocol sequence */
 		uint16_t cur_pseq = proto_seq (pkt);
 		if ((uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
@@ -1322,10 +1328,8 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 				"Frame out of protocol sequence: %hu -> %hu",
 				self->prev_pseq_mca, cur_pseq);
 			hist->discard = 1;
-		}
-
-		if (hist->discard) 
 			return 0;
+		}
 	}
 	else
 	{
@@ -1346,6 +1350,8 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 			hist->cur_nbins = 0;
 			hist->discard = 0;
 			hist->dropped++;
+			s_msgf (0, LOG_DEBUG, self->id,
+				"Discarded %lu histograms so far", hist->dropped);
 		}
 
 		dbg_assert (hist->nbins == 0);
@@ -1395,9 +1401,29 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 		dbg_assert (hist->cur_size == hist->size);
 
 		/* Send the histogram */
-		// zframe_t* frame = zframe_new (hist->buf, hist->cur_size);
 		/* TO DO: check rc */
-		// zframe_send (&frame, self->frontend, 0);
+#ifdef FULL_DBG
+		int rc = zmq_send (zsock_resolve (self->frontend),
+			hist->buf, hist->cur_size, 0);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, self->id,
+				"Cannot send the histogram");
+			self->error = 1;
+			return -1;
+		}
+		if (rc != hist->cur_size)
+		{
+			s_msgf (errno, LOG_ERR, self->id,
+				"Histogram is %lu bytes long, sent %u",
+				hist->cur_size, rc);
+			self->error = 1;
+			return -1;
+		}
+#else
+		zmq_send (zsock_resolve (self->frontend),
+			hist->buf, hist->cur_size, 0);
+#endif
 
 		hist->size = 0;
 		hist->nbins = 0;
@@ -1415,8 +1441,18 @@ s_task_hist_init (task_t* self)
 {
 	dbg_assert (self != NULL);
 
-	static struct s_task_hist_data_t data;
-	data.discard = 1;
-	self->data = &data;
+	static struct s_task_hist_data_t hist;
+	hist.discard = 1;
+
+	self->data = &hist;
+	return 0;
+}
+
+static int
+s_task_hist_fin (task_t* self)
+{
+	dbg_assert (self != NULL);
+
+	self->data = NULL;
 	return 0;
 }

@@ -3,52 +3,246 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 #include <czmq.h>
 
-#define SAVEJOB_IF "tcp://localhost:55555"
-#define REQ_PIC      "s81"
-#define REP_PIC    "18888"
+#define REQ_PIC        "s81"
+#define REP_PIC      "18888"
+#define MAX_HISTSIZE UINT16_MAX
+
+int interrupted;
 
 static void
 usage (const char* self)
 {
-	fprintf (stderr,
-		"Usage: %s [options]\n\n"
-		"Options:\n"
-		"    -f <filename>        Set the remote filename\n"
-		"    -t <ticks>           Save up to that many ticks\n"
-		"    -o                   Overwrite if file exists\n"
-		"    -s                   Request status of filename\n"
-		"\nThe 'f' option and excatly one of 's' or 't' "
+	fprintf (stdout,
+		"Usage: %s -R <socket> [options]\n\n"
+		"The format for <scoket> is <proto>://<host>:<port>\n\n"
+		"The client operates in one of two modes:\n"
+		"1) Options for saving all frames to a remote file:\n"
+		"    -f <filename>      Remote filename\n"
+		"    -t <ticks>         Save up to that many ticks\n"
+		"    -o                 Overwrite if file exists\n"
+		"    -s                 Request status of filename\n"
+		"The 'f' option and excatly one of 's' or 't' "
 		"must be specified.\n"
-		"The 'o' cannot be given for status requests", self
+		"The 'o' cannot be given for status requests\n\n"
+		"2) Options for saving histograms to a local file:\n"
+		"    -f <filename>      Local filename. Will append if"
+		"                       existing.\n"
+		"    -c <count>         Save up to that many histograms\n"
+		"Both 'f' and 'c' options must be given.\n", self
 		);
-	exit (EXIT_FAILURE);
+	exit (EXIT_SUCCESS);
+}
+
+static int
+prompt (void)
+{
+	printf ("\nProceed (y/n)? ");
+	do
+	{
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t rlen = getline (&line, &len, stdin);
+
+		if (line == NULL || rlen == -1)
+			return -1;
+		char rep = line[0];
+		free (line);
+		if (rlen == 2)
+		{
+			if (rep == 'n' || rep == 'N')
+				return -1;
+			if (rep == 'y' || rep == 'Y')
+				return 0;
+		}
+
+		printf ("Reply with 'y' or 'n': ");
+	} while (1);
+}
+
+static void
+int_hn (int sig)
+{
+	interrupted = 1;
+}
+
+static int
+save_hist (const char* server, const char* filename, uint64_t cnt)
+{
+	errno = 0;
+	zsock_t* sock = zsock_new_sub (server, "");
+	if (sock == NULL)
+	{
+		if (errno)
+			perror ("Could not connect to the server");
+		else
+			fprintf (stderr, "Could not connect to the server\n");
+		return -1;
+	}
+
+	int fd = open (filename, O_RDWR | O_APPEND | O_CREAT,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (fd == -1)
+	{
+		perror ("Could not open the file");
+		zsock_destroy (&sock);
+		return -1;
+	}
+
+	uint64_t h = 0;
+	for (; ! interrupted && h < cnt; h++)
+	{
+		zframe_t* frame = zframe_recv (sock);	
+		if (frame == NULL)
+			break;
+		size_t len = zframe_size (frame);
+		ssize_t rc = write (fd, zframe_data (frame), len);
+		zframe_destroy (&frame);
+		if (rc == -1)
+		{
+			perror ("Could not write to file");
+			break;
+		}
+		else if ((size_t)rc != len)
+		{
+			fprintf (stderr, "Frame is %lu bytes, wrote %ld\n",
+				len, rc);
+			break;
+		}
+	}
+	if (h < cnt - 1)
+		printf ("Saved %lu histograms\n", h);
+
+	zsock_destroy (&sock);
+	close (fd);
+	return 0;
+}
+
+static int
+save_to_remote (const char* server, const char* filename,
+	uint64_t max_ticks, uint8_t ovrwrt)
+{
+	errno = 0;
+	zsock_t* sock = zsock_new_req (server);
+	if (sock == NULL)
+	{
+		if (errno)
+			perror ("Could not connect to the server");
+		else
+			fprintf (stderr, "Could not connect to the server\n");
+		return -1;
+	}
+
+	zsock_send (sock, REQ_PIC, filename, max_ticks, ovrwrt);
+	puts ("Waiting for reply");
+
+	uint8_t fstat;
+	uint64_t ticks, size, frames, missed;
+	int rc = zsock_recv (sock, REP_PIC, &fstat, &ticks, &size, &frames, &missed); 
+	if (rc == -1)
+	{
+		zsock_destroy (&sock);
+		return -1;
+	}
+
+	if (!fstat)
+	{
+		printf ("File %s\n", max_ticks ?
+			 "exists" : "does not exist");
+	}
+	else
+	{
+		printf ("%s\n"
+			"ticks:         %lu\n"
+			"saved frames:  %lu\n"
+			"missed frames: %lu\n"
+			"total size:    %lu\n",
+			max_ticks ? "Wrote" : "File contains",
+			ticks, frames, missed, size);
+	}
+
+	zsock_destroy (&sock);
+	return 0;
 }
 
 int
 main (int argc, char **argv)
 {
-	char filename[128];
-	char* buf = NULL;
+	int rc;
+
+	/* Signal handlers */
+	struct sigaction sigact;
+	sigact.sa_flags = 0;
+	sigact.sa_handler = int_hn;
+	sigemptyset (&sigact.sa_mask);
+	sigaddset (&sigact.sa_mask, SIGINT);
+	sigaddset (&sigact.sa_mask, SIGTERM);
+	rc  = sigaction (SIGINT, &sigact, NULL);
+	rc |= sigaction (SIGTERM, &sigact, NULL);
+	if (rc == -1)
+	{
+		perror ("sigaction");
+		return -1;
+	}
+
+	/* Command-line */
+	char server[256];
+	memset (server, 0, sizeof (server));
+	char filename[256];
 	memset (filename, 0, sizeof (filename));
-	uint64_t max_ticks = 0;
+	char* buf = NULL;
+	uint64_t max_ticks = 0, numhist = 0;
 	uint8_t ovrwrt = 0, status = 0;
+	/* 0 for remotely save all frames, 1 for locally save histograms */
+	int mode = -1;
 
 	int opt;
-	while ( (opt = getopt (argc, argv, "t:f:osh")) != -1 )
+	while ( (opt = getopt (argc, argv, "R:f:c:t:osh")) != -1 )
 	{
 		switch (opt)
 		{
+			case 'R':
+				snprintf (server, sizeof (server),
+					"%s", optarg);
+				break;
+			case 'c':
+				if (mode == 0)
+				{
+					fprintf (stderr, "Option %c is not "
+						"valid in mode %d.\n", opt, mode + 1);
+					// usage (argv[0]);
+				}
+				mode = 1;
+				numhist = strtoul (optarg, &buf, 10);
+				if (strlen (buf))
+				{
+					fprintf (stderr, "Invalid format for "
+						"option %c.\n", opt);
+					// usage (argv[0]);
+				}
+				break;
 			case 't':
+				if (mode == 1)
+				{
+					fprintf (stderr, "Option %c is not "
+						"valid in mode %d.\n", opt, mode + 1);
+					// usage (argv[0]);
+				}
+				mode = 0;
 				if (status)
 				{
-					usage (argv[0]);
+					fprintf (stderr, "Option %c is not "
+						"valid for status requests.\n", opt);
+					// usage (argv[0]);
 				}
 				max_ticks = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 				{
-					usage (argv[0]);
+					fprintf (stderr, "Invalid format for "
+						"option %c.\n", opt);
+					// usage (argv[0]);
 				}
 				break;
 			case 'f':
@@ -56,16 +250,34 @@ main (int argc, char **argv)
 					"%s", optarg);
 				break;
 			case 'o':
+				if (mode == 1)
+				{
+					fprintf (stderr, "Option %c is not "
+						"valid in mode %d.\n", opt, mode + 1);
+					// usage (argv[0]);
+				}
+				mode = 0;
 				if (status)
 				{
-					usage (argv[0]);
+					fprintf (stderr, "Option %c is not "
+						"valid for status requests.\n", opt);
+					// usage (argv[0]);
 				}
 				ovrwrt = 1;
 				break;
 			case 's':
+				if (mode == 1)
+				{
+					fprintf (stderr, "Option %c is not "
+						"valid in mode %d.\n", opt, mode + 1);
+					// usage (argv[0]);
+				}
+				mode = 0;
 				if (max_ticks || ovrwrt)
 				{
-					usage (argv[0]);
+					fprintf (stderr, "Option %c is not "
+						"valid for status requests.\n", opt);
+					// usage (argv[0]);
 				}
 				max_ticks = 0;
 				status = 1;
@@ -79,77 +291,60 @@ main (int argc, char **argv)
 				assert (0);
 		}
 	}
-	if (strlen (filename) == 0 || argc > optind ||
-		( !max_ticks && !status ))
+	/* Handle missing mandatory options */
+	if (strlen (server) == 0)
 	{
-		usage (argv[0]);
+		fprintf (stderr, "You must specify the remote address.\n"
+			"Type %s -h for help\n", argv[0]);
+	}
+	if (strlen (filename) == 0)
+	{
+		fprintf (stderr, "You must specify a filename.\n"
+			"Type %s -h for help\n", argv[0]);
+	}
+	if (argc > optind)
+	{
+		fprintf (stderr, "Extra arguments given.\n"
+			"Type %s -h for help\n", argv[0]);
+	}
+	if ( mode == 0 && !max_ticks && !status )
+	{
+		fprintf (stderr, "Excatly one of 's' or 't' options "
+			"must be specified.\n"
+			"Type %s -h for help\n", argv[0]);
+	}
+	if (mode == 1 && numhist == 0)
+	{
+		fprintf (stderr, "You must specify a positive number of histograms. "
+			"Type %s -h for help\n", argv[0]);
+	}
+	if (mode == -1)
+	{
+		fprintf (stderr, "You must choose a mode of operation by "
+			"giving at least one of its specific options.\n"
+			"Type %s -h for help\n", argv[0]);
 	}
 
-	printf ("Sending %s request for remote filename %s.",
-		status ? "a status": (ovrwrt ? "an overwrite" : "a write" ),
-		filename);
-	if (!status)
+	/* Prompt and take action */
+	if (mode == 0)
 	{
-		printf (" Will terminate after %lu ticks.", max_ticks);
-	}
-
-	printf ("\nProceed (y/n)? ");
-	do
-	{
-		char* line = NULL;
-		size_t len = 0;
-		ssize_t rlen = getline (&line, &len, stdin);
-
-		if (line == NULL || rlen == -1)
-			exit (EXIT_FAILURE);
-		char rep = line[0];
-		free (line);
-		if (rlen == 2)
+		printf ("Sending %s request for remote filename %s.",
+			status ? "a status": (ovrwrt ? "an overwrite" : "a write" ),
+			filename);
+		if (!status)
 		{
-			if (rep == 'n' || rep == 'N')
-				exit (EXIT_SUCCESS);
-			if (rep == 'y' || rep == 'Y')
-				break;
+			printf (" Will terminate after %lu ticks.", max_ticks);
 		}
-
-		printf ("Reply with 'y' or 'n': ");
-	} while (1);
-
-	zsock_t* server = zsock_new_req (">"SAVEJOB_IF);
-	if (server == NULL)
-	{
-		fputs ("Could not connect to server", stderr);
-		exit (EXIT_FAILURE);
-	}
-	zsock_send (server, REQ_PIC, filename, max_ticks, ovrwrt);
-
-	puts ("Waiting for reply");
-
-	uint8_t fstat;
-	uint64_t ticks, size, frames, missed;
-	int rc = zsock_recv (server, REP_PIC, &fstat, &ticks, &size, &frames, &missed); 
-	if (rc == -1)
-	{
-		zsock_destroy (&server);
-		exit (EXIT_FAILURE);
-	}
-
-	if (!fstat)
-	{
-		printf ("File %s\n", status ?
-			"does not exist" : "exists");
+		if ( prompt () )
+			return 0;
+		return save_to_remote (server, filename, max_ticks, ovrwrt);
 	}
 	else
 	{
-		printf ("%s\n"
-			"ticks:         %lu\n"
-			"saved frames:  %lu\n"
-			"missed frames: %lu\n"
-			"total size:    %lu\n",
-			status ? "File contains" : "Wrote",
-			ticks, frames, missed, size);
+		printf ("Will save %lu histograms, each of maximum size %u "
+			"to local file %s.", numhist, MAX_HISTSIZE, filename);
+		if ( prompt () )
+			return 0;
+		return save_hist (server, filename, numhist);
 	}
-
-	zsock_destroy (&server);
-	exit (EXIT_SUCCESS);
 }

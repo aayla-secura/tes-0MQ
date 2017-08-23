@@ -310,12 +310,11 @@ main (void)
 			memcpy ((char*)gobj.save_map + gobj.b_written, pkt,
 				pkt->length);
 #else /* USE_MMAP */
-			rc = write (gobj.save_fd, pkt, pkt->length);
+			ssize_t wrc = write (gobj.save_fd, pkt, pkt->length);
+			if (wrc == -1)
+				raise (SIGTERM);
 #endif /* USE_MMAP */
 			gobj.b_written += pkt->length;
-
-			if (rc == -1)
-				raise (SIGTERM);
 			/* ------------------------------------------------- */
 #endif /* SAVE_FILE */
 

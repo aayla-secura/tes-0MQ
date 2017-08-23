@@ -343,13 +343,13 @@ main_body (void* arg)
 #ifdef USE_MMAP
 			memcpy ((char*)data.save_map + gstats.b_written, pkt,
 				pkt->length);
-			if (rc == -1)
+#else /* USE_MMAP */
+			ssize_t wrc = write (data.save_fd, pkt, pkt->length);
+			if (wrc == -1)
 			{
 				ERROR ("Could not write to file\n");
 				pthread_exit (NULL);
 			}
-#else /* USE_MMAP */
-			rc = write (data.save_fd, pkt, pkt->length);
 #endif /* USE_MMAP */
 			gstats.b_written += pkt->length;
 			/* ------------------------------------------------- */
