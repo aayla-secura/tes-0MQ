@@ -28,7 +28,7 @@
 
 #define MAX_MCA_FRAMES        45
 // #define MAX_TRACE_FRAMES
-#define MAX_MCA_BINS_ALL      ((UINT16_MAX - MCA_HDR_LEN) / BIN_LEN)
+#define MAX_MCA_BINS_ALL      ((65528 - MCA_HDR_LEN) / BIN_LEN)
 #define MAX_MCA_BINS_HFR      ((MAX_FPGA_FRAME_LEN - MCA_HDR_LEN - \
 				FPGA_HDR_LEN) / BIN_LEN)
 #define MAX_MCA_BINS_SFR      ((MAX_FPGA_FRAME_LEN - \
