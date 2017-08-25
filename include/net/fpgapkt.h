@@ -17,12 +17,12 @@
 typedef struct fpga_pkt fpga_pkt;
 
 /* Destination and source MAC addresses */
-static inline char* dst_addr_s (fpga_pkt* pkt);
-static inline char* src_addr_s (fpga_pkt* pkt);
-static inline struct ether_addr* dst_addr_u (fpga_pkt* pkt);
-static inline struct ether_addr* src_addr_u (fpga_pkt* pkt);
+static inline char* dst_eth_ntoa (fpga_pkt* pkt);
+static inline char* src_eth_ntoa (fpga_pkt* pkt);
+static inline struct ether_addr* dst_eth_aton (fpga_pkt* pkt);
+static inline struct ether_addr* src_eth_aton (fpga_pkt* pkt);
 /* Frame length (including ethernet header) */
-static inline uint16_t pkt_len (fpga_pkt* pkt);
+static inline uint16_t pkt_len   (fpga_pkt* pkt);
 /* Frame and protocol sequences */
 static inline uint16_t frame_seq (fpga_pkt* pkt);
 static inline uint16_t proto_seq (fpga_pkt* pkt);
@@ -30,25 +30,24 @@ static inline uint16_t proto_seq (fpga_pkt* pkt);
 static inline int is_header (fpga_pkt* pkt);
 /* True or false if frame is any MCA or any event frame (the two are
  * complementary) */
-static inline int is_mca (fpga_pkt* pkt);
-static inline int is_evt (fpga_pkt* pkt);
+static inline int is_mca   (fpga_pkt* pkt);
+static inline int is_evt   (fpga_pkt* pkt);
 /* True or false if frame is a tick, peak, area or pulse event */
-static inline int is_tick (fpga_pkt* pkt);
-static inline int is_peak (fpga_pkt* pkt);
-static inline int is_area (fpga_pkt* pkt);
+static inline int is_tick  (fpga_pkt* pkt);
+static inline int is_peak  (fpga_pkt* pkt);
+static inline int is_area  (fpga_pkt* pkt);
 static inline int is_pulse (fpga_pkt* pkt);
 /* True or false if frame is any trace event */
 static inline int is_trace (fpga_pkt* pkt);
 /* True or false if frame is a single trace event */
-static inline int is_trace_sgl (fpga_pkt* pkt);
+static inline int is_trace_sgl  (fpga_pkt* pkt);
 /* True or false if frame is a single, average, dot-product or
  * trace-dot-product trace event */
-static inline int is_trace_avg (fpga_pkt* pkt);
-static inline int is_trace_dp (fpga_pkt* pkt);
+static inline int is_trace_avg  (fpga_pkt* pkt);
+static inline int is_trace_dp   (fpga_pkt* pkt);
 static inline int is_trace_dptr (fpga_pkt* pkt);
-/* Event's size and type (valid for all events) */
+/* Event's size (valid for all events) */
 static inline uint16_t evt_size (fpga_pkt* pkt);
-static inline uint16_t evt_type (fpga_pkt* pkt);
 /* Size of histogram (valid for MCA header frames) */
 static inline uint16_t mca_size (fpga_pkt* pkt);
 /* Number of bins in this frame (valid for all MCA frames) */
@@ -58,50 +57,47 @@ static inline uint16_t mca_num_allbins (fpga_pkt* pkt);
 /* Histogram's lowest value, most frequent bin, sum of all bins, start and stop
  * timestamp (valid for MCA header frames) */
 static inline uint32_t mca_lvalue (fpga_pkt* pkt);
-static inline uint16_t mca_mostfreq (fpga_pkt* pkt);
-static inline uint64_t mca_total (fpga_pkt* pkt);
+static inline uint16_t mca_mfreq  (fpga_pkt* pkt);
+static inline uint64_t mca_total  (fpga_pkt* pkt);
 static inline uint64_t mca_startt (fpga_pkt* pkt);
-static inline uint64_t mca_stopt (fpga_pkt* pkt);
+static inline uint64_t mca_stopt  (fpga_pkt* pkt);
 /* Get bin number <bin> (starting at 0) of the current frame */
 static inline uint32_t mca_bin (fpga_pkt* pkt, uint16_t bin);
-/* MCA flags as unsigned integer or as a struct with separate fields for each
- * register (valid for all MCA frames) */
-static inline uint32_t mca_flags_u (fpga_pkt* pkt);
-static inline struct mca_flags*   mca_flags_r (fpga_pkt* pkt);
-/* Event (or tick) flags as unsigned integer or as a struct with separate
- * fields for each register  (valid for all event frames) */
-static inline uint16_t evt_flags_u (fpga_pkt* pkt);
-static inline struct event_flags* evt_flags_r (fpga_pkt* pkt);
-static inline struct tick_flags*  tick_flags_r (fpga_pkt* pkt);
-/* Trace flags as unsigned integer or as a struct with separate fields for each
- * register  (valid for trace events) */
-static inline uint16_t trace_flags_u (fpga_pkt* pkt);
-static inline struct trace_flags* trace_flags_r (fpga_pkt* pkt);
+/* MCA flags as a struct with separate fields for each register (valid for all
+ * MCA frames) */
+static inline struct mca_flags*   mca_fl  (fpga_pkt* pkt);
+/* Event (or tick) flags as a struct with separate fields for each register
+ * (valid for all event frames) */
+static inline struct event_flags* evt_fl  (fpga_pkt* pkt);
+static inline struct tick_flags*  tick_fl (fpga_pkt* pkt);
+/* Trace flags as a struct with separate fields for each register  (valid for
+ * trace events) */
+static inline struct trace_flags* trace_fl (fpga_pkt* pkt);
 /* Event's time (valid for all events) */
 static inline uint16_t evt_toff (fpga_pkt* pkt);
 /* Tick's period, timestamp, error registers and events lost (valid for tick
  * events) */
 static inline uint32_t tick_period (fpga_pkt* pkt);
-static inline uint64_t tick_ts (fpga_pkt* pkt);
-static inline uint8_t  tick_ovrfl (fpga_pkt* pkt);
-static inline uint8_t  tick_err (fpga_pkt* pkt);
-static inline uint8_t  tick_cfd (fpga_pkt* pkt);
-static inline uint32_t tick_lost (fpga_pkt* pkt);
+static inline uint64_t tick_ts     (fpga_pkt* pkt);
+static inline uint8_t  tick_ovrfl  (fpga_pkt* pkt);
+static inline uint8_t  tick_err    (fpga_pkt* pkt);
+static inline uint8_t  tick_cfd    (fpga_pkt* pkt);
+static inline uint32_t tick_lost   (fpga_pkt* pkt);
 /* Peak's height and rise time (valid for peak events)  */
-static inline uint16_t peak_h (fpga_pkt* pkt);
+static inline uint16_t peak_ht    (fpga_pkt* pkt);
 static inline uint16_t peak_riset (fpga_pkt* pkt);
 /* Area's area (valid for area events) */
-static inline uint32_t area_area (fpga_pkt* pkt);
+static inline uint32_t area_area  (fpga_pkt* pkt);
 /* FIX: Pulse's size, area, length, time offset (valid for pulse events) */
 static inline uint16_t pulse_size (fpga_pkt* pkt);
 static inline uint32_t pulse_area (fpga_pkt* pkt);
-static inline uint16_t pulse_len (fpga_pkt* pkt);
+static inline uint16_t pulse_len  (fpga_pkt* pkt);
 static inline uint16_t pulse_toff (fpga_pkt* pkt);
 /* FIX: Trace's size (valid for all trace events except average) */
 static inline uint16_t trace_size (fpga_pkt* pkt);
 /* FIX: Trace's area, length, time offset (valid for all trace events) */
 static inline uint32_t trace_area (fpga_pkt* pkt);
-static inline uint16_t trace_len (fpga_pkt* pkt);
+static inline uint16_t trace_len  (fpga_pkt* pkt);
 static inline uint16_t trace_toff (fpga_pkt* pkt);
 /* Print info about packet */
 static void pkt_pretty_print (fpga_pkt* pkt, FILE* stream);
@@ -236,21 +232,40 @@ struct trace_flags
 #define TR_FL_LEN     2
 #define MAX_FPGA_FRAME_LEN  1496
 
-/* The following are in big-endian */
-#define ETH_EVT_TYPE      0x88B5
-#define ETH_MCA_TYPE      0x88B6
-
-#define EVT_TYPE_MASK     0x030e /* all relevant bits of evt_type */
-#define EVT_PKT_TYPE_MASK 0x000e /* the packet type and tick bits */
-#define EVT_TICK_TYPE     0x0002
-#define EVT_PEAK_TYPE     0x0000
-#define EVT_AREA_TYPE     0x0004
-#define EVT_PLS_TYPE      0x0008
-#define EVT_TR_TYPE       0x000c
-#define EVT_TR_SGL_TYPE   0x000c
-#define EVT_TR_AVG_TYPE   0x010c
-#define EVT_TR_DP_TYPE    0x020c
-#define EVT_TR_DPTR_TYPE  0x030c
+/*
+ * Redefine the ether and event types for little-endian hosts, instead of using
+ * ntohl/s, since we never return those as 16-bit integers (only used in is_*
+ * helpers).
+ */
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#  define ETH_EVT_TYPE      0xB588
+#  define ETH_MCA_TYPE      0xB688
+#  define EVT_TYPE_MASK     0x0e03 /* all relevant bits of evt_type */
+#  define EVT_PKT_TYPE_MASK 0x0e00 /* the packet type and tick bits */
+#  define EVT_TICK_TYPE     0x0200
+#  define EVT_PEAK_TYPE     0x0000
+#  define EVT_AREA_TYPE     0x0400
+#  define EVT_PLS_TYPE      0x0800
+#  define EVT_TR_TYPE       0x0c00
+#  define EVT_TR_SGL_TYPE   0x0c00
+#  define EVT_TR_AVG_TYPE   0x0c01
+#  define EVT_TR_DP_TYPE    0x0c02
+#  define EVT_TR_DPTR_TYPE  0x0c03
+#else
+#  define ETH_EVT_TYPE      0x88B5
+#  define ETH_MCA_TYPE      0x88B6
+#  define EVT_TYPE_MASK     0x030e /* all relevant bits of evt_type */
+#  define EVT_PKT_TYPE_MASK 0x000e /* the packet type and tick bits */
+#  define EVT_TICK_TYPE     0x0002
+#  define EVT_PEAK_TYPE     0x0000
+#  define EVT_AREA_TYPE     0x0004
+#  define EVT_PLS_TYPE      0x0008
+#  define EVT_TR_TYPE       0x000c
+#  define EVT_TR_SGL_TYPE   0x000c
+#  define EVT_TR_AVG_TYPE   0x010c
+#  define EVT_TR_DP_TYPE    0x020c
+#  define EVT_TR_DPTR_TYPE  0x030c
+#endif
 
 #define MCA_FL_MASK       0x000fffff
 #define EVT_FL_MASK       0xffff
@@ -379,94 +394,106 @@ is_header (fpga_pkt* pkt)
 static inline int
 is_mca (fpga_pkt* pkt)
 {
-	return ( ntohs (pkt->eth_hdr.ether_type) == ETH_MCA_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE );
 }
 
 static inline int
 is_evt (fpga_pkt* pkt)
 {
-	return ( ntohs (pkt->eth_hdr.ether_type) == ETH_EVT_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE );
 }
 
 static inline int
 is_tick (fpga_pkt* pkt)
-{ /* For ticks, only the tick bit is relevant */
-	return ( is_evt (pkt) && (evt_type (pkt) & EVT_TICK_TYPE) );
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		 pkt->fpga_hdr.evt_type & EVT_TICK_TYPE );
 }
 
-/* For non-traces, only the packet-type bits are relevant */
 static inline int
 is_peak (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(evt_type (pkt) & EVT_PKT_TYPE_MASK) == EVT_PEAK_TYPE );
-}
-
-static inline int
-is_area (fpga_pkt* pkt)
-{
-	return ( is_evt (pkt) &&
-		(evt_type (pkt) & EVT_PKT_TYPE_MASK) == EVT_AREA_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
+			== EVT_PEAK_TYPE );
 }
 
 static inline int
 is_pulse (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(evt_type (pkt) & EVT_PKT_TYPE_MASK) == EVT_PLS_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
+			== EVT_PLS_TYPE );
+}
+
+static inline int
+is_area (fpga_pkt* pkt)
+{
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
+			== EVT_AREA_TYPE );
 }
 
 static inline int
 is_trace (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(evt_type (pkt) & EVT_PKT_TYPE_MASK) == EVT_TR_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
+			== EVT_TR_TYPE );
 }
 
 static inline int
 is_trace_sgl (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) && evt_type (pkt) == EVT_TR_SGL_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
+			== EVT_TR_SGL_TYPE );
 }
 
 static inline int
 is_trace_avg (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) && evt_type (pkt) == EVT_TR_AVG_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
+			== EVT_TR_AVG_TYPE );
 }
 
 static inline int
 is_trace_dp (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) && evt_type (pkt) == EVT_TR_DP_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
+			== EVT_TR_DP_TYPE );
 }
 
 static inline int
 is_trace_dptr (fpga_pkt* pkt)
 {
-	return ( is_evt (pkt) && evt_type (pkt) == EVT_TR_DPTR_TYPE );
+	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
+			== EVT_TR_DPTR_TYPE );
 }
 
 static inline char*
-dst_addr_s (fpga_pkt* pkt)
+dst_eth_ntoa (fpga_pkt* pkt)
 {
 	return ether_ntoa ((struct ether_addr*) pkt->eth_hdr.ether_dhost);
 }
 
 static inline char*
-src_addr_s (fpga_pkt* pkt)
+src_eth_ntoa (fpga_pkt* pkt)
 {
 	return ether_ntoa ((struct ether_addr*) pkt->eth_hdr.ether_shost);
 }
 
 static inline struct ether_addr*
-dst_addr_u (fpga_pkt* pkt)
+dst_eth_aton (fpga_pkt* pkt)
 {
 	return ((struct ether_addr*) pkt->eth_hdr.ether_dhost);
 }
 
 static inline struct ether_addr*
-src_addr_u (fpga_pkt* pkt)
+src_eth_aton (fpga_pkt* pkt)
 {
 	return ((struct ether_addr*) pkt->eth_hdr.ether_shost);
 }
@@ -511,13 +538,6 @@ evt_size (fpga_pkt* pkt)
 #endif
 }
 
-/* Event type is sent as separate bytes, so always big-endian */
-static inline uint16_t
-evt_type (fpga_pkt* pkt)
-{
-	return (ntohs (pkt->fpga_hdr.evt_type) & EVT_TYPE_MASK);
-}
-
 static inline uint16_t
 mca_size (fpga_pkt* pkt)
 {
@@ -559,7 +579,7 @@ mca_lvalue (fpga_pkt* pkt)
 }
 
 static inline uint16_t
-mca_mostfreq (fpga_pkt* pkt)
+mca_mfreq (fpga_pkt* pkt)
 {
 #ifdef KEEP_BYTEORDER
 	return ((struct mca_header*)(void*) &pkt->body)->most_frequent;
@@ -615,56 +635,29 @@ mca_bin (fpga_pkt* pkt, uint16_t bin)
 	#endif
 }
 
-/* Flags are sent as separate bytes, so always big-endian */
-static inline uint32_t
-mca_flags_u (fpga_pkt* pkt)
-{
-	return (ntohl (((struct mca_header*)(void*) &pkt->body)->flags)
-		& MCA_FL_MASK);
-}
-
 static inline struct mca_flags*
-mca_flags_r (fpga_pkt* pkt)
+mca_fl (fpga_pkt* pkt)
 {
 	struct mca_header* mh = (struct mca_header*)(void*) &pkt->body; 
 	return (struct mca_flags*) &mh->flags;
 }
 
-/* Event and tick flags are in the same location */
-static inline uint16_t
-evt_flags_u (fpga_pkt* pkt)
-{
-	if (is_tick (pkt))
-		return (ntohs (((struct evt_header*)(void*) &pkt->body)->flags)
-			& TICK_FL_MASK);
-	else
-		return (ntohs (((struct evt_header*)(void*) &pkt->body)->flags)
-			& EVT_FL_MASK);
-}
-
 static inline struct event_flags*
-evt_flags_r (fpga_pkt* pkt)
+evt_fl (fpga_pkt* pkt)
 {
 	struct evt_header* eh = (struct evt_header*)(void*) &pkt->body;
 	return (struct event_flags*) &eh->flags;
 }
 
 static inline struct tick_flags*
-tick_flags_r (fpga_pkt* pkt)
+tick_fl (fpga_pkt* pkt)
 {
 	struct evt_header* eh = (struct evt_header*)(void*) &pkt->body;
 	return (struct tick_flags*) &eh->flags;
 }
 
-static inline uint16_t
-trace_flags_u (fpga_pkt* pkt)
-{
-	return (ntohs (((struct trace_header*)(void*) &pkt->body)->tr_flags)
-		& TR_FL_MASK);
-}
-
 static inline struct trace_flags*
-trace_flags_r (fpga_pkt* pkt)
+trace_fl (fpga_pkt* pkt)
 {
 	struct trace_header* th = (struct trace_header*)(void*) &pkt->body;
 	return (struct trace_flags*) &th->tr_flags;
@@ -741,7 +734,7 @@ tick_lost (fpga_pkt* pkt)
 }
 
 static inline uint16_t
-peak_h (fpga_pkt* pkt)
+peak_ht (fpga_pkt* pkt)
 {
 #ifdef KEEP_BYTEORDER
 	return ((struct peak_header*)(void*) &pkt->body)->height;
@@ -853,8 +846,8 @@ trace_toff (fpga_pkt* pkt)
 static void
 pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 {
-	fprintf (stream, "Destination MAC:     %s\n",  dst_addr_s (pkt));
-	fprintf (stream, "Source MAC:          %s\n",  src_addr_s (pkt));
+	fprintf (stream, "Destination MAC:     %s\n",  dst_eth_ntoa (pkt));
+	fprintf (stream, "Source MAC:          %s\n",  src_eth_ntoa (pkt));
 	fprintf (stream, "Packet length:       %hu\n", pkt_len (pkt));
 	fprintf (stream, "Frame sequence:      %hu\n", frame_seq (pkt));
 	fprintf (stream, "Protocol sequence:   %hu\n", proto_seq (pkt));
@@ -867,7 +860,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 		if (!is_header (pkt))
 			return;
 		fprintf (stream, "Size:                %hu\n",  mca_size (pkt));
-		struct mca_flags* mf = mca_flags_r (pkt);
+		struct mca_flags* mf = mca_fl (pkt);
 		fprintf (stream, "Flag Q:              %hhu\n", mf->Q);
 		fprintf (stream, "Flag V:              %hhu\n", mf->V);
 		fprintf (stream, "Flag T:              %hhu\n", mf->T);
@@ -875,7 +868,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 		fprintf (stream, "Flag C:              %hhu\n", mf->C);
 		fprintf (stream, "Total number of bins:%u\n",   mca_num_allbins (pkt));
 		fprintf (stream, "Lowest value:        %hu\n",  mca_lvalue (pkt));
-		fprintf (stream, "Most frequent bin:   %hu\n",  mca_mostfreq (pkt));
+		fprintf (stream, "Most frequent bin:   %hu\n",  mca_mfreq (pkt));
 		fprintf (stream, "Total:               %lu\n",  mca_total (pkt));
 		fprintf (stream, "Start time:          %lu\n",  mca_startt (pkt));
 		fprintf (stream, "Stop time:           %lu\n",  mca_stopt (pkt));
@@ -894,7 +887,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 	/* ---------- Tick event */
 	if (is_tick (pkt))
 	{
-		struct tick_flags* tf = tick_flags_r (pkt);
+		struct tick_flags* tf = tick_fl (pkt);
 		fprintf (stream, "Tick flag MF:        %hhu\n", tf->MF);
 		fprintf (stream, "Tick flag EL:        %hhu\n", tf->EL);
 		fprintf (stream, "Tick flag TL:        %hhu\n", tf->TL);
@@ -910,7 +903,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 		return;
 	}
 	/* ---------- Non-tick event */
-	struct event_flags* ef = evt_flags_r (pkt);
+	struct event_flags* ef = evt_fl (pkt);
 	fprintf (stream, "Event flag PC:       %hhu\n", ef->PC);
 	fprintf (stream, "Event flag O:        %hhu\n", ef->O);
 	fprintf (stream, "Event flag CH:       %hhu\n", ef->CH);
@@ -923,7 +916,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 	if (is_peak (pkt))
 	{
 		fprintf (stream, "Type:                Peak\n");
-		fprintf (stream, "Height:              %hu\n", peak_h (pkt));
+		fprintf (stream, "Height:              %hu\n", peak_ht (pkt));
 		fprintf (stream, "Rise time:           %hu\n", peak_riset (pkt));
 		return;
 	}
@@ -951,7 +944,7 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 	}
 	/* --------------- Trace */
 	fprintf (stream, "Type:                Trace\n");
-	struct trace_flags* trf = trace_flags_r (pkt);
+	struct trace_flags* trf = trace_fl (pkt);
 	fprintf (stream, "Trace flag MH:       %hhu\n", trf->MH);
 	fprintf (stream, "Trace flag MP:       %hhu\n", trf->MP);
 	fprintf (stream, "Trace flag STR:      %hhu\n", trf->STR);
@@ -994,14 +987,15 @@ pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
 /* TO DO: check for contradicting fields, e.g. MCA's size contradicts last_bin */
 /* Return codes */
 #define FE_ETHTYPE 1 << 0 // ether type 
-#define FE_ETHLEN  1 << 1 // frame length not multiple of 8 
+#define FE_ETHLEN  1 << 1 // frame length
 #define FE_EVTTYPE 1 << 3 // event type 
 #define FE_EVTSIZE 1 << 4 // event size for fixed size events
 static int
 is_valid (fpga_pkt* pkt)
 {
 	int rc = 0;
-	if (pkt_len (pkt) & 7)
+	/* Frame length should be a multiple of 8. */
+	if (pkt_len (pkt) & 7 || pkt_len (pkt) > MAX_FPGA_FRAME_LEN)
 		rc |= FE_ETHLEN;
 
 	if (is_evt (pkt))
@@ -1042,6 +1036,13 @@ pkt_perror (FILE* stream, int err)
 /* ------------------------------------------------------------------------- */
 
 #ifdef FPGAPKT_DEBUG
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#  define ftoul(fl_ptr) ntohl ( *( (uint32_t*) (void*) fl_ptr ) )
+#  define ftous(fl_ptr) ntohs ( *( (uint16_t*) (void*) fl_ptr ) )
+#else
+#  define ftoul(fl_ptr) ( *( (uint32_t*) (void*) fl_ptr ) )
+#  define ftous(fl_ptr) ( *( (uint16_t*) (void*) fl_ptr ) )
+#endif
 
 static void
 fpgapkt_self_test (void)
@@ -1063,46 +1064,45 @@ fpgapkt_self_test (void)
 	assert (sizeof (struct tick_flags) == EVT_FL_LEN);
 	assert (sizeof (struct trace_flags) == TR_FL_LEN);
 
-	fpga_pkt pkt;
-	memset (&pkt, 0, MAX_FPGA_FRAME_LEN);
-	struct mca_flags* mf = mca_flags_r (&pkt);
-	mf->Q = 0x0f;
-	mf->V = 0x0f;
-	mf->T = 0x0f;
-	mf->N = 0x1f;
-	mf->C = 0x07;
-	assert ( mca_flags_u (&pkt) == MCA_FL_MASK );
+	struct mca_flags mf;
+	memset (&mf, 0, MCA_FL_LEN);
+	mf.Q = 0x0f;
+	mf.V = 0x0f;
+	mf.T = 0x0f;
+	mf.N = 0x1f;
+	mf.C = 0x07;
+	assert ( ftoul (&mf) == MCA_FL_MASK );
 
-	memset (&pkt, 0, MAX_FPGA_FRAME_LEN);
-	struct event_flags* ef = evt_flags_r (&pkt);
-	ef->PC = 0x0f;
-	ef->O  = 0x01;
-	ef->CH = 0x07;
-	ef->TT = 0x03;
-	ef->HT = 0x03;
-	ef->PT = 0x03;
-	ef->T  = 0x01;
-	ef->N  = 0x01;
-	assert ( evt_flags_u (&pkt) == EVT_FL_MASK );
+	struct event_flags ef;
+	memset (&ef, 0, EVT_FL_LEN);
+	ef.PC = 0x0f;
+	ef.O  = 0x01;
+	ef.CH = 0x07;
+	ef.TT = 0x03;
+	ef.HT = 0x03;
+	ef.PT = 0x03;
+	ef.T  = 0x01;
+	ef.N  = 0x01;
+	assert ( ftous (&ef) == EVT_FL_MASK );
 
-	memset (&pkt, 0, MAX_FPGA_FRAME_LEN);
-	struct tick_flags* tf = tick_flags_r (&pkt);
-	tf->MF = 0x01;
-	tf->EL = 0x01;
-	tf->TL = 0x01;
-	tf->T  = 0x01;
-	tf->N  = 0x01;
-	assert ( evt_flags_u (&pkt) == TICK_FL_MASK );
+	struct tick_flags tf;
+	memset (&tf, 0, EVT_FL_LEN);
+	tf.MF = 0x01;
+	tf.EL = 0x01;
+	tf.TL = 0x01;
+	tf.T  = 0x01;
+	tf.N  = 0x01;
+	assert ( ftous (&tf) == TICK_FL_MASK );
 
-	memset (&pkt, 0, MAX_FPGA_FRAME_LEN);
-	struct trace_flags* trf = trace_flags_r (&pkt);
-	trf->MH  = 0x01;
-	trf->MP  = 0x01;
-	trf->STR = 0x1f;
-	trf->TT  = 0x03;
-	trf->TS  = 0x03;
-	trf->OFF = 0x0f;
-	assert ( trace_flags_u (&pkt) == TR_FL_MASK );
+	struct trace_flags trf;
+	memset (&trf, 0, TR_FL_LEN);
+	trf.MH  = 0x01;
+	trf.MP  = 0x01;
+	trf.STR = 0x1f;
+	trf.TT  = 0x03;
+	trf.TS  = 0x03;
+	trf.OFF = 0x0f;
+	assert ( ftous (&trf) == TR_FL_MASK );
 }
 
 #endif /* FPGAPKT_DEBUG */
