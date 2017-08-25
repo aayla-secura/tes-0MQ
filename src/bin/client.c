@@ -18,14 +18,14 @@ usage (const char* self)
 {
 	fprintf (stdout,
 		"Usage: %s -R <socket> [options]\n\n"
-		"The format for <scoket> is <proto>://<host>:<port>\n\n"
+		"The format for <socket> is <proto>://<host>:<port>\n\n"
 		"The client operates in one of two modes:\n"
 		"1) Options for saving all frames to a remote file:\n"
 		"    -f <filename>      Remote filename\n"
 		"    -t <ticks>         Save up to that many ticks\n"
 		"    -o                 Overwrite if file exists\n"
 		"    -s                 Request status of filename\n"
-		"The 'f' option and excatly one of 's' or 't' "
+		"The 'f' option and exactly one of 's' or 't' "
 		"must be specified.\n"
 		"The 'o' cannot be given for status requests\n\n"
 		"2) Options for saving histograms to a local file:\n"

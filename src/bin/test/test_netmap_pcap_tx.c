@@ -97,7 +97,7 @@ main (void)
 	uint64_t missed = 0;
 	int looped = 0;
 
-	while (!interrupted && looped < 10)
+	while (!interrupted && looped < 1)
 	{
 		const unsigned char* pkt = pcap_next (pc, &h);
 		if (pkt == NULL)
@@ -105,11 +105,11 @@ main (void)
 			if (looped == 0)
 			{
 				printf ("\n----------\n"
-						"Total number of packets: %lu\n"
-						"Missed packets:          %lu\n"
-						"Start frame:             %d\n"
-						"End frame:               %hu\n",
-						p, missed, sf, ef);
+					"Total number of packets: %lu\n"
+					"Missed packets:          %lu\n"
+					"Start frame:             %d\n"
+					"End frame:               %hu\n",
+					p, missed, sf, ef);
 			}
 			/* Reopen the file */
 			pcap_close (pc);
@@ -140,18 +140,12 @@ main (void)
 				perror ("poll");
 			break;
 		}
-		if (p < 3)
-		{
-			printf ("Packet #%lu, seq = %hu\n",
-				p, frame_seq ((fpga_pkt*)pkt));
-			dump_pkt (pkt, FPGA_HDR_LEN);
-		}
-		rc = nm_inject (nmd, pkt, len);
-		if (!rc)
-		{
-			fprintf (stderr, "Cannot inject packet\n");
-			break;
-		}
+		// rc = nm_inject (nmd, pkt, len);
+		// if (!rc)
+		// {
+		//         fprintf (stderr, "Cannot inject packet\n");
+		//         break;
+		// }
 
 		if (looped)
 			continue;
@@ -167,10 +161,9 @@ main (void)
 				(uint16_t)(frame_seq ((fpga_pkt*)pkt) - ef) - 1 );
 		}
 		ef = frame_seq ((fpga_pkt*)pkt);
-		// pkt_pretty_print ((fpga_pkt*)pkt, stdout);
-		// printf ("\n");
-		// fpga_perror (stdout, is_valid ((fpga_pkt*)pkt));
-		// printf ("\n");
+		pkt_pretty_print ((fpga_pkt*)pkt, stdout);
+		pkt_perror (stdout, is_valid ((fpga_pkt*)pkt));
+		printf ("\n");
 		// dump_pkt (pkt, FPGA_HDR_LEN);
 	}
 
