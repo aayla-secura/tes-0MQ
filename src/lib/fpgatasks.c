@@ -556,7 +556,11 @@ s_task_shim (zsock_t* pipe, void* self_)
 	zloop_t* loop = zloop_new ();
 	/* Only the coordinator thread should get interrupted, we wait for
 	 * SIG_STOP. */
+#if (CZMQ_VERSION_MAJOR > 3)
 	zloop_set_nonstop (loop, 1);
+#else
+	zloop_ignore_interrupts (loop);
+#endif
 
 	// s_msg (0, LOG_DEBUG, self->id, "Simulating error");
 	// self->error = 1;
@@ -856,7 +860,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 		sjob->bufzone.ceil);
 	dbg_assert (sjob->bufzone.cur < sjob->bufzone.tail ||
 		sjob->bufzone.cur >= sjob->bufzone.tail + sjob->bufzone.enqueued);
-	dbg_assert (sjob->bufzone.cur = sjob->bufzone.tail
+	dbg_assert (sjob->bufzone.cur == sjob->bufzone.tail
 		+ sjob->bufzone.enqueued + sjob->bufzone.waiting -
 		((sjob->bufzone.cur < sjob->bufzone.tail) ? TSAVE_BUFSIZE : 0));
 
