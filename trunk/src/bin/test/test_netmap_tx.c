@@ -4,11 +4,15 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
+#include <ctype.h> // isprint
 #include <sys/types.h>
 #include <sys/time.h>
 #include <errno.h>
 #include <poll.h>
-#include <netinet/ether.h>
+#include <net/ethernet.h>
+#ifdef linux
+# include <netinet/ether.h>
+#endif
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
@@ -132,7 +136,7 @@ pkt_set_evt_size (fpga_pkt* pkt, uint16_t size)
  *     ether_aton_r, ether_ntoa_r, ntohl, ntohs, htonl, htons
  *     inet_aton, inet_ntoa, inet_addr, inet_network, inet_pton, inet_ntop
  *     getifaddrs
- *     IPPROTO_UDP, ETH_ALEN, INADDR_BROADCAST, ETHERTYPE_IP, ETHER_*_LEN
+ *     IPPROTO_UDP, ETHER_ADDR_LEN, INADDR_BROADCAST, ETHERTYPE_IP, ETHER_*_LEN
  * 
  *   from pkt-gen:
  *     system_ncpus, dump_payload, source_hwaddr, checksum
@@ -198,9 +202,9 @@ new_fpga_pkt (void)
 	memset (pkt, 0, MAX_FPGA_FRAME_LEN);
 
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
-	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETH_ALEN);
+	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
-	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETH_ALEN);
+	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
 	pkt_set_frame_seq (pkt, 0); /* incremented as we send them */
 	pkt_set_len (pkt, FPGA_HDR_LEN); /* incremented later */
 

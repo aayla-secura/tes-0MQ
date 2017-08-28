@@ -5,7 +5,10 @@
 #define KEEP_BYTEORDER
 
 #include <net/ethernet.h>
-#include <netinet/ether.h>
+#ifdef linux
+/* ntoa, aton; on FreeBSD these are provided by net/ethernet */
+#  include <netinet/ether.h>
+#endif /* linux */
 #include <arpa/inet.h>
 #include <stdint.h>
 #include <stdio.h>
