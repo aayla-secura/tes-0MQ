@@ -20,6 +20,15 @@
 #define FPGAPKT_DEBUG
 #include <net/fpgapkt.h>
 
+#define FPGA_BYTE_ORDER __LITTLE_ENDIAN 
+#if __BYTE_ORDER == FPGA_BYTE_ORDER
+#  define htofs
+#  define htofl
+#else
+#  define htofs bswap16
+#  define htofl bswap32
+#endif
+
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 #define UPDATE_INTERVAL 1
@@ -58,75 +67,65 @@
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
-/* FIX: more methods to set fields based on KEEP_BYTEORDER */
+static void
+pkt_set_type_mca (fpga_pkt* pkt)
+{
+	pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_MCA);
+}
+
+static void
+pkt_set_type_evt (fpga_pkt* pkt)
+{
+	pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
+}
+
+static void
+evt_set_type (fpga_pkt* pkt, uint16_t type)
+{
+	/* event types are defined to match host byte order */
+	pkt->fpga_hdr.evt_type = type;
+}
+
 static void
 pkt_set_frame_seq (fpga_pkt* pkt, uint16_t seq)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->fpga_hdr.frame_seq = seq;
-#else
-	pkt->fpga_hdr.frame_seq = htons (seq);
-#endif
+	pkt->fpga_hdr.frame_seq = htofs (seq);
 }
 
 static void
 pkt_set_proto_seq (fpga_pkt* pkt, uint16_t seq)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->fpga_hdr.proto_seq = seq;
-#else
-	pkt->fpga_hdr.proto_seq = htons (seq);
-#endif
+	pkt->fpga_hdr.proto_seq = htofs (seq);
 }
 
 static void
 pkt_inc_frame_seq (fpga_pkt* pkt, uint16_t seq)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->fpga_hdr.frame_seq++;
-#else
-	pkt->fpga_hdr.frame_seq = htons (frame_seq (pkt) + seq);
-#endif
+	pkt->fpga_hdr.frame_seq = htofs (frame_seq (pkt) + seq);
 }
 
 static void
 pkt_inc_proto_seq (fpga_pkt* pkt, uint16_t seq)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->fpga_hdr.proto_seq++;
-#else
-	pkt->fpga_hdr.proto_seq = htons (proto_seq (pkt) + seq);
-#endif
+	pkt->fpga_hdr.proto_seq = htofs (proto_seq (pkt) + seq);
 }
 
 static void
 pkt_set_len (fpga_pkt* pkt, uint16_t len)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->length = len;
-#else
-	pkt->length = htons (len);
-#endif
+	pkt->length = htofs (len);
 }
 
 static void
 pkt_inc_len (fpga_pkt* pkt, uint16_t len)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->length += len;
-#else
-	pkt->length = htons (pkt_len (pkt) + len);
-#endif
+	pkt->length = htofs (pkt_len (pkt) + len);
 }
 
 static inline void
 pkt_set_evt_size (fpga_pkt* pkt, uint16_t size)
 {
-#ifdef KEEP_BYTEORDER
-	pkt->fpga_hdr.evt_size = size;
-#else
-	pkt->fpga_hdr.evt_size = htons (size);
-#endif
+	pkt->fpga_hdr.evt_size = htofs (size);
 }
 
 /*
@@ -241,7 +240,7 @@ new_mca_pkt (int seq, int num_bins,
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_MCA_TYPE;
+	pkt_set_type_mca (pkt);
 	pkt_inc_len (pkt, num_bins * BIN_LEN);
 
 	pkt_set_proto_seq (pkt, seq);
@@ -268,10 +267,10 @@ new_tick_pkt (u_int16_t flags)
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 	pkt_inc_len (pkt, TICK_HDR_LEN);
 	pkt_set_evt_size (pkt, 3);
-	pkt->fpga_hdr.evt_type = EVT_TICK_TYPE;
+	evt_set_type (pkt, EVT_TICK_TYPE);
 
 	struct tick_header* th = (struct tick_header*) &pkt->body;
 	th->period = (u_int32_t) random ();
@@ -292,10 +291,10 @@ new_peak_pkt (u_int16_t flags)
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 	pkt_inc_len (pkt, PEAK_HDR_LEN);
 	pkt_set_evt_size (pkt, 1);
-	pkt->fpga_hdr.evt_type = EVT_PEAK_TYPE;
+	evt_set_type (pkt, EVT_PEAK_TYPE);
 
 	struct peak_header* ph = (struct peak_header*) &pkt->body;
 	ph->height = (u_int16_t) random ();
@@ -312,10 +311,10 @@ new_area_pkt (u_int16_t flags)
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 	pkt_inc_len (pkt, AREA_HDR_LEN);
 	pkt_set_evt_size (pkt, 1);
-	pkt->fpga_hdr.evt_type = EVT_AREA_TYPE;
+	evt_set_type (pkt, EVT_AREA_TYPE);
 
 	struct area_header* ah =
 		(struct area_header*) &pkt->body;
@@ -332,10 +331,10 @@ new_pulse_pkt (int num_peaks, u_int16_t flags)
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 	pkt_inc_len (pkt, PLS_HDR_LEN + num_peaks * PEAK_LEN);
 	pkt_set_evt_size (pkt, num_peaks); /* FIX: is it?? */
-	pkt->fpga_hdr.evt_type = EVT_PLS_TYPE;
+	evt_set_type (pkt, EVT_PLS_TYPE);
 
 	struct pulse_header* ph = (struct pulse_header*) &pkt->body;
 	ph->size = (u_int16_t) random ();
@@ -359,11 +358,11 @@ new_trace_sgl_pkt (int num_peaks,
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 	pkt_inc_len (pkt, TR_FULL_HDR_LEN + num_peaks *
 		PEAK_LEN + num_samples * SMPL_LEN);
 	pkt_set_evt_size (pkt, 1);
-	pkt->fpga_hdr.evt_type = EVT_TR_SGL_TYPE;
+	evt_set_type (pkt, EVT_TR_SGL_TYPE);
 
 	struct trace_full_header* th =
 		(struct trace_full_header*) &pkt->body;
@@ -390,7 +389,7 @@ new_trace_avg_pkt (int num_samples,
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 
 	return pkt;
 }
@@ -403,10 +402,10 @@ new_trace_dp_pkt (int num_peaks,
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 	pkt_inc_len (pkt, TR_FULL_HDR_LEN + num_peaks * PEAK_LEN);
 	pkt_set_evt_size (pkt, 1);
-	pkt->fpga_hdr.evt_type = EVT_TR_DP_TYPE;
+	evt_set_type (pkt, EVT_TR_DP_TYPE);
 
 	struct trace_full_header* th =
 		(struct trace_full_header*) &pkt->body;
@@ -443,7 +442,7 @@ new_trace_dptr_pkt (int num_peaks,
 	fpga_pkt* pkt = new_fpga_pkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt->eth_hdr.ether_type = ETH_EVT_TYPE;
+	pkt_set_type_evt (pkt);
 
 	return pkt;
 }

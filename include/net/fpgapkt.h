@@ -1,8 +1,27 @@
 #ifndef __NET_FPGA_H_INCLUDED__
 #define __NET_FPGA_H_INCLUDED__
 
-/* Set if the FPGA frame payload matches that of the host */
-#define KEEP_BYTEORDER
+#ifdef linux
+#  include <byteswap.h>
+#  define bswap16 bswap_16
+#  define bswap32 bswap_32
+#  define bswap64 bswap_64
+#else
+#  include <sys/endian.h>
+#endif
+/*
+
+ * Ethernet header is always network-order (big-endian) but the byte order of
+ * the payload can be changed.
+ */
+#define FPGA_BYTE_ORDER __LITTLE_ENDIAN 
+#if __BYTE_ORDER == FPGA_BYTE_ORDER
+#  define ftohs
+#  define ftohl
+#else
+#  define ftohs bswap16
+#  define ftohl bswap32
+#endif
 
 #include <net/ethernet.h>
 #ifdef linux
@@ -103,7 +122,7 @@ static inline uint32_t trace_area (fpga_pkt* pkt);
 static inline uint16_t trace_len  (fpga_pkt* pkt);
 static inline uint16_t trace_toff (fpga_pkt* pkt);
 /* Print info about packet */
-static void pkt_pretty_print (fpga_pkt* pkt, FILE* stream);
+static void pkt_pretty_print (fpga_pkt* pkt, FILE* ostream, FILE* estream);
 /* Check if packet is valid, returns 0 if all is ok, or one or more OR-ed flags */
 static int  is_valid (fpga_pkt* pkt);
 /* Print info about each of the flags present in the return value of is_valid */
@@ -115,7 +134,7 @@ static void fpga_pkt_self_test (void);
 
 /*
  * You can copy a flag integer into one of these structures to read off the
- * separate registers.
+ * separate registers. Flags are always sent as big-endian.
  */
 struct mca_flags
 {
@@ -235,14 +254,15 @@ struct trace_flags
 #define TR_FL_LEN     2
 #define MAX_FPGA_FRAME_LEN  1496
 
+#define ETHERTYPE_F_EVENT    0x88B5
+#define ETHERTYPE_F_MCA      0x88B6
+
 /*
- * Redefine the ether and event types for little-endian hosts, instead of using
+ * Redefine the event types for little-endian hosts, instead of using
  * ntohl/s, since we never return those as 16-bit integers (only used in is_*
  * helpers).
  */
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-#  define ETH_EVT_TYPE      0xB588
-#  define ETH_MCA_TYPE      0xB688
 #  define EVT_TYPE_MASK     0x0e03 /* all relevant bits of evt_type */
 #  define EVT_PKT_TYPE_MASK 0x0e00 /* the packet type and tick bits */
 #  define EVT_TICK_TYPE     0x0200
@@ -255,8 +275,6 @@ struct trace_flags
 #  define EVT_TR_DP_TYPE    0x0c02
 #  define EVT_TR_DPTR_TYPE  0x0c03
 #else
-#  define ETH_EVT_TYPE      0x88B5
-#  define ETH_MCA_TYPE      0x88B6
 #  define EVT_TYPE_MASK     0x030e /* all relevant bits of evt_type */
 #  define EVT_PKT_TYPE_MASK 0x000e /* the packet type and tick bits */
 #  define EVT_TICK_TYPE     0x0002
@@ -269,11 +287,6 @@ struct trace_flags
 #  define EVT_TR_DP_TYPE    0x020c
 #  define EVT_TR_DPTR_TYPE  0x030c
 #endif
-
-#define MCA_FL_MASK       0x000fffff
-#define EVT_FL_MASK       0xffff
-#define TICK_FL_MASK      0x0703
-#define TR_FL_MASK        0x7fff
 
 struct mca_header
 {
@@ -397,26 +410,25 @@ is_header (fpga_pkt* pkt)
 static inline int
 is_mca (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_MCA_TYPE );
+	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_MCA) );
 }
 
 static inline int
 is_evt (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE );
+	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_EVENT) );
 }
 
 static inline int
 is_tick (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
-		 pkt->fpga_hdr.evt_type & EVT_TICK_TYPE );
+	return ( is_evt (pkt) && pkt->fpga_hdr.evt_type & EVT_TICK_TYPE );
 }
 
 static inline int
 is_peak (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
 			== EVT_PEAK_TYPE );
 }
@@ -424,7 +436,7 @@ is_peak (fpga_pkt* pkt)
 static inline int
 is_pulse (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
 			== EVT_PLS_TYPE );
 }
@@ -432,7 +444,7 @@ is_pulse (fpga_pkt* pkt)
 static inline int
 is_area (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
 			== EVT_AREA_TYPE );
 }
@@ -440,7 +452,7 @@ is_area (fpga_pkt* pkt)
 static inline int
 is_trace (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_PKT_TYPE_MASK)
 			== EVT_TR_TYPE );
 }
@@ -448,7 +460,7 @@ is_trace (fpga_pkt* pkt)
 static inline int
 is_trace_sgl (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
 			== EVT_TR_SGL_TYPE );
 }
@@ -456,7 +468,7 @@ is_trace_sgl (fpga_pkt* pkt)
 static inline int
 is_trace_avg (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
 			== EVT_TR_AVG_TYPE );
 }
@@ -464,7 +476,7 @@ is_trace_avg (fpga_pkt* pkt)
 static inline int
 is_trace_dp (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
 			== EVT_TR_DP_TYPE );
 }
@@ -472,7 +484,7 @@ is_trace_dp (fpga_pkt* pkt)
 static inline int
 is_trace_dptr (fpga_pkt* pkt)
 {
-	return ( pkt->eth_hdr.ether_type == ETH_EVT_TYPE &&
+	return ( is_evt (pkt) &&
 		(pkt->fpga_hdr.evt_type & EVT_TYPE_MASK)
 			== EVT_TR_DPTR_TYPE );
 }
@@ -504,51 +516,31 @@ src_eth_aton (fpga_pkt* pkt)
 static inline uint16_t
 pkt_len (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return pkt->length;
-#else
-	return ntohs (pkt->length);
-#endif
+	return ftohs (pkt->length);
 }
 
 static inline uint16_t
 frame_seq (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return pkt->fpga_hdr.frame_seq;
-#else
-	return ntohs (pkt->fpga_hdr.frame_seq);
-#endif
+	return ftohs (pkt->fpga_hdr.frame_seq);
 }
 
 static inline uint16_t
 proto_seq (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return pkt->fpga_hdr.proto_seq;
-#else
-	return ntohs (pkt->fpga_hdr.proto_seq);
-#endif
+	return ftohs (pkt->fpga_hdr.proto_seq);
 }
 
 static inline uint16_t
 evt_size (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return pkt->fpga_hdr.evt_size;
-#else
-	return ntohs (pkt->fpga_hdr.evt_size);
-#endif
+	return ftohs (pkt->fpga_hdr.evt_size);
 }
 
 static inline uint16_t
 mca_size (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->size;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->size);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->size);
 }
 
 static inline uint16_t
@@ -564,78 +556,46 @@ mca_num_bins (fpga_pkt* pkt)
 static inline uint16_t
 mca_num_allbins (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->last_bin + 1;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->last_bin + 1);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->last_bin + 1);
 }
 
 static inline uint32_t
 mca_lvalue (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->lowest_value;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->lowest_value);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->lowest_value);
 }
 
 static inline uint16_t
 mca_mfreq (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->most_frequent;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->most_frequent);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->most_frequent);
 }
 
 static inline uint64_t
 mca_total (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->total;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->total);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->total);
 }
 
 static inline uint64_t
 mca_startt (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->start_time;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->start_time);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->start_time);
 }
 
 static inline uint64_t
 mca_stopt (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct mca_header*)(void*) &pkt->body)->stop_time;
-#else
-	return ntohl (((struct mca_header*)(void*) &pkt->body)->stop_time);
-#endif
+	return ftohl (((struct mca_header*)(void*) &pkt->body)->stop_time);
 }
 
 static inline uint32_t
 mca_bin (fpga_pkt* pkt, uint16_t bin)
 {
 	if (is_header (pkt))
-#ifdef KEEP_BYTEORDER
-		return pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ];
-	#else
-		return ntohl (pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ]);
-	#endif
+		return ftohl (pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ]);
 	else
-#ifdef KEEP_BYTEORDER
-		return pkt->body[ bin*BIN_LEN ];
-	#else
-		return ntohl (pkt->body[ bin*BIN_LEN ]);
-	#endif
+		return ftohl (pkt->body[ bin*BIN_LEN ]);
 }
 
 static inline struct mca_flags*
@@ -669,322 +629,253 @@ trace_fl (fpga_pkt* pkt)
 static inline uint16_t
 evt_toff (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct evt_header*)(void*) &pkt->body)->toff;
-#else
-	return ntohs (((struct evt_header*)(void*) &pkt->body)->toff);
-#endif
+	return ftohs (((struct evt_header*)(void*) &pkt->body)->toff);
 }
 
 static inline uint32_t
 tick_period (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct tick_header*)(void*) &pkt->body)->period;
-#else
-	return ntohs (((struct tick_header*)(void*) &pkt->body)->period);
-#endif
+	return ftohs (((struct tick_header*)(void*) &pkt->body)->period);
 }
 
 static inline uint64_t
 tick_ts (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct tick_header*)(void*) &pkt->body)->ts;
-#else
-	return ntohs (((struct tick_header*)(void*) &pkt->body)->ts);
-#endif
+	return ftohs (((struct tick_header*)(void*) &pkt->body)->ts);
 }
 
 static inline uint8_t
 tick_ovrfl (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct tick_header*)(void*) &pkt->body)->ovrfl;
-#else
-	return ntohs (((struct tick_header*)(void*) &pkt->body)->ovrfl);
-#endif
+	return ftohs (((struct tick_header*)(void*) &pkt->body)->ovrfl);
 }
 
 static inline uint8_t
 tick_err (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct tick_header*)(void*) &pkt->body)->err;
-#else
-	return ntohs (((struct tick_header*)(void*) &pkt->body)->err);
-#endif
+	return ftohs (((struct tick_header*)(void*) &pkt->body)->err);
 }
 
 static inline uint8_t
 tick_cfd (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct tick_header*)(void*) &pkt->body)->cfd;
-#else
-	return ntohs (((struct tick_header*)(void*) &pkt->body)->cfd);
-#endif
+	return ftohs (((struct tick_header*)(void*) &pkt->body)->cfd);
 }
 
 static inline uint32_t
 tick_lost (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct tick_header*)(void*) &pkt->body)->lost;
-#else
-	return ntohs (((struct tick_header*)(void*) &pkt->body)->lost);
-#endif
+	return ftohs (((struct tick_header*)(void*) &pkt->body)->lost);
 }
 
 static inline uint16_t
 peak_ht (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct peak_header*)(void*) &pkt->body)->height;
-#else
-	return ntohs (((struct peak_header*)(void*) &pkt->body)->height);
-#endif
+	return ftohs (((struct peak_header*)(void*) &pkt->body)->height);
 }
 
 static inline uint16_t
 peak_riset (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct peak_header*)(void*) &pkt->body)->rise_time;
-#else
-	return ntohs (((struct peak_header*)(void*) &pkt->body)->rise_time);
-#endif
+	return ftohs (((struct peak_header*)(void*) &pkt->body)->rise_time);
 }
 
 static inline uint32_t
 area_area (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct area_header*)(void*) &pkt->body)->area;
-#else
-	return ntohs (((struct area_header*)(void*) &pkt->body)->area);
-#endif
+	return ftohs (((struct area_header*)(void*) &pkt->body)->area);
 }
 
 static inline uint16_t
 pulse_size (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct pulse_header*)(void*) &pkt->body)->size;
-#else
-	return ntohs (((struct pulse_header*)(void*) &pkt->body)->size);
-#endif
+	return ftohs (((struct pulse_header*)(void*) &pkt->body)->size);
 }
 
 static inline uint32_t
 pulse_area (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct pulse_header*)(void*) &pkt->body)->pulse.area;
-#else
-	return ntohs (((struct pulse_header*)(void*) &pkt->body)->pulse.area);
-#endif
+	return ftohs (((struct pulse_header*)(void*) &pkt->body)->pulse.area);
 }
 
 static inline uint16_t
 pulse_len (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct pulse_header*)(void*) &pkt->body)->pulse.length;
-#else
-	return ntohs (((struct pulse_header*)(void*) &pkt->body)->pulse.length);
-#endif
+	return ftohs (((struct pulse_header*)(void*) &pkt->body)->pulse.length);
 }
 
 static inline uint16_t
 pulse_toff (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct pulse_header*)(void*) &pkt->body)->pulse.toffset;
-#else
-	return ntohs (((struct pulse_header*)(void*) &pkt->body)->pulse.toffset);
-#endif
+	return ftohs (((struct pulse_header*)(void*) &pkt->body)->pulse.toffset);
 }
 
 static inline uint16_t
 trace_size (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct trace_header*)(void*) &pkt->body)->size;
-#else
-	return ntohs (((struct trace_header*)(void*) &pkt->body)->size);
-#endif
+	return ftohs (((struct trace_header*)(void*) &pkt->body)->size);
 }
 
 static inline uint32_t
 trace_area (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct trace_full_header*)(void*) &pkt->body)->pulse.area;
-#else
-	return ntohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.area);
-#endif
+	return ftohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.area);
 }
 
 static inline uint16_t
 trace_len (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct trace_full_header*)(void*) &pkt->body)->pulse.length;
-#else
-	return ntohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.length);
-#endif
+	return ftohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.length);
 }
 
 static inline uint16_t
 trace_toff (fpga_pkt* pkt)
 {
-#ifdef KEEP_BYTEORDER
-	return ((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset;
-#else
-	return ntohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset);
-#endif
+	return ftohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset);
 }
 
 static void
-pkt_pretty_print (fpga_pkt* pkt, FILE* stream)
+pkt_pretty_print (fpga_pkt* pkt, FILE* ostream, FILE* estream)
 {
-	fprintf (stream, "Destination MAC:     %s\n",  dst_eth_ntoa (pkt));
-	fprintf (stream, "Source MAC:          %s\n",  src_eth_ntoa (pkt));
-	fprintf (stream, "Packet length:       %hu\n", pkt_len (pkt));
-	fprintf (stream, "Frame sequence:      %hu\n", frame_seq (pkt));
-	fprintf (stream, "Protocol sequence:   %hu\n", proto_seq (pkt));
+	if (estream == NULL)
+		estream = ostream;
+
+	fprintf (ostream, "Destination MAC:     %s\n",  dst_eth_ntoa (pkt));
+	fprintf (ostream, "Source MAC:          %s\n",  src_eth_ntoa (pkt));
+	fprintf (ostream, "Packet length:       %hu\n", pkt_len (pkt));
+	fprintf (ostream, "Frame sequence:      %hu\n", frame_seq (pkt));
+	fprintf (ostream, "Protocol sequence:   %hu\n", proto_seq (pkt));
 
 	/* ----- MCA */
 	if (is_mca (pkt))
 	{
-		fprintf (stream, "Stream type:         MCA\n");
-		fprintf (stream, "Number of bins:      %u\n",   mca_num_bins (pkt));
+		fprintf (ostream, "Stream type:         MCA\n");
+		fprintf (ostream, "Number of bins:      %u\n",   mca_num_bins (pkt));
 		if (!is_header (pkt))
 			return;
-		fprintf (stream, "Size:                %hu\n",  mca_size (pkt));
+		fprintf (ostream, "Size:                %hu\n",  mca_size (pkt));
 		struct mca_flags* mf = mca_fl (pkt);
-		fprintf (stream, "Flag Q:              %hhu\n", mf->Q);
-		fprintf (stream, "Flag V:              %hhu\n", mf->V);
-		fprintf (stream, "Flag T:              %hhu\n", mf->T);
-		fprintf (stream, "Flag N:              %hhu\n", mf->N);
-		fprintf (stream, "Flag C:              %hhu\n", mf->C);
-		fprintf (stream, "Total number of bins:%u\n",   mca_num_allbins (pkt));
-		fprintf (stream, "Lowest value:        %hu\n",  mca_lvalue (pkt));
-		fprintf (stream, "Most frequent bin:   %hu\n",  mca_mfreq (pkt));
-		fprintf (stream, "Total:               %lu\n",  mca_total (pkt));
-		fprintf (stream, "Start time:          %lu\n",  mca_startt (pkt));
-		fprintf (stream, "Stop time:           %lu\n",  mca_stopt (pkt));
+		fprintf (ostream, "Flag Q:              %hhu\n", mf->Q);
+		fprintf (ostream, "Flag V:              %hhu\n", mf->V);
+		fprintf (ostream, "Flag T:              %hhu\n", mf->T);
+		fprintf (ostream, "Flag N:              %hhu\n", mf->N);
+		fprintf (ostream, "Flag C:              %hhu\n", mf->C);
+		fprintf (ostream, "Total number of bins:%u\n",   mca_num_allbins (pkt));
+		fprintf (ostream, "Lowest value:        %hu\n",  mca_lvalue (pkt));
+		fprintf (ostream, "Most frequent bin:   %hu\n",  mca_mfreq (pkt));
+		fprintf (ostream, "Total:               %lu\n",  mca_total (pkt));
+		fprintf (ostream, "Start time:          %lu\n",  mca_startt (pkt));
+		fprintf (ostream, "Stop time:           %lu\n",  mca_stopt (pkt));
 		return;
 	}
 	if (!is_evt (pkt))
 	{
-		fprintf (stream, "Unknown stream type\n");
+		fprintf (estream, "Unknown stream type\n");
 		return;
 	}
 
 	/* ----- Event */
-	fprintf (stream, "Stream type:         Event\n");
-	fprintf (stream, "Event size:          %hu\n", evt_size (pkt));
-	fprintf (stream, "Time offset:         %hu\n", evt_toff (pkt));
+	fprintf (ostream, "Stream type:         Event\n");
+	fprintf (ostream, "Event size:          %hu\n", evt_size (pkt));
+	fprintf (ostream, "Time offset:         %hu\n", evt_toff (pkt));
 	/* ---------- Tick event */
 	if (is_tick (pkt))
 	{
 		struct tick_flags* tf = tick_fl (pkt);
-		fprintf (stream, "Tick flag MF:        %hhu\n", tf->MF);
-		fprintf (stream, "Tick flag EL:        %hhu\n", tf->EL);
-		fprintf (stream, "Tick flag TL:        %hhu\n", tf->TL);
-		fprintf (stream, "Tick flag T:         %hhu\n", tf->T);
-		fprintf (stream, "Tick flag N:         %hhu\n", tf->N);
-		fprintf (stream, "Period:              %u\n",   tick_period (pkt));
-		fprintf (stream, "Timestamp:           %lu\n",  tick_ts (pkt));
-		fprintf (stream, "Error ovrfl:         %hhu\n", tick_ovrfl (pkt));
-		fprintf (stream, "Error err:           %hhu\n", tick_err (pkt));
-		fprintf (stream, "Error cfd:           %hhu\n", tick_cfd (pkt));
-		fprintf (stream, "Events lost:         %u\n",   tick_lost (pkt));
-		fprintf (stream, "Type:                Tick\n");
+		fprintf (ostream, "Tick flag MF:        %hhu\n", tf->MF);
+		fprintf (ostream, "Tick flag EL:        %hhu\n", tf->EL);
+		fprintf (ostream, "Tick flag TL:        %hhu\n", tf->TL);
+		fprintf (ostream, "Tick flag T:         %hhu\n", tf->T);
+		fprintf (ostream, "Tick flag N:         %hhu\n", tf->N);
+		fprintf (ostream, "Period:              %u\n",   tick_period (pkt));
+		fprintf (ostream, "Timestamp:           %lu\n",  tick_ts (pkt));
+		fprintf (ostream, "Error ovrfl:         %hhu\n", tick_ovrfl (pkt));
+		fprintf (ostream, "Error err:           %hhu\n", tick_err (pkt));
+		fprintf (ostream, "Error cfd:           %hhu\n", tick_cfd (pkt));
+		fprintf (ostream, "Events lost:         %u\n",   tick_lost (pkt));
+		fprintf (ostream, "Type:                Tick\n");
 		return;
 	}
 	/* ---------- Non-tick event */
 	struct event_flags* ef = evt_fl (pkt);
-	fprintf (stream, "Event flag PC:       %hhu\n", ef->PC);
-	fprintf (stream, "Event flag O:        %hhu\n", ef->O);
-	fprintf (stream, "Event flag CH:       %hhu\n", ef->CH);
-	fprintf (stream, "Event flag TT:       %hhu\n", ef->TT);
-	fprintf (stream, "Event flag HT:       %hhu\n", ef->HT);
-	fprintf (stream, "Event flag PT:       %hhu\n", ef->PT);
-	fprintf (stream, "Event flag T:        %hhu\n", ef->T);
-	fprintf (stream, "Event flag N:        %hhu\n", ef->N);
+	fprintf (ostream, "Event flag PC:       %hhu\n", ef->PC);
+	fprintf (ostream, "Event flag O:        %hhu\n", ef->O);
+	fprintf (ostream, "Event flag CH:       %hhu\n", ef->CH);
+	fprintf (ostream, "Event flag TT:       %hhu\n", ef->TT);
+	fprintf (ostream, "Event flag HT:       %hhu\n", ef->HT);
+	fprintf (ostream, "Event flag PT:       %hhu\n", ef->PT);
+	fprintf (ostream, "Event flag T:        %hhu\n", ef->T);
+	fprintf (ostream, "Event flag N:        %hhu\n", ef->N);
 	/* --------------- Peak */
 	if (is_peak (pkt))
 	{
-		fprintf (stream, "Type:                Peak\n");
-		fprintf (stream, "Height:              %hu\n", peak_ht (pkt));
-		fprintf (stream, "Rise time:           %hu\n", peak_riset (pkt));
+		fprintf (ostream, "Type:                Peak\n");
+		fprintf (ostream, "Height:              %hu\n", peak_ht (pkt));
+		fprintf (ostream, "Rise time:           %hu\n", peak_riset (pkt));
 		return;
 	}
 	/* --------------- Area */
 	if (is_area (pkt))
 	{
-		fprintf (stream, "Type:                Area\n");
-		fprintf (stream, "Area:                %u\n", area_area (pkt));
+		fprintf (ostream, "Type:                Area\n");
+		fprintf (ostream, "Area:                %u\n", area_area (pkt));
 		return;
 	}
 	/* --------------- Pulse */
 	if (is_pulse (pkt))
 	{
-		fprintf (stream, "Type:                Pulse\n");
-		fprintf (stream, "Size:                %hu\n", pulse_size (pkt));
-		fprintf (stream, "Area:                %u\n",  pulse_area (pkt));
-		fprintf (stream, "Length:              %hu\n", pulse_len (pkt));
-		fprintf (stream, "Time offset:         %hu\n", pulse_toff (pkt));
+		fprintf (ostream, "Type:                Pulse\n");
+		fprintf (ostream, "Size:                %hu\n", pulse_size (pkt));
+		fprintf (ostream, "Area:                %u\n",  pulse_area (pkt));
+		fprintf (ostream, "Length:              %hu\n", pulse_len (pkt));
+		fprintf (ostream, "Time offset:         %hu\n", pulse_toff (pkt));
 		return;
 	}
 	if (!is_trace (pkt))
 	{
-		fprintf (stream, "Unknown event type\n");
+		fprintf (estream, "Unknown event type\n");
 		return;
 	}
 	/* --------------- Trace */
-	fprintf (stream, "Type:                Trace\n");
+	fprintf (ostream, "Type:                Trace\n");
 	struct trace_flags* trf = trace_fl (pkt);
-	fprintf (stream, "Trace flag MH:       %hhu\n", trf->MH);
-	fprintf (stream, "Trace flag MP:       %hhu\n", trf->MP);
-	fprintf (stream, "Trace flag STR:      %hhu\n", trf->STR);
-	fprintf (stream, "Trace flag TT:       %hhu\n", trf->TT);
-	fprintf (stream, "Trace flag TS:       %hhu\n", trf->TS);
-	fprintf (stream, "Trace flag OFF:      %hhu\n", trf->OFF);
-	fprintf (stream, "Trace size:          %hu\n", trace_size (pkt));
+	fprintf (ostream, "Trace flag MH:       %hhu\n", trf->MH);
+	fprintf (ostream, "Trace flag MP:       %hhu\n", trf->MP);
+	fprintf (ostream, "Trace flag STR:      %hhu\n", trf->STR);
+	fprintf (ostream, "Trace flag TT:       %hhu\n", trf->TT);
+	fprintf (ostream, "Trace flag TS:       %hhu\n", trf->TS);
+	fprintf (ostream, "Trace flag OFF:      %hhu\n", trf->OFF);
+	fprintf (ostream, "Trace size:          %hu\n", trace_size (pkt));
 	/* -------------------- Average */
 	if (is_trace_avg (pkt))
 	{
-		fprintf (stream, "Trace type:          Average\n");
+		fprintf (ostream, "Trace type:          Average\n");
 		return;
 	}
-	fprintf (stream, "Area:                %u\n",  trace_area (pkt));
-	fprintf (stream, "Length:              %hu\n", trace_len (pkt));
-	fprintf (stream, "Time offset:         %hu\n", trace_toff (pkt));
+	fprintf (ostream, "Area:                %u\n",  trace_area (pkt));
+	fprintf (ostream, "Length:              %hu\n", trace_len (pkt));
+	fprintf (ostream, "Time offset:         %hu\n", trace_toff (pkt));
 	/* -------------------- Single */
 	if (is_trace_sgl (pkt))
 	{
-		fprintf (stream, "Trace type:          Single\n");
+		fprintf (ostream, "Trace type:          Single\n");
 		return;
 	}
 	/* -------------------- Dot product */
 	if (is_trace_dp (pkt))
 	{
-		fprintf (stream, "Trace type:          Dot product\n");
-		// fprintf (stream, "Dot product:         \n", );
+		fprintf (ostream, "Trace type:          Dot product\n");
+		// fprintf (ostream, "Dot product:         \n", );
 		return;
 	}
 	/* -------------------- Dot product + trace */
 	if (is_trace_dptr (pkt))
 	{
-		fprintf (stream, "Trace type:          Dot product with trace\n");
-		// fprintf (stream, "Dot product:         \n", );
+		fprintf (ostream, "Trace type:          Dot product with trace\n");
+		// fprintf (ostream, "Dot product:         \n", );
 		return;
 	}
-	fprintf (stream, "Unknown trace type\n");
+	fprintf (estream, "Unknown trace type\n");
 }
 
 /* TO DO: check for contradicting fields, e.g. MCA's size contradicts last_bin */
@@ -1039,13 +930,15 @@ pkt_perror (FILE* stream, int err)
 /* ------------------------------------------------------------------------- */
 
 #ifdef FPGAPKT_DEBUG
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#  define ftoul(fl_ptr) ntohl ( *( (uint32_t*) (void*) fl_ptr ) )
-#  define ftous(fl_ptr) ntohs ( *( (uint16_t*) (void*) fl_ptr ) )
-#else
-#  define ftoul(fl_ptr) ( *( (uint32_t*) (void*) fl_ptr ) )
-#  define ftous(fl_ptr) ( *( (uint16_t*) (void*) fl_ptr ) )
-#endif
+
+#define MCA_FL_MASK       0x000fffff
+#define EVT_FL_MASK       0xffff
+#define TICK_FL_MASK      0x0703
+#define TR_FL_MASK        0x7fff
+
+/* Flags are always sent as big-endian. */
+#define flagtoul(fl_ptr) ntohl ( *( (uint32_t*) (void*) fl_ptr ) )
+#define flagtous(fl_ptr) ntohs ( *( (uint16_t*) (void*) fl_ptr ) )
 
 static void
 fpgapkt_self_test (void)
@@ -1074,7 +967,7 @@ fpgapkt_self_test (void)
 	mf.T = 0x0f;
 	mf.N = 0x1f;
 	mf.C = 0x07;
-	assert ( ftoul (&mf) == MCA_FL_MASK );
+	assert ( flagtoul (&mf) == MCA_FL_MASK );
 
 	struct event_flags ef;
 	memset (&ef, 0, EVT_FL_LEN);
@@ -1086,7 +979,7 @@ fpgapkt_self_test (void)
 	ef.PT = 0x03;
 	ef.T  = 0x01;
 	ef.N  = 0x01;
-	assert ( ftous (&ef) == EVT_FL_MASK );
+	assert ( flagtous (&ef) == EVT_FL_MASK );
 
 	struct tick_flags tf;
 	memset (&tf, 0, EVT_FL_LEN);
@@ -1095,7 +988,7 @@ fpgapkt_self_test (void)
 	tf.TL = 0x01;
 	tf.T  = 0x01;
 	tf.N  = 0x01;
-	assert ( ftous (&tf) == TICK_FL_MASK );
+	assert ( flagtous (&tf) == TICK_FL_MASK );
 
 	struct trace_flags trf;
 	memset (&trf, 0, TR_FL_LEN);
@@ -1105,7 +998,7 @@ fpgapkt_self_test (void)
 	trf.TT  = 0x03;
 	trf.TS  = 0x03;
 	trf.OFF = 0x0f;
-	assert ( ftous (&trf) == TR_FL_MASK );
+	assert ( flagtous (&trf) == TR_FL_MASK );
 }
 
 #endif /* FPGAPKT_DEBUG */
