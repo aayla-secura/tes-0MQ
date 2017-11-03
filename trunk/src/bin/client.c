@@ -1,3 +1,4 @@
+#define _WITH_GETLINE
 #include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -224,7 +225,7 @@ main (int argc, char **argv)
 	if (rc == -1)
 	{
 		perror ("sigaction");
-		return -1;
+		exit (EXIT_FAILURE);
 	}
 
 	/* Command-line */
@@ -252,6 +253,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid in mode %d.\n", opt, mode + 1);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				mode = 1;
@@ -260,6 +262,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Invalid format for "
 						"option %c.\n", opt);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				break;
@@ -268,6 +271,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid in mode %d.\n", opt, mode + 1);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				mode = 0;
@@ -275,6 +279,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid for status requests.\n", opt);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				max_ticks = strtoul (optarg, &buf, 10);
@@ -282,6 +287,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Invalid format for "
 						"option %c.\n", opt);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				break;
@@ -294,6 +300,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid in mode %d.\n", opt, mode + 1);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				mode = 0;
@@ -301,6 +308,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid for status requests.\n", opt);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				ovrwrt = 1;
@@ -310,6 +318,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid in mode %d.\n", opt, mode + 1);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				mode = 0;
@@ -317,6 +326,7 @@ main (int argc, char **argv)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid for status requests.\n", opt);
+					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
 				max_ticks = 0;
@@ -336,33 +346,39 @@ main (int argc, char **argv)
 	{
 		fprintf (stderr, "You must specify the remote address.\n"
 			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
 	}
 	if (strlen (filename) == 0)
 	{
 		fprintf (stderr, "You must specify a filename.\n"
 			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
 	}
 	if (argc > optind)
 	{
 		fprintf (stderr, "Extra arguments given.\n"
 			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
 	}
 	if ( mode == 0 && !max_ticks && !status )
 	{
 		fprintf (stderr, "Excatly one of 's' or 't' options "
 			"must be specified.\n"
 			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
 	}
 	if (mode == 1 && numhist == 0)
 	{
 		fprintf (stderr, "You must specify a positive number of histograms. "
 			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
 	}
 	if (mode == -1)
 	{
 		fprintf (stderr, "You must choose a mode of operation by "
 			"giving at least one of its specific options.\n"
 			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
 	}
 
 	/* Prompt and take action */
@@ -376,15 +392,17 @@ main (int argc, char **argv)
 			printf (" Will terminate after %lu ticks.", max_ticks);
 		}
 		if ( prompt () )
-			return 0;
-		return save_to_remote (server, filename, max_ticks, ovrwrt);
+			exit (EXIT_SUCCESS);
+		int rc = save_to_remote (server, filename, max_ticks, ovrwrt);
+		exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 	}
 	else
 	{
 		printf ("Will save %lu histograms, each of maximum size %u "
 			"to local file %s.", numhist, MAX_HISTSIZE, filename);
 		if ( prompt () )
-			return 0;
-		return save_hist (server, filename, numhist);
+			exit (EXIT_SUCCESS);
+		int rc = save_hist (server, filename, numhist);
+		exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 	}
 }

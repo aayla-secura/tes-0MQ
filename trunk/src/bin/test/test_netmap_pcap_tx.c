@@ -1,16 +1,17 @@
 #include <pcap/pcap.h>
-#include "net/fpgapkt.h"
+#include <net/fpgapkt.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <poll.h>
 #include <signal.h>
+#include <assert.h>
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
 #define NM_IFNAME "vale:fpga{1"
-#define PCAPFILE "/home/aleksandrina/FPGA/noise drive.pcapng"
+#define PCAPFILE  "noise drive.pcapng"
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 
@@ -161,7 +162,7 @@ main (void)
 				(uint16_t)(frame_seq ((fpga_pkt*)pkt) - ef) - 1 );
 		}
 		ef = frame_seq ((fpga_pkt*)pkt);
-		pkt_pretty_print ((fpga_pkt*)pkt, stdout);
+		pkt_pretty_print ((fpga_pkt*)pkt, stdout, stderr);
 		pkt_perror (stdout, is_valid ((fpga_pkt*)pkt));
 		printf ("\n");
 		// dump_pkt (pkt, FPGA_HDR_LEN);
