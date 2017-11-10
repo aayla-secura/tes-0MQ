@@ -10,6 +10,7 @@ CPATH := $(PROJ_ROOT)/include
 
 ext_libs := zmq czmq
 bins := $(patsubst %.c,%,$(notdir $(wildcard $(BIN_SRC)/*.c)))
+test_bins := $(patsubst %.c,%,$(notdir $(wildcard $(BIN_SRC)/test/*.c)))
 libs := $(patsubst %.c,%,$(notdir $(wildcard $(LIB_SRC)/*.c)))
 so := $(libs:%=lib%.so)
 
