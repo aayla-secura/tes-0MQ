@@ -20,10 +20,10 @@ clean:
 
 %: %.c
 
-%: %.o
+server_main: server_main.o
 	# this is not one of make's implicit rules, good
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) $(libs:%=-l% ) -o $@
 
-client: client.c
+client: client.o
 	# this is not one of make's implicit rules, good
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
