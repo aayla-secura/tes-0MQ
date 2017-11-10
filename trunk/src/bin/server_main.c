@@ -1,9 +1,9 @@
 /*
  * See api.h
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––– DEV NOTES –––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ————————————————————————————————————————————————————————————————————————————
+ * ———————————————————————————————— DEV NOTES —————————————————————————————————
+ * ————————————————————————————————————————————————————————————————————————————
  * When debugging we use assert throughout to catch bugs. Normally these
  * statements should never be reached regardless of user input. Other errors
  * are handled gracefully with messages to clients and/or syslog or stderr/out.
@@ -31,13 +31,10 @@
  *
  * Note: bool type and true/false macros are ensured by CZMQ.
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * Try:
- *   aio_write
- *   buffering to a separate (mmapped) area and writing bigger chunks to disk
- *   zsys_io_threads
+ * ————————————————————————————————————————————————————————————————————————————
+ * —————————————————————————————————— TO DO ———————————————————————————————————
+ * ————————————————————————————————————————————————————————————————————————————
+ * - Look into zsys_io_threads
  */
 
 #include "fpgatasks.h"
@@ -47,7 +44,8 @@
 
 /* Defaults */
 #define UPDATE_INTERVAL 1             // in seconds
-#define FPGA_IF         "vale:fpga}1"
+/* #define FPGA_IF "vale0:vi1" */
+#define FPGA_IF "netmap:igb1"
 
 /*
  * Statistics, only used in foreground mode
@@ -64,7 +62,7 @@ struct stats_t
 struct data_t
 {
 	struct stats_t stats;
-	ifring* rxring;
+	ifdesc* ifd;
 };
 
 static void usage (const char* self);
@@ -98,7 +96,7 @@ usage (const char* self)
 static int
 print_stats (zloop_t* loop, int timer_id, void* stats_)
 {
-	dbg_assert (stats_);
+	dbg_assert (stats_ != NULL);
 	struct stats_t* stats = (struct stats_t*) stats_;
 
 	if ( ! timerisset (&stats->last_update) )
@@ -145,12 +143,14 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
 static int
 new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 {
-	dbg_assert (data_);
+	dbg_assert (data_ != NULL);
 	struct data_t* data = (struct data_t*) data_;
 
-	/* Signal the waiting tasks and find the head of the slowest one */
-	uint32_t nhead = ifring_tail (data->rxring); /* if no active tasks */
-	tasks_get_head (&nhead);
+	/* For each ring get the head of the slowest task. */
+	uint32_t* heads = tasks_get_heads ();
+	/* FIX: check if NULL */
+
+	/* Signal the waiting tasks. */
 	int rc = tasks_wakeup ();
 	if (rc)
 	{
@@ -160,46 +160,51 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	}
 
 	/* Save statistics */
-	fpga_pkt* pkt = (fpga_pkt*) ifring_cur_buf (data->rxring); /* old head */
-	dbg_assert (pkt);
-	uint16_t fseqA = frame_seq (pkt);
-
-	pkt = (fpga_pkt*) ifring_preceding_buf (data->rxring, nhead);
-	if (pkt == NULL)
-	{
-		dbg_assert (nhead == ifring_head (data->rxring));
-		data->stats.skipped++;
-		return 0;
-	}
-	uint16_t fseqB = frame_seq (pkt);
-
-#ifdef FULL_DBG
-	uint32_t cur = ifring_cur (data->rxring); /* save it */
-	uint16_t cur_seq;
-	for (int p = 0; cur != nhead; cur = ifring_following (data->rxring, cur), p++)
-	{
-		pkt = (fpga_pkt*) ifring_buf (data->rxring, cur);
-		uint16_t prev_seq = cur_seq;
-		cur_seq = frame_seq (pkt);
-		if ( (uint16_t)(cur_seq - prev_seq) != 1 && p > 0 )
-		{
-			s_msgf (0, LOG_DEBUG, 0, "Buf #%hu, %hu -> %hu",
-					cur, prev_seq, cur_seq);
-			return -1;
-		}
-	}
-#endif
-	ifring_goto_buf (data->rxring, nhead); /* cursor -> new head */
-	uint32_t num_new = ifring_done (data->rxring); /* cursor - old head */
-
-	data->stats.received += num_new;
-	data->stats.missed   += (uint64_t) (
-			(uint16_t)(fseqB - fseqA) - num_new + 1);
 	data->stats.polled++;
+	int skipped = 1;
+	for (int r = 0; r < NUM_RINGS; r++)
+	{
+		ifring* rxring = if_rxring (data->ifd, r);
+		if (ifring_tail (rxring) == ifring_head (rxring))
+			continue; /* nothing in this ring */
 
-	ifring_release_done_buf (data->rxring); /* head -> new head */
-	dbg_assert (ifring_head (data->rxring) == ifring_cur (data->rxring));
-	dbg_assert (ifring_head (data->rxring) == nhead);
+		uint32_t new_head;
+		if (heads == NULL)
+			new_head = ifring_tail (rxring);
+		else
+			new_head = heads[r];
+
+		if (new_head == ifring_head (rxring))
+			continue; /* nothing processed since last time */
+		skipped = 0;
+
+		fpga_pkt* pkt = (fpga_pkt*)
+			ifring_cur_buf (rxring); /* old head */
+		dbg_assert (pkt != NULL);
+		uint16_t fseqA = frame_seq (pkt);
+
+		/*
+		 * Look at the packet preceding the new head, in case the
+		 * new head is the tail (not a valid userspace buffer)
+		 */
+		pkt = (fpga_pkt*)
+			ifring_preceding_buf (rxring, new_head);
+		dbg_assert (pkt != NULL);
+		uint16_t fseqB = frame_seq (pkt);
+
+		ifring_goto_buf (rxring, new_head); /* cursor -> new head */
+		dbg_assert (ifring_cur (rxring) == new_head);
+		uint32_t num_new = ifring_done (rxring); /* cursor - old head */
+
+		data->stats.received += num_new;
+		data->stats.missed += (uint16_t)(fseqB - fseqA - num_new + 1);
+
+		ifring_release_done_buf (rxring); /* head -> new head */
+		dbg_assert (ifring_head (rxring) == ifring_cur (rxring));
+	}
+
+	if (skipped)
+		data->stats.skipped++;
 
 	return 0;
 }
@@ -212,8 +217,8 @@ coordinator_body (const char* ifname, uint64_t stat_period)
 	memset (&data, 0, sizeof (data));
 
 	/* Open the interface */
-	ifdesc* ifd = if_open (ifname, NULL, 0, 0);
-	if (ifd == NULL)
+	data.ifd = if_open (ifname, NULL, 0, 0);
+	if (data.ifd == NULL)
 	{
 		s_msgf (errno, LOG_ERR, 0, "Could not open interface %s",
 			ifname);
@@ -222,13 +227,12 @@ coordinator_body (const char* ifname, uint64_t stat_period)
 	s_msgf (0, LOG_INFO, 0, "Opened interface %s", ifname);
 
 	/* Get the ring, we support only one for now */
-	assert (if_rxrings (ifd) == 1);
-	data.rxring = if_first_rxring (ifd);
+	dbg_assert (if_rxrings (data.ifd) == NUM_RINGS);
 
 	/* Start the tasks and register the readers. Tasks are initialized as
 	 * inactive. */
 	zloop_t* loop = zloop_new ();
-	rc = tasks_start (data.rxring, loop);
+	rc = tasks_start (data.ifd, loop);
 	if (rc)
 	{
 		s_msg (0, LOG_DEBUG, 0, "Tasks failed to start");
@@ -238,7 +242,7 @@ coordinator_body (const char* ifname, uint64_t stat_period)
 	/* Register the FPGA interface as a poller */
 	struct zmq_pollitem_t pitem;
 	memset (&pitem, 0, sizeof (pitem));
-	pitem.fd = if_fd (ifd);
+	pitem.fd = if_fd (data.ifd);
 	pitem.events = ZMQ_POLLIN;
 	rc = zloop_poller (loop, &pitem, new_pkts_hn, &data);
 	if (rc == -1)
@@ -277,7 +281,7 @@ coordinator_body (const char* ifname, uint64_t stat_period)
 cleanup:
 	tasks_destroy ();
 	zloop_destroy (&loop);
-	if_close (ifd);
+	if_close (data.ifd);
 	s_msg (0, LOG_DEBUG, 0, "Done");
 	return rc;
 }

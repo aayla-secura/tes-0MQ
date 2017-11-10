@@ -36,6 +36,12 @@ ifring* if_preceding_rxring (ifdesc* ifd, uint16_t idx);
 ifring* if_following_rxring (ifdesc* ifd, uint16_t idx);
 ifring* if_last_rxring (ifdesc* ifd);
 
+/* Get the index of the first, current or last tx or rx ring. */
+uint16_t if_cur_txring_id (ifdesc* ifd);
+uint16_t if_last_txring_id (ifdesc* ifd);
+uint16_t if_cur_rxring_id (ifdesc* ifd);
+uint16_t if_last_rxring_id (ifdesc* ifd);
+
 /* Get the number of buffers in the ring. */
 uint32_t ifring_bufs (ifring* ring);
 
@@ -60,6 +66,10 @@ uint32_t ifring_cur (ifring* ring);
 uint32_t ifring_preceding (ifring* ring, uint32_t idx);
 uint32_t ifring_following (ifring* ring, uint32_t idx);
 uint32_t ifring_tail (ifring* ring);
+
+/* Get the current tx or rx ring's current buffer. */
+char* if_cur_txbuf (ifdesc* ifd);
+char* if_cur_rxbuf (ifdesc* ifd);
 
 /* Get the head, current, <idx>, preceding <idx>, following <idx> or tail
  * buffer of a ring. Wraps around.

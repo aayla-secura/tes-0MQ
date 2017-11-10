@@ -1,6 +1,10 @@
 /*
  * An opaque class for managing the ring structure. At the moment it's just
  * a wrapper around netmap.
+ *
+ * TO DO:
+ * - wrappers around the following for multiple rings:
+ * ifring_release_*
  */
 
 #ifndef __NET_FPGAIF_MANAGER_H_INCLUDED__

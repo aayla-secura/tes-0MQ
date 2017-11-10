@@ -11,9 +11,9 @@
  * 2) Collate MCA frames for publishing via a PUB socket.
  *
  * Tasks have read-only access to rings (they cannot modify the cursor or head)
- * and each task keeps its own head, which is visible by the coordinator
- * (fpgacoord.c). The coordinator sets the true head to the per-task head which
- * lags behind all others.
+ * and each task keeps its own head (for each ring), which is visible by the
+ * coordinator (fpgacoord.c). For each ring, the coordinator sets the true head
+ * to the per-task head which lags behind all others.
  *
  * Tasks are largely similar, so we pass the same handler, s_task_shim, to
  * zactor_new. It is responsible for doing most of the work.
@@ -25,14 +25,15 @@
  *         s_data_fn*       data_init; // initialize data
  *         s_data_fn*       data_fin;  // cleanup data
  *         void*       data;           // task-specific
- *         ifring*     rxring;         // we support only one ring for now
  *         zactor_t*   shim;           // coordinator's end of the pipe, signals
  *                                     // sent on behalf of coordinator go here
  *         zsock_t*    frontend;       // clients
- *         const int   front_type;     // one of ZMQ_*
  *         const char* front_addr;     // the socket addresses, comma separated
- *         int         id;
- *         uint32_t    head;
+ *         const int   front_type;     // one of ZMQ_*
+ *         int         id;             // the task ID
+ *         ifdesc*     ifd;            // netmap interface
+ *         uint32_t    heads[NUM_RINGS]; // per-ring task's head
+ *         uint16_t    nrings;         // number of rings <= NUM_RINGS
  *         uint16_t    prev_fseq;      // previous frame sequence
  *         uint16_t    prev_pseq_mca;  // previous MCA protocol sequence
  *         uint16_t    prev_pseq_tr;   // previous trace protocol sequence
@@ -45,8 +46,11 @@
  * };
  *
  * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
- * from the coordinator. Upon SIG_STOP it exits, upon SIG_WAKEUP it calls
- * calls the task's specific packet handler for each packet in the ring.
+ * from the coordinator. Upon SIG_STOP s_sig_hn exits, upon SIG_WAKEUP it calls
+ * calls the task's specific packet handler for each packet in each ring. 
+ * It keeps track of the previous frame and protocol sequences (the task's
+ * packet handler can make use of those as well, e.g. to track lost frames).
+ * s_sig_hn also takes care of updating the task's head.
  *
  * If the task defines a public interface address, s_task_shim will open the
  * socket, and if it defines a client handler, it will register it with the
@@ -78,10 +82,10 @@
  * for some time.
  *
  * If the task is not interested in receiving packets, is sets its active flag
- * to false. It won't receive SIG_WAKEUP if it is not active and its head won't
- * be synchronized with the real head. When it needs to process packets, it
- * must set its private head to the global head (by calling ifring_head) and
- * then set its active flag to true.
+ * to false. It won't receive SIG_WAKEUP if it is not active and its heads
+ * won't be synchronized with the real heads. When it needs to process packets,
+ * it must set its private heads to the global heads (by calling ifring_head
+ * for each ring) and then set its active flag to true.
  * Tasks are initialized as inactive, the task should enable the flag either in
  * its initializer or in its client frontend handler.
  *
@@ -113,8 +117,11 @@
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
  * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
  * - Check if packet is valid and drop (increment another counter for malformed
  *   packets).
+ * - Check if repeating the loop over all rings until no more packets is better
+ *   than exiting and waiting for a WAKEUP.
  */
 
 #include "fpgatasks.h"
@@ -126,10 +133,12 @@
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
+#define NUM_RINGS 4 /* number of rx rings in interface */
+
 /* ---------------------------------- API ---------------------------------- */
 
 typedef int (s_data_fn)(task_t*);
-typedef int (s_pkt_fn)(zloop_t*, fpga_pkt*, uint16_t, task_t*);
+typedef int (s_pkt_fn)(zloop_t*, fpga_pkt*, uint16_t, uint16_t, task_t*);
 
 /* See DEV NOTES */
 struct _task_t
@@ -139,13 +148,14 @@ struct _task_t
 	s_data_fn*       data_init;
 	s_data_fn*       data_fin;
 	void*       data;
-	ifring*     rxring;
 	zactor_t*   shim;
 	zsock_t*    frontend;
-	const int   front_type;
 	const char* front_addr;
+	const int   front_type;
 	int         id;
-	uint32_t    head;
+	ifdesc*     ifd;
+	uint32_t    heads[NUM_RINGS];
+	uint16_t    nrings;
 	uint16_t    prev_fseq;
 	uint16_t    prev_pseq_mca;
 	uint16_t    prev_pseq_tr;
@@ -154,6 +164,19 @@ struct _task_t
 	bool        busy;
 	bool        active;
 	bool        autoactivate;
+#ifdef FULL_DBG
+	struct
+	{
+		uint64_t wakeups;
+		uint64_t wakeups_false;
+		uint64_t rings_dispatched;
+		struct
+		{
+			uint64_t rcvd;
+			uint64_t missed;
+		} pkts;
+	} dbg_stats;
+#endif
 };
 
 /* -------------------------------- HELPERS -------------------------------- */
@@ -168,9 +191,11 @@ static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
 static zactor_fn       s_task_shim;
 
-static int  s_task_start (ifring* rxring, task_t* self);
+static int  s_task_start (ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
 static inline void s_task_activate (task_t* self);
+static int s_task_dispatch (task_t* self, zloop_t* loop,
+		uint16_t ring_id, uint16_t missed);
 
 /* --------------------------- SAVE-TO-FILE TASK --------------------------- */
 
@@ -249,7 +274,10 @@ static void s_task_save_close (struct s_task_save_data_t* sjob);
  */
 struct s_task_hist_data_t
 {
+#ifdef FULL_DBG
+	uint64_t      published; // number of published histograms
 	uint64_t      dropped;   // number of aborted histograms
+#endif
 	uint16_t      nbins;     // total number of bins in histogram
 	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_nbins; // number of received bins so far
@@ -272,15 +300,15 @@ static task_t tasks[] = {
 		.pkt_handler    = s_task_save_pkt_hn,
 		.data_init      = s_task_save_init,
 		.data_fin       = s_task_save_fin,
-		.front_type     = ZMQ_REP,
 		.front_addr     = "tcp://*:55555",
+		.front_type     = ZMQ_REP,
 	},
 	{ // PUBLISH HIST
 		.pkt_handler    = s_task_hist_pkt_hn,
 		.data_init      = s_task_hist_init,
 		.data_fin       = s_task_hist_fin,
-		.front_type     = ZMQ_PUB,
 		.front_addr     = "tcp://*:55556",
+		.front_type     = ZMQ_PUB,
 		.autoactivate   = 1,
 	}
 };
@@ -295,16 +323,16 @@ static task_t tasks[] = {
  * Returns 0 on success, -1 on error.
  */
 int
-tasks_start (ifring* rxring, zloop_t* c_loop)
+tasks_start (ifdesc* ifd, zloop_t* c_loop)
 {
-	dbg_assert (rxring != NULL);
-	dbg_assert (NUM_TASKS == sizeof (tasks)/sizeof (task_t));
+	dbg_assert (ifd != NULL);
+	dbg_assert (NUM_TASKS == sizeof (tasks) / sizeof (task_t));
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		tasks[t].id = t + 1;
 		s_msgf (0, LOG_DEBUG, 0, "Starting task #%d", t);
-		rc = s_task_start (rxring, &tasks[t]);
+		rc = s_task_start (ifd, &tasks[t]);
 		if (rc)
 		{
 			s_msg (errno, LOG_ERR, 0, "Could not start tasks");
@@ -312,11 +340,16 @@ tasks_start (ifring* rxring, zloop_t* c_loop)
 		}
 	}
 
-	if (c_loop)
+	if (c_loop != NULL)
 		return tasks_read (c_loop);
 	return 0;
 }
 
+/*
+ * Register a generic reader with the loop. The reader will listen to all tasks
+ * and terminate the loop when a task dies. This is called by tasks_start if
+ * a non-NULL zloop_t* is passed.
+ */
 int
 tasks_read (zloop_t* loop)
 {
@@ -338,6 +371,9 @@ tasks_read (zloop_t* loop)
 	return 0;
 }
 
+/*
+ * Deregister the reader of each task with the loop.
+ */
 void
 tasks_mute (zloop_t* loop)
 {
@@ -351,6 +387,9 @@ tasks_mute (zloop_t* loop)
 	}
 }
 
+/*
+ * Sends a wake up signal to all tasks waiting for more packets.
+ */
 int
 tasks_wakeup (void)
 {
@@ -371,6 +410,9 @@ tasks_wakeup (void)
 	return 0;
 }
 
+/*
+ * Asks each task to terminate and cleans up.
+ */
 void
 tasks_destroy (void)
 {
@@ -382,16 +424,44 @@ tasks_destroy (void)
 	}
 }
 
-void
-tasks_get_head (uint32_t* head)
+/*
+ * For each ring, returns the head of the slowest active task.
+ * If no active tasks, returns NULL.
+ */
+uint32_t*
+tasks_get_heads (void)
 {
+	/* Use a static storage for the returned array. */
+	static uint32_t heads[NUM_RINGS];
+
+	int updated = 0; /* set to 1 if at least one active task */
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		task_t* self = &tasks[t];
 		if (self->active)
-			*head = ifring_earlier_id (self->rxring,
-				*head, self->head);
+		{
+			/* The first time an active task is found, take its
+			 * head, for each following active task, compare its
+			 * head with the currently slowest one. */
+			if (updated)
+			{
+				for (int r = 0; r < NUM_RINGS; r++)
+				{
+					ifring* rxring = if_rxring (self->ifd, r);
+					heads[r] = ifring_earlier_id (
+							rxring, heads[r],
+							self->heads[r]);
+				}
+			}
+			else
+			{
+				for (int r = 0; r < NUM_RINGS; r++)
+					heads[r] = self->heads[r];
+				updated = 1;
+			}
+		}
 	}
+	return (updated ? heads : NULL);
 }
 
 
@@ -410,7 +480,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
-	dbg_assert (self->busy == 0);
+	dbg_assert ( ! self->busy );
 	
 #ifdef FULL_DBG
 	/* Catch bugs by receiving a message and asserting it's a signal.
@@ -439,52 +509,60 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return -1;
 	}
 	dbg_assert (sig == SIG_WAKEUP);
-	// dbg_assert (self->active == 0);
-	/* FIX: signals seem to arrive with a short delay, so right after
-	 * setting active to false, or reaching the ring's tail we may receive
-	 * a WAKEUP. */
-	if ( self->active == 0 || self->head == ifring_tail (self->rxring) )
-		return 0;
+	dbg_assert (self->active);
+	dbg_assert ( ! self->busy );
 
+#ifdef FULL_DBG
+	self->dbg_stats.wakeups++;
+#endif
 	self->busy = 1;
-	/* Process packets */
-	do
+	/*
+	 * Process packets. Find the ring that contains the next packet in
+	 * sequence. Allowing for lost frames, simply take the ring for which
+	 * the task's head packet is closest in sequence to the last seen frame
+	 * sequence.
+	 */
+	/* FIX: check all rings */
+	uint16_t missed = ~0;  /* will hold minimum jump in frame seq,
+			        * initialize to UINT16_MAX */
+	int next_ring_id = -1; /* next to process */
+	for (int r = 0; r < NUM_RINGS; r++)
 	{
+		ifring* rxring = if_rxring (self->ifd, r);
+		if (ifring_tail (rxring) == self->heads[r])
+			continue;
 		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
-			self->rxring, self->head);
-
-		/* TO DO: check packet */
-		uint16_t len = ifring_len (self->rxring, self->head);
-		uint16_t plen = pkt_len (pkt);
-		if (plen > len)
-		{ /* drop the frame */
-			s_msgf (0, LOG_DEBUG, self->id,
-				"Packet too long (header says %hu, "
-				"ring slot is %hu)", plen, len);
-			return 0;
+				rxring, self->heads[r]);
+		uint16_t cur_fseq = frame_seq (pkt);
+		uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
+		if (fseq_gap <= missed)
+		{
+			next_ring_id = r;
+			missed = fseq_gap;
+			if (fseq_gap == 0)
+				break;
 		}
-		dbg_assert (plen <= MAX_FPGA_FRAME_LEN);
-		int rc = self->pkt_handler (loop, pkt, plen, self);
+	}
+	/*
+	 * We should never have received a WAKEUP if there are no new
+	 * packets, but sometimes we do.
+	 */
+	if (next_ring_id < 0)
+	{
+#ifdef FULL_DBG
+		self->dbg_stats.wakeups_false++;
+#endif
+		self->busy = 0;
+		return 0;
+	}
 
-		self->prev_fseq = frame_seq (pkt);
-		if (is_mca (pkt))
-			self->prev_pseq_mca = proto_seq (pkt);
-		else if (is_trace (pkt))
-			self->prev_pseq_tr = proto_seq (pkt);
-		else
-			self->prev_pseq_pls = proto_seq (pkt);
-
-		self->head = ifring_following (self->rxring, self->head);
-		if (rc)
-			break;
-
-	} while (self->head != ifring_tail (self->rxring));
-
+	int rc = s_task_dispatch (self, loop, next_ring_id, missed);
 	if (self->error)
 	{
 		self->active = 0;
 		return -1;
 	}
+	/* FIX: check the rest of the rings, depending on rc */
 
 	self->busy = 0;
 	return 0;
@@ -525,7 +603,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 		s_msg (0, LOG_DEBUG, 0, "Task thread encountered an error");
 		return -1;
 	}
-	dbg_assert (0); // we only deal with SIG_DIED 
+	assert (0); /* we only deal with SIG_DIED  */
 }
 
 /*
@@ -541,10 +619,11 @@ s_task_shim (zsock_t* pipe, void* self_)
 	task_t* self = (task_t*) self_;
 	dbg_assert (self->pkt_handler != NULL);
 	dbg_assert (self->data == NULL);
-	dbg_assert (self->rxring != NULL);
+	dbg_assert (self->ifd != NULL);
 	dbg_assert (self->frontend == NULL);
 	dbg_assert (self->id > 0);
-	dbg_assert (self->head == 0);
+	for (int r = 0; r < NUM_RINGS; r++)
+		dbg_assert (self->heads[r] == 0);
 	dbg_assert (self->prev_fseq == 0);
 	dbg_assert (self->prev_pseq_mca == 0);
 	dbg_assert (self->prev_pseq_tr == 0);
@@ -649,6 +728,17 @@ cleanup:
 	zloop_destroy (&loop);
 	zsock_destroy (&self->frontend);
 	s_msg (0, LOG_DEBUG, self->id, "Done");
+#ifdef FULL_DBG
+	s_msgf (0, LOG_DEBUG, self->id,
+		"Woken up %lu times, %lu in vain, dispatched "
+		"%lu rings, %lu packets received, %lu missed",
+		self->dbg_stats.wakeups,
+		self->dbg_stats.wakeups_false,
+		self->dbg_stats.rings_dispatched,
+		self->dbg_stats.pkts.rcvd,
+		self->dbg_stats.pkts.missed
+		);
+#endif
 }
 
 /*
@@ -657,16 +747,17 @@ cleanup:
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_start (ifring* rxring, task_t* self)
+s_task_start (ifdesc* ifd, task_t* self)
 {
 	dbg_assert (self != NULL);
-	dbg_assert (rxring != NULL);
+	dbg_assert (ifd != NULL);
 
-	self->rxring = rxring;
+	self->ifd = ifd;
+	dbg_assert (if_rxrings (ifd) == NUM_RINGS);
 
 	/* Start the thread, will block until the handler signals */
 	self->shim = zactor_new (s_task_shim, self);
-	dbg_assert (self->shim);
+	dbg_assert (self->shim != NULL);
 	/* zactor_new does not check the signal, so no way to know if there was
 	 * an error. As a workaroung the task thread will send a second signal
 	 * when it is ready (or when it fails) and we wait for it here. */
@@ -708,13 +799,87 @@ s_task_stop (task_t* self)
 /*
  * Synchronizes the task's head with the ring's head and sets active to true.
  */
- static inline void
- s_task_activate (task_t* self)
- {
+static inline void
+s_task_activate (task_t* self)
+{
 	dbg_assert (self != NULL);
-	self->head = ifring_head (self->rxring);
+	for (int r = 0; r < NUM_RINGS; r++)
+	{
+		ifring* rxring = if_rxring (self->ifd, r);
+		self->heads[r] = ifring_head (rxring);
+	}
 	self->active = 1;
- }
+}
+
+/*
+ * Loops over the given ring until either reaching the tail or seeing
+ * a discontinuity in frame sequence. For each buffer calls the task's
+ * pkt_handler.
+ * Returns ... TO DO
+ */
+static int s_task_dispatch (task_t* self, zloop_t* loop,
+		uint16_t ring_id, uint16_t missed)
+{
+	dbg_assert (self != NULL);
+	dbg_assert (loop != NULL);
+#ifdef FULL_DBG
+	self->dbg_stats.rings_dispatched++;
+	self->dbg_stats.pkts.missed += missed;
+#endif
+
+	ifring* rxring = if_rxring (self->ifd, ring_id);
+	/*
+	 * First exec of the loop uses the head from the last time
+	 * dispatch was called with this ring_id.
+	 */
+	uint16_t fseq_gap = missed;
+	do
+	{
+		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
+			rxring, self->heads[ring_id]);
+		dbg_assert (pkt != NULL);
+#ifdef FULL_DBG
+		self->dbg_stats.pkts.rcvd++;
+#endif
+
+		/* TO DO: check packet */
+		uint16_t len = ifring_len (rxring, self->heads[ring_id]);
+		uint16_t plen = pkt_len (pkt);
+		if (plen > len)
+		{ /* drop the frame */
+			s_msgf (0, LOG_DEBUG, self->id,
+				"Packet too long (header says %hu, "
+				"ring slot is %hu)", plen, len);
+			return 0;
+		}
+		dbg_assert (plen <= MAX_FPGA_FRAME_LEN);
+		int rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
+
+		uint16_t cur_fseq = frame_seq (pkt);
+		fseq_gap = cur_fseq - self->prev_fseq - 1;
+
+		self->prev_fseq = cur_fseq;
+		if (is_mca (pkt))
+			self->prev_pseq_mca = proto_seq (pkt);
+		else if (is_trace (pkt))
+			self->prev_pseq_tr = proto_seq (pkt);
+		else
+			self->prev_pseq_pls = proto_seq (pkt);
+
+		self->heads[ring_id] = ifring_following (
+				rxring, self->heads[ring_id]);
+
+		/* FIX return codes */
+		if (rc)
+			return 0; /* pkt_handler doesn't want more */
+
+		if (fseq_gap > 0)
+			return 0;
+
+	} while (self->heads[ring_id] != ifring_tail (rxring));
+
+	return 0;
+}
 
 /* ------------------------------------------------------------------------- */
 /* --------------------------- SAVE-TO-FILE TASK --------------------------- */
@@ -732,8 +897,8 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
-	dbg_assert (self->busy == 0);
-	dbg_assert (self->active == 0);
+	dbg_assert ( ! self->busy );
+	dbg_assert ( ! self->active );
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 	uint8_t job_mode;
@@ -826,7 +991,8 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
  * says.
  */
 static int
-s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
+s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
+		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
 
@@ -869,13 +1035,14 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 	 * finish. */
 	uint16_t cur_fseq = frame_seq (pkt);
 	if (sjob->st.frames > 0)
-		sjob->st.frames_lost += (uint64_t) (
-				(uint16_t)(cur_fseq - self->prev_fseq) - 1);
+		sjob->st.frames_lost += missed;
+		// sjob->st.frames_lost += (uint16_t)(cur_fseq
+		//                 - self->prev_fseq - 1);
 #ifdef FULL_DBG
-	if (sjob->st.frames_lost)
+	if (sjob->st.frames_lost != 0)
 	{
-		s_msgf (0, LOG_DEBUG, self->id, "Head at: %hu, %hu -> %hu",
-			self->head, self->prev_fseq, cur_fseq);
+		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
+			self->prev_fseq, cur_fseq);
 		s_dump_buf (sjob->prev_hdr, FPGA_HDR_LEN);
 		s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
 		self->error = 1;
@@ -1012,7 +1179,7 @@ static int
 s_task_save_fin (task_t* self)
 {
 	dbg_assert (self != NULL);
-	dbg_assert (self->active == 0);
+	dbg_assert ( ! self->active );
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 	dbg_assert (sjob != NULL);
@@ -1309,7 +1476,8 @@ s_task_save_close (struct s_task_save_data_t* sjob)
  * frames are received (i.e. the size field appears to small).
  */
 static int
-s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
+s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
+		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
 
@@ -1353,31 +1521,37 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 			hist->cur_size = 0;
 			hist->cur_nbins = 0;
 			hist->discard = 0;
+#ifdef FULL_DBG
 			hist->dropped++;
 			s_msgf (0, LOG_DEBUG, self->id,
-				"Discarded %lu histograms so far", hist->dropped);
+				"Discarded %lu out of %lu histograms so far",
+				hist->dropped, hist->dropped + hist->published);
+#endif
 		}
 
 		dbg_assert (hist->nbins == 0);
 		dbg_assert (hist->size == 0);
 		dbg_assert (hist->cur_nbins == 0);
 		dbg_assert (hist->cur_size == 0);
-		dbg_assert (hist->discard == 0);
+		dbg_assert ( ! hist->discard );
 
 		/* Inspect header */
 		hist->nbins = mca_num_allbins (pkt);
 		hist->size  = mca_size (pkt);
 
 		/* TO DO: move to generic packet checks */
+#if 0 /* until 'size' field calculation bug is fixed */
 #ifdef FULL_DBG
 		if (hist->size != hist->nbins * BIN_LEN + MCA_HDR_LEN)
 		{
 			s_msgf (0, LOG_WARNING, self->id,
 				"Size field (%d B) does not match "
-				"number of bins (%d)", hist->size, hist->nbins);
+				"number of bins (%d)",
+				hist->size, hist->nbins);
 			hist->discard = 1;
 			return 0;
 		}
+#endif
 #endif
 	}
 	dbg_assert ( ! hist->discard );
@@ -1402,11 +1576,14 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 
 	if (hist->cur_nbins == hist->nbins) 
 	{
+#if 0 /* FIX, see above */
 		dbg_assert (hist->cur_size == hist->size);
+#endif
 
 		/* Send the histogram */
 		/* TO DO: check rc */
 #ifdef FULL_DBG
+		hist->published++;
 		int rc = zmq_send (zsock_resolve (self->frontend),
 			hist->buf, hist->cur_size, 0);
 		if (rc == -1)
@@ -1436,7 +1613,9 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen, task_t* self)
 		return 0;
 	}
 
+#if 0 /* FIX */
 	dbg_assert (hist->cur_size < hist->size);
+#endif
 	return 0;
 }
 

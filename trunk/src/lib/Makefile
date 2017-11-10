@@ -8,7 +8,7 @@ all: $(so)
 
 install: $(so)
 	# this is not one of make's implicit rules, good
-	if [[ ! -d $(LIB_ROOT) ]] ; then mkdir $(LIB_ROOT) ; fi
+	if [ ! -d $(LIB_ROOT) ] ; then mkdir $(LIB_ROOT) ; fi
 	mv $(so) $(LIB_ROOT)
 
 clean:
