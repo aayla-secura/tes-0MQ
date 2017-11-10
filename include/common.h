@@ -24,6 +24,8 @@
 
 #include "daemon.h"
 
+#define NUM_RINGS 4 /* number of rx rings in interface */
+
 #define FULL_DBG
 #ifdef FULL_DBG
 #  define dbg_assert(...) assert (__VA_ARGS__)

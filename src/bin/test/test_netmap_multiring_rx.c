@@ -29,6 +29,10 @@
 #define NMIF "vale0:vi1"
 #endif
 
+#ifndef QUIET
+#define VERBOSE
+#endif
+
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
@@ -186,12 +190,19 @@ rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 	gobj.pkts.rcvd++;
 	gobj.pkts.last_id = cur_frame;
 	gobj.pkts.inslot[gobj.nmd->cur_rx_ring]++;
-#if 0
-	if (gobj.pkts.missed)
-	{
-		INFO ("Missed packets");
-		raise (SIGTERM);
-	}
+	assert (gobj.nmd->cur_rx_ring <= gobj.nmd->last_rx_ring);
+#ifdef VERBOSE
+	INFO ("Packet in ring %hu, pending in ring %u\n",
+			gobj.nmd->cur_rx_ring,
+			nm_ring_space (NETMAP_RXRING (
+					gobj.nmd->nifp,
+					gobj.nmd->cur_rx_ring)));
+#endif
+#define LIMIT_RATE
+#ifdef LIMIT_RATE
+	/* limit rate */
+	if (gobj.pkts.rcvd % 100 == 0)
+		poll (NULL, 0, 1);
 #endif
 
 	if (gobj.pkts.rcvd + 1 == 0)
@@ -199,6 +210,41 @@ rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 		INFO ("Reached max received packets");
 		raise (SIGTERM);
 	}
+}
+
+static int nm_dispatch_fixed (struct nm_desc *d,
+		int cnt, nm_cb_t cb, u_char *arg)
+{
+	int n = d->last_rx_ring - d->first_rx_ring + 1;
+	int c, got = 0, ri = d->cur_rx_ring;
+
+	if (cnt == 0)
+		cnt = -1;
+	/* cnt == -1 means infinite, but rings have a finite amount
+	 * of buffers and the int is large enough that we never wrap,
+	 * so we can omit checking for -1
+	 */
+	for (c=0; c < n && cnt != got; c++, ri++) {
+		/* compute current ring to use */
+		struct netmap_ring *ring;
+
+		if (ri > d->last_rx_ring)
+			ri = d->first_rx_ring;
+		d->cur_rx_ring = ri;
+		ring = NETMAP_RXRING(d->nifp, ri);
+		for ( ; !nm_ring_empty(ring) && cnt != got; got++) {
+			u_int i = ring->cur;
+			u_int idx = ring->slot[i].buf_idx;
+			u_char *buf = (u_char *)NETMAP_BUF(ring, idx);
+
+			// __builtin_prefetch(buf);
+			d->hdr.len = d->hdr.caplen = ring->slot[i].len;
+			d->hdr.ts = ring->ts;
+			cb(arg, &d->hdr, buf);
+			ring->head = ring->cur = nm_ring_next(ring, i);
+		}
+	}
+	return got;
 }
 
 int
@@ -271,7 +317,10 @@ main (void)
 		ioctl (gobj.nmd->fd, NIOCRXSYNC);
 #endif
 
-		nm_dispatch (gobj.nmd, -1, rx_handler, NULL);
+#ifdef VERBOSE
+		INFO ("Dispatching\n");
+#endif
+		nm_dispatch_fixed (gobj.nmd, -1, rx_handler, NULL);
 	}
 
 	errno = 0;

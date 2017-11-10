@@ -33,7 +33,8 @@
  *   cursor never ends up between head and tail since netmap poll will block
  *   forever.
  * - Provide a way to build an ifreq object.
- * - A read-only dispatcher (takes a pointer to head and cursor).
+ * - Subtract netmap's first ring ID from all ring IDs returned, so user is
+ *   ensured IDs start at 0.
  */
 
 #include "net/fpgaif_manager.h"
@@ -142,6 +143,7 @@ if_next_txring (ifdesc* ifd)
 ifring*
 if_goto_txring (ifdesc* ifd, uint16_t idx)
 {
+	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx > ifd->n.last_tx_ring))
 		return NULL;
 	ifd->n.cur_tx_ring = idx;
@@ -176,6 +178,7 @@ if_next_rxring (ifdesc* ifd)
 ifring*
 if_goto_rxring (ifdesc* ifd, uint16_t idx)
 {
+	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx > ifd->n.last_rx_ring))
 		return NULL;
 	ifd->n.cur_rx_ring = idx;
@@ -312,6 +315,7 @@ if_cur_txring (ifdesc* ifd)
 ifring*
 if_txring (ifdesc* ifd, uint16_t idx)
 {
+	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx < ifd->n.first_tx_ring
 		|| idx > ifd->n.last_tx_ring))
 		return NULL;
@@ -320,7 +324,8 @@ if_txring (ifdesc* ifd, uint16_t idx)
 ifring*
 if_preceding_txring (ifdesc* ifd, uint16_t idx)
 {
-	if (unlikely (idx - 1 < ifd->n.first_tx_ring ||
+	idx += ifd->n.first_tx_ring;
+	if (unlikely (idx <= ifd->n.first_tx_ring ||
 		idx - 1 > ifd->n.last_tx_ring))
 		return NULL;
 	return s_txring (ifd, idx - 1);
@@ -328,8 +333,9 @@ if_preceding_txring (ifdesc* ifd, uint16_t idx)
 ifring*
 if_following_txring (ifdesc* ifd, uint16_t idx)
 {
+	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx + 1 < ifd->n.first_tx_ring ||
-		idx + 1 > ifd->n.last_tx_ring))
+		idx >= ifd->n.last_tx_ring))
 		return NULL;
 	return s_txring (ifd, idx + 1);
 }
@@ -351,6 +357,7 @@ if_cur_rxring (ifdesc* ifd)
 ifring*
 if_rxring (ifdesc* ifd, uint16_t idx)
 {
+	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx < ifd->n.first_rx_ring
 		|| idx > ifd->n.last_rx_ring))
 		return NULL;
@@ -359,7 +366,8 @@ if_rxring (ifdesc* ifd, uint16_t idx)
 ifring*
 if_preceding_rxring (ifdesc* ifd, uint16_t idx)
 {
-	if (unlikely (idx - 1 < ifd->n.first_rx_ring ||
+	idx += ifd->n.first_rx_ring;
+	if (unlikely (idx <= ifd->n.first_rx_ring ||
 		idx - 1 > ifd->n.last_rx_ring))
 		return NULL;
 	return s_rxring (ifd, idx - 1);
@@ -367,8 +375,9 @@ if_preceding_rxring (ifdesc* ifd, uint16_t idx)
 ifring*
 if_following_rxring (ifdesc* ifd, uint16_t idx)
 {
+	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx + 1 < ifd->n.first_rx_ring ||
-		idx + 1 > ifd->n.last_rx_ring))
+		idx >= ifd->n.last_rx_ring))
 		return NULL;
 	return s_rxring (ifd, idx + 1);
 }
@@ -376,6 +385,28 @@ ifring*
 if_last_rxring (ifdesc* ifd)
 {
 	return s_rxring (ifd, ifd->n.last_rx_ring);
+}
+
+/* Get the index of the current or last tx or rx ring. */
+uint16_t
+if_cur_txring_id (ifdesc* ifd)
+{
+	return ifd->n.cur_tx_ring - ifd->n.first_tx_ring;
+}
+uint16_t
+if_last_txring_id (ifdesc* ifd)
+{
+	return ifd->n.last_tx_ring - ifd->n.first_tx_ring;
+}
+uint16_t
+if_cur_rxring_id (ifdesc* ifd)
+{
+	return ifd->n.cur_rx_ring - ifd->n.first_rx_ring;
+}
+uint16_t
+if_last_rxring_id (ifdesc* ifd)
+{
+	return ifd->n.last_rx_ring - ifd->n.first_rx_ring;
 }
 
 /* Get the number of buffers in the ring. */
@@ -464,6 +495,20 @@ uint32_t
 ifring_tail (ifring* ring)
 {
 	return ring->n.tail;
+}
+
+/* Get the current tx or rx ring's current buffer. */
+char*
+if_cur_txbuf (ifdesc* ifd)
+{
+	ifring* ring = s_txring (ifd, ifd->n.cur_tx_ring);
+	return s_buf (ring, ring->n.cur);
+}
+char*
+if_cur_rxbuf (ifdesc* ifd)
+{
+	ifring* ring = s_rxring (ifd, ifd->n.cur_rx_ring);
+	return s_buf (ring, ring->n.cur);
 }
 
 /* Get the head, current, <idx>, preceding <idx>, following <idx> or tail
