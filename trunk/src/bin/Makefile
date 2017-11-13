@@ -7,12 +7,12 @@ all: $(bins)
 
 install: $(bins)
 	# this is not one of make's implicit rules, good
-	if [ ! -d $(BIN_ROOT) ] ; then mkdir $(BIN_ROOT) ; fi
-	mv $(bins) $(BIN_ROOT)
+	if [ ! -d $(BIN_ROOT) ] ; then mkdir -p $(BIN_ROOT) ; fi
+	if [ $? -eq 0 ] ; then cp $(bins) $(BIN_ROOT) ; fi
 
 clean:
 	# this is not one of make's implicit rules, good
-	rm -rf *.o $(bins)
+	rm -f *.o $(bins)
 
 %.o: %.c
 	# this is not one of make's implicit rules, good

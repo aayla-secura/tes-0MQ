@@ -8,12 +8,12 @@ all: $(so)
 
 install: $(so)
 	# this is not one of make's implicit rules, good
-	if [ ! -d $(LIB_ROOT) ] ; then mkdir $(LIB_ROOT) ; fi
-	mv $(so) $(LIB_ROOT)
+	if [ ! -d $(LIB_ROOT) ] ; then mkdir -p $(LIB_ROOT) ; fi
+	if [ $? -eq 0 ] ; then cp $(so) $(LIB_ROOT) ; fi
 
 clean:
 	# this is not one of make's implicit rules, good
-	rm -rf *.o $(so)
+	rm -f *.o $(so)
 
 %.o: %.c
 	# this is not one of make's implicit rules, good

@@ -5,7 +5,7 @@ all: $(test_bins)
 
 clean:
 	# this is not one of make's implicit rules, good
-	rm -rf *.o $(test_bins)
+	rm -f *.o $(test_bins)
 
 %.o: %.c
 	# this is not one of make's implicit rules, good
