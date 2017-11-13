@@ -71,8 +71,9 @@
  * until it is done.
  *
  * —————————————————————————————— PUB INTERFACE ———————————————————————————————
- * Sends ZMQ multi-frame messages, each message contains one full histogram.
- * You can receive these with zmq_recv for example.
+ * Sends ZMQ single-frame messages (they are long, so will be fragmented on the
+ * wire), each message contains one full histogram. You can receive these with
+ * zmq_recv for example.
  *
  * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
  * –––––––––––––––––––––––––––––––– DEV NOTES –––––––––––––––––––––––––––––––––
@@ -340,7 +341,11 @@ static void s_task_save_close (struct s_task_save_data_t* sjob);
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 
-#define THIST_MAXSIZE 65528 // highest 16-bit number that is a multiple of 8 bytes
+#if 0  /* FIX */
+#define THIST_MAXSIZE 65528U // highest 16-bit number that is a multiple of 8 bytes
+#else
+#define THIST_MAXSIZE 65576U // highest 16-bit number that is a multiple of 8 bytes
+#endif
 
 /*
  * Data for currently built histogram.
@@ -354,7 +359,11 @@ struct s_task_hist_data_t
 	uint16_t      nbins;     // total number of bins in histogram
 	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_nbins; // number of received bins so far
+#if 0 /* FIX */
 	uint16_t      cur_size;  // number of received bytes so far
+#else
+	uint32_t      cur_size;  // number of received bytes so far
+#endif
 	bool          discard;   // discard all frames until the next header
 	unsigned char buf[THIST_MAXSIZE];
 };
@@ -1036,7 +1045,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			s_msgf (errno, LOG_ERR, self->id,
 				"Could not open file %s", sjob->filename);
 		}
-		s_msg (0, LOG_INFO, self->id, "Not writing to file");
+		s_msg (0, LOG_INFO, self->id, "Not writing to/reading from file");
 		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
 		s_task_save_close (sjob);
 		return 0;
@@ -1657,6 +1666,9 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 		/* TO DO: check rc */
 #ifdef FULL_DBG
 		hist->published++;
+		// s_msgf (0, LOG_DEBUG, self->id,
+		//         "Publishing an %u-byte long histogram",
+		//         hist->cur_size);
 		int rc = zmq_send (zsock_resolve (self->frontend),
 			hist->buf, hist->cur_size, 0);
 		if (rc == -1)

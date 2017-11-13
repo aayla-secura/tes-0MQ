@@ -10,7 +10,11 @@
 
 #define REQ_PIC        "s81"
 #define REP_PIC      "18888"
+#if 0 /* FIX */
 #define MAX_HISTSIZE 65528
+#else
+#define MAX_HISTSIZE 65576
+#endif
 
 int interrupted;
 
