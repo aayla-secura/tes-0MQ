@@ -200,6 +200,8 @@
  *   than exiting and waiting for a WAKEUP.
  * - Set umask for the save-to-file task.
  * - Check filename for non-printable and non-ASCII characters.
+ * - Why does writing to file fail with "unhandled syscall" when running under
+ *   valgrind? A: https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  */
 
 #include "fpgatasks.h"
@@ -246,7 +248,8 @@ struct _task_t
 	struct
 	{
 		uint64_t wakeups;
-		uint64_t wakeups_false;
+		uint64_t wakeups_inactive; /* woken up when inactive */
+		uint64_t wakeups_false; /* woken up when no new packets */
 		uint64_t rings_dispatched;
 		struct
 		{
@@ -608,9 +611,18 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return -1;
 	}
 	dbg_assert (sig == SIG_WAKEUP);
-	dbg_assert (self->active);
 	dbg_assert ( ! self->busy );
 
+	/* FIX: We should never have received a WAKEUP if we are not active,
+	 * but I saw this once after encountering write errors while running
+	 * under valgrind. */
+	if ( ! self->active )
+	{
+#ifdef FULL_DBG
+		self->dbg_stats.wakeups_inactive++;
+#endif
+		return 0;
+	}
 #ifdef FULL_DBG
 	self->dbg_stats.wakeups++;
 #endif
@@ -830,9 +842,11 @@ cleanup:
 	s_msg (0, LOG_DEBUG, self->id, "Done");
 #ifdef FULL_DBG
 	s_msgf (0, LOG_DEBUG, self->id,
-		"Woken up %lu times, %lu in vain, dispatched "
+		"Woken up %lu times, %lu when not active, "
+		"%lu when no new packets, dispatched "
 		"%lu rings, %lu packets received, %lu missed",
 		self->dbg_stats.wakeups,
+		self->dbg_stats.wakeups_inactive,
 		self->dbg_stats.wakeups_false,
 		self->dbg_stats.rings_dispatched,
 		self->dbg_stats.pkts.rcvd,
@@ -1705,6 +1719,8 @@ s_task_save_canonicalize_path (const char* filename, int checkonly, int task_id)
 		dbg_assert (len == strlen (buf));
 
 		errno = 0;
+		/* FIX: check that realpath is not outside of TSAVE_ROOT before
+		 * attempting to create. */
 		int rc = mkdir (buf, 0777);
 		if (rc && errno != EEXIST)
 			return NULL; /* don't handle other errors */
