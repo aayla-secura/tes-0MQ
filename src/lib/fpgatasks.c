@@ -32,7 +32,9 @@
  * 
  * Format for valid save requests is:
  *   Frame 1 (char*):
- *       Filename
+ *       Filename. It is relative to a hardcoded root, leading slashes are
+ *       ignored. Trailing slashes are not allowed. Missing directories are
+ *       created.
  *   Frame 2 (uint64_t):
  *       0: client requests status of the file (reply will be as described
  *            below) or
@@ -196,6 +198,8 @@
  *   packets).
  * - Check if repeating the loop over all rings until no more packets is better
  *   than exiting and waiting for a WAKEUP.
+ * - Set umask for the save-to-file task.
+ * - Check filename for non-printable and non-ASCII characters.
  */
 
 #include "fpgatasks.h"
@@ -279,6 +283,16 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define REQ_PIC      "s81"
 #define REP_PIC    "18888"
 
+#ifndef PATH_MAX
+#  ifdef MAXPATHLEN
+#    define PATH_MAX MAXPATHLEN
+#  else
+#    define PATH_MAX 4096
+#  endif
+#endif
+
+#define TSAVE_ROOT "/media/" // must have a trailing slash
+#define TSAVE_ONLYFILES      // for now we don't generate filenames
 #define TSAVE_SOFFSET  40 // beginning of file reserved for statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
@@ -331,13 +345,15 @@ static s_pkt_fn        s_task_save_pkt_hn;
 static s_data_fn       s_task_save_init;
 static s_data_fn       s_task_save_fin;
 
-static int  s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
-static int  s_task_save_queue (struct s_task_save_data_t* sjob, bool force);
-static int  s_task_save_read  (struct s_task_save_data_t* sjob);
-static int  s_task_save_write (struct s_task_save_data_t* sjob);
-static int  s_task_save_send  (struct s_task_save_data_t* sjob,
+static int   s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
+static int   s_task_save_queue (struct s_task_save_data_t* sjob, bool force);
+static int   s_task_save_read  (struct s_task_save_data_t* sjob);
+static int   s_task_save_write (struct s_task_save_data_t* sjob);
+static int   s_task_save_send  (struct s_task_save_data_t* sjob,
 	zsock_t* frontend);
-static void s_task_save_close (struct s_task_save_data_t* sjob);
+static void  s_task_save_close (struct s_task_save_data_t* sjob);
+static char* s_task_save_canonicalize_path (const char* filename,
+	int checkonly, int task_id);
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 
@@ -417,7 +433,8 @@ tasks_start (ifdesc* ifd, zloop_t* c_loop)
 		rc = s_task_start (ifd, &tasks[t]);
 		if (rc)
 		{
-			s_msg (errno, LOG_ERR, 0, "Could not start tasks");
+			s_msg (errno, LOG_ERR, 0,
+				"Could not start tasks");
 			return -1;
 		}
 	}
@@ -604,7 +621,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	 * the task's head packet is closest in sequence to the last seen frame
 	 * sequence.
 	 */
-	/* FIX: check all rings */
+	/* TO DO: check all rings */
 	uint16_t missed = ~0;  /* will hold minimum jump in frame seq,
 			        * initialize to UINT16_MAX */
 	int next_ring_id = -1; /* next to process */
@@ -627,7 +644,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 	/*
 	 * We should never have received a WAKEUP if there are no new
-	 * packets, but sometimes we do.
+	 * packets, but sometimes we do, why?
 	 */
 	if (next_ring_id < 0)
 	{
@@ -644,7 +661,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		self->active = 0;
 		return -1;
 	}
-	/* FIX: check the rest of the rings, depending on rc */
+	/* TO DO: check the rest of the rings, depending on rc */
 
 	self->busy = 0;
 	return 0;
@@ -682,7 +699,8 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 
 	if (sig == SIG_DIED)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Task thread encountered an error");
+		s_msg (0, LOG_DEBUG, 0,
+			"Task thread encountered an error");
 		return -1;
 	}
 	assert (0); /* we only deal with SIG_DIED  */
@@ -866,7 +884,8 @@ s_task_stop (task_t* self)
 	dbg_assert (self != NULL);
 	if (self->shim == NULL)
 	{
-		s_msg (0, LOG_DEBUG, self->id, "Task had already exited");
+		s_msg (0, LOG_DEBUG, self->id,
+			"Task had already exited");
 		return;
 	}
 
@@ -951,7 +970,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		self->heads[ring_id] = ifring_following (
 				rxring, self->heads[ring_id]);
 
-		/* FIX return codes */
+		/* TO DO: return codes */
 		if (rc)
 			return 0; /* pkt_handler doesn't want more */
 
@@ -985,22 +1004,57 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		(struct s_task_save_data_t*) self->data;
 	uint8_t job_mode;
 
-	int rc = zsock_recv (reader, REQ_PIC, &sjob->filename,
+	char* filename;
+	int rc = zsock_recv (reader, REQ_PIC, &filename,
 		&sjob->max_ticks, &job_mode);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or a null
 	   * frame (z) but message received did not match this signature; this
 	   * is irrelevant in this case */
-		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		s_msg (0, LOG_DEBUG, self->id,
+			"Receive interrupted");
 		self->error = 1;
 		return -1;
 	}
-	if (sjob->filename == NULL || job_mode > 1)
+
+	if (filename == NULL || job_mode > 1)
 	{
-		s_msg (0, LOG_INFO, self->id, "Received a malformed request");
+		s_msg (0, LOG_INFO, self->id,
+			"Received a malformed request");
 		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
 		return 0;
 	}
+
+	int checkonly = (sjob->max_ticks == 0);
+	if (checkonly)
+	{
+		s_msgf (0, LOG_INFO, self->id,
+			"Received request for status of '%s'",
+			filename);
+	}
+	else
+	{
+		s_msgf (0, LOG_INFO, self->id,
+			"Received request to write %lu ticks to '%s'",
+			sjob->max_ticks, filename);
+	}
+
+	/* Check if filename is allowed and get the realpath. */
+	sjob->filename = s_task_save_canonicalize_path (
+			filename, checkonly, self->id);
+	if (sjob->filename == NULL)
+	{
+		if ( ! checkonly )
+		{
+			s_msg (errno, LOG_INFO, self->id,
+				"Filename is not valid");
+		}
+		zstr_free (&filename); /* nullifies the pointer */
+		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		return 0;
+	}
+	dbg_assert (sjob->filename != NULL);
+	zstr_free (&filename); /* nullifies the pointer */
 
 	mode_t fmode;
 	int exp_errno = 0;
@@ -1018,17 +1072,13 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	 *           - if successful, enable save
 	 *           - if failed, send reply (this shouldn't happen)
 	 */
-	if (sjob->max_ticks == 0)
+	if (checkonly)
 	{ /* status */
-		s_msg (0, LOG_INFO, self->id, "Received request for status");
 		fmode = O_RDONLY;
 		exp_errno = ENOENT;
 	}
 	else
 	{
-		s_msgf (0, LOG_INFO, self->id,
-			"Received request to write %lu ticks",
-			sjob->max_ticks);
 		fmode = O_RDWR | O_CREAT;
 		if (job_mode == 0)
 		{ /* do not overwrite */
@@ -1043,17 +1093,21 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		if (errno != exp_errno)
 		{
 			s_msgf (errno, LOG_ERR, self->id,
-				"Could not open file %s", sjob->filename);
+				"Could not open file %s",
+				sjob->filename);
 		}
-		s_msg (0, LOG_INFO, self->id, "Not writing to/reading from file");
+		s_msgf (0, LOG_INFO, self->id,
+			"Not %s file", (fmode & O_RDWR ) ?
+				"writing to" : "reading from");
 		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
 		s_task_save_close (sjob);
 		return 0;
 	}
 	s_msgf (0, LOG_INFO, self->id, "Opened file %s for %s",
-		sjob->filename, (fmode & O_RDWR ) ? "writing" : "reading" );
+		sjob->filename,
+		(fmode & O_RDWR ) ? "writing" : "reading");
 
-	if (sjob->max_ticks == 0)
+	if (checkonly)
 	{ /* just read in stats and send reply */
 		s_task_save_read  (sjob);
 		s_task_save_send  (sjob, self->frontend);
@@ -1175,7 +1229,8 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	if (jobrc == -1)
 	{
 		/* TO DO: how to handle errors */
-		s_msg (errno, LOG_ERR, self->id, "Could not write to file");
+		s_msg (errno, LOG_ERR, self->id,
+			"Could not write to file");
 		self->active = 0;
 	}
 	else if (jobrc == -2)
@@ -1234,6 +1289,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 static int
 s_task_save_init (task_t* self)
 {
+	dbg_assert (*(TSAVE_ROOT + strlen (TSAVE_ROOT) - 1) == '/');
 	dbg_assert (sizeof (struct s_task_save_stats_t) == TSAVE_SOFFSET);
 	dbg_assert (self != NULL);
 
@@ -1277,7 +1333,6 @@ s_task_save_fin (task_t* self)
 	if (sjob->bufzone.base != NULL)
 	{
 		munmap (sjob->bufzone.base, TSAVE_BUFSIZE);
-		/* free (sjob->bufzone.base); */
 		sjob->bufzone.base = NULL;
 	}
 
@@ -1531,7 +1586,7 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 		sjob->aios.aio_fildes = -1;
 	}
 
-	zstr_free (&sjob->filename); /* nullifies the pointer */
+	sjob->filename = NULL; /* points to a static string */
 	sjob->max_ticks = 0;
 #ifdef FULL_DBG
 	sjob->prev_enqueued = 0;
@@ -1546,6 +1601,147 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	sjob->st.frames = 0;
 	sjob->st.frames_lost = 0;
 	sjob->st.errors = 0;
+}
+
+/*
+ * Prepends TSAVE_ROOT to filename and canonicalizes the path via realpath.
+ * If checkonly is false, creates any missing parent directories.
+ * On success returns a pointer to a statically allocated string, caller
+ * must not free it.
+ * Returns NULL on error (including if checkonly is true and the filename does
+ * not exist).
+ * If NULL is returned because the filename is not allowed by us (i.e. outside
+ * of TSAVE_ROOT or ends with a slash) errno should be 0.
+ */
+static char*
+s_task_save_canonicalize_path (const char* filename, int checkonly, int task_id)
+{
+	dbg_assert (filename != NULL);
+	errno = 0;
+	size_t len = strlen (filename);
+	if (len == 0)
+	{
+		s_msg (0, LOG_DEBUG, task_id,
+			"Filename is empty");
+		return NULL;
+	}
+
+#ifdef TSAVE_ONLYFILES
+	if (filename[len - 1] == '/')
+	{
+		s_msg (0, LOG_DEBUG, task_id,
+			"Filename ends with /");
+		return NULL;
+	}
+#endif
+
+	/* Only one thread should use this, so static storage is fine. */
+	static char finalpath[PATH_MAX];
+
+	char buf[PATH_MAX];
+	memset (buf, 0, PATH_MAX);
+	snprintf (buf, PATH_MAX, "%s%s", TSAVE_ROOT, filename);
+
+	/* Check if the file exists first. */
+	errno = 0;
+	char* rs = realpath (buf, finalpath);
+	if (rs)
+	{
+		errno = 0;
+		dbg_assert (rs == finalpath);
+		if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
+		{
+			s_msgf (0, LOG_DEBUG, task_id,
+				"Resolved to %s, outside of root",
+				finalpath);
+			return NULL; /* outside of root */
+		}
+		return finalpath;
+	}
+	if (checkonly)
+	{
+		s_msg (0, LOG_DEBUG, task_id,
+			"File doesn't exist");
+		return NULL;
+	}
+
+	/*
+	 * We proceed only if some of the directories are missing, i.e. errno
+	 * is ENOENT.
+	 * errno is ENOTDIR only when a component of the parent path exists but
+	 * is not a directory. If filename ends with a / the part before the
+	 * last slash is also considered a directory, so will return ENOTDIR if
+	 * it is an existing file, but ENOENT if it doesn't exist.
+	 */
+	if (errno != ENOENT)
+		return NULL;
+
+	/* Start from the top-most component (after TSAVE_ROOT) and create
+	 * directories as needed. */
+	memset (buf, 0, PATH_MAX);
+	strcpy (buf, TSAVE_ROOT);
+
+	const char* cur_seg = filename;
+	const char* next_seg = NULL;
+	len = strlen (buf);
+	while ( (next_seg = strchr (cur_seg, '/')) != NULL)
+	{
+		if (cur_seg[0] == '/')
+		{ /* multiple consecutive slashes */
+			cur_seg++;
+			continue;
+		}
+
+		/* copy leading slash of next_seg at the end */
+		dbg_assert (len < PATH_MAX);
+		if (len + next_seg - cur_seg + 1 >= PATH_MAX)
+		{
+			s_msg (0, LOG_DEBUG, task_id,
+				"Filename too long");
+			return NULL;
+		}
+		strncpy (buf + len, cur_seg, next_seg - cur_seg + 1);
+		len += next_seg - cur_seg + 1;
+		dbg_assert (len == strlen (buf));
+
+		errno = 0;
+		int rc = mkdir (buf, 0777);
+		if (rc && errno != EEXIST)
+			return NULL; /* don't handle other errors */
+
+		cur_seg = next_seg + 1; /* skip over leading slash */
+	}
+
+	/* Canonicalize the directory part */
+	rs = realpath (buf, finalpath);
+	dbg_assert (rs != NULL); /* this shouldn't happen */
+	dbg_assert (rs == finalpath);
+
+	/* Add the base filename (realpath removes the trailing slash) */
+#ifdef TSAVE_ONLYFILES
+	dbg_assert (strlen (cur_seg) > 0);
+#else
+	/* TO DO: generate a random filename is none is given */
+#endif
+	len = strlen (finalpath);
+	if (strlen (cur_seg) + len >= PATH_MAX)
+	{
+		s_msg (0, LOG_DEBUG, task_id,
+				"Filename too long");
+		return NULL;
+	}
+
+	snprintf (finalpath + len, PATH_MAX - len, "/%s", cur_seg);
+	errno = 0;
+	if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
+	{
+		s_msgf (0, LOG_DEBUG, task_id,
+				"Resolved to %s, outside of root",
+				finalpath);
+		return NULL; /* outside of root */
+	}
+
+	return finalpath;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1621,7 +1817,7 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 		hist->nbins = mca_num_allbins (pkt);
 		hist->size  = mca_size (pkt);
 
-		/* TO DO: move to generic packet checks */
+		/* TO DO: incorporate this into generic packet check */
 #if 0 /* until 'size' field calculation bug is fixed */
 #ifdef FULL_DBG
 		if (hist->size != hist->nbins * BIN_LEN + MCA_HDR_LEN)
@@ -1663,7 +1859,6 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 #endif
 
 		/* Send the histogram */
-		/* TO DO: check rc */
 #ifdef FULL_DBG
 		hist->published++;
 		// s_msgf (0, LOG_DEBUG, self->id,
