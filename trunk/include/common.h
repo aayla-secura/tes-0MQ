@@ -2,8 +2,9 @@
 #define __COMMON_H__INCLUDED__
 
 #include <sys/types.h>
-// #include <sys/time.h>
+#include <sys/time.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -12,8 +13,9 @@
 #include <syslog.h>
 #include <string.h>
 #include <stdarg.h>
-// #include <signal.h>
-// #include <poll.h>
+#include <limits.h>
+#include <signal.h>
+#include <poll.h>
 // #include <pthread.h>
 
 // #define CZMQ_BUILD_DRAFT_API

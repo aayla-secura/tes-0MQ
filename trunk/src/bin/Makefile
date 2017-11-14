@@ -8,7 +8,7 @@ all: $(bins)
 install: $(bins)
 	# this is not one of make's implicit rules, good
 	if [ ! -d $(BIN_ROOT) ] ; then mkdir -p $(BIN_ROOT) ; fi
-	if [ $? -eq 0 ] ; then cp $(bins) $(BIN_ROOT) ; fi
+	cp $(bins) $(BIN_ROOT)
 
 clean:
 	# this is not one of make's implicit rules, good
