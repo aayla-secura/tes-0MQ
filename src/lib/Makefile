@@ -1,5 +1,5 @@
 PROJ_ROOT := ../..
-include $(PROJ_ROOT)/Makefile
+include $(PROJ_ROOT)/Makefile.inc
 
 CFLAGS += -fPIC
 LDFLAGS += -L.
