@@ -1,5 +1,5 @@
 .DEFAULT: all
-.PHONY: all clean install
+.PHONY: all clean fullclean install
 
 # PROJ_ROOT is set by Makefiles that include this one
 LIB_ROOT := $(PROJ_ROOT)/lib

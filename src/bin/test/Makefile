@@ -4,6 +4,9 @@ include $(PROJ_ROOT)/Makefile.inc
 all: $(test_bins)
 
 clean:
+	rm -f *.o
+
+fullclean:
 	rm -f *.o $(test_bins)
 
 %.o: %.c
