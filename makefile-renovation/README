@@ -36,7 +36,7 @@ To modify CFLAGS and other global parameters passed to gcc (or the compiler
 executable itself), see Makefile in the trunk directory, which is sourced by
 the other Makefiles.
 
-bin/server_main is the server program, bin/client is the client which includes
+bin/server is the server program, bin/client is the client which includes
 a help (usage) message when run with no args.
 
 See comments at the beginning of src/lib/fpgatasks.c for the API used in the
