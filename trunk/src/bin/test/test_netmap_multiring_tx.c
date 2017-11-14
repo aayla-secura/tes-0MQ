@@ -274,7 +274,7 @@ main (void)
 #endif /* RAND_RIDX */
 #endif /* ADV_RIDX */
 		}
-/* #define LIMIT_RATE */
+#define LIMIT_RATE
 #ifdef LIMIT_RATE
 		/* limit rate */
 		if (gobj.pkts.sent % 500 == 0)

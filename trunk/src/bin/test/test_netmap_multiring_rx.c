@@ -181,6 +181,7 @@ static void
 rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 {
 	fpga_pkt* pkt = (fpga_pkt*)buf;
+	uint16_t ri = gobj.nmd->cur_rx_ring;
 	uint16_t cur_frame = pkt->fpga_hdr.frame_seq;
 	if (gobj.pkts.rcvd > 0)
 	{
@@ -189,7 +190,7 @@ rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 	}
 	gobj.pkts.rcvd++;
 	gobj.pkts.last_id = cur_frame;
-	gobj.pkts.inslot[gobj.nmd->cur_rx_ring]++;
+	gobj.pkts.inslot[ri]++;
 	assert (gobj.nmd->cur_rx_ring <= gobj.nmd->last_rx_ring);
 #ifdef VERBOSE
 	INFO ("Packet in ring %hu, pending in ring %u\n",

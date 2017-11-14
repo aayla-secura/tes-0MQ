@@ -306,7 +306,8 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
  * Statistics sent as a reply and saved to the file. 
  */
 struct s_task_save_stats_t
-{	uint64_t ticks;
+{
+	uint64_t ticks;
 	uint64_t size;           // number of written bytes 
 	uint64_t frames;         // total frames saved
 	uint64_t frames_lost;    // total frames lost (includes dropped)
