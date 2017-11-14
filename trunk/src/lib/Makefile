@@ -6,19 +6,17 @@ LDFLAGS += -L.
 
 all: $(so)
 
-install: $(so)
-	# this is not one of make's implicit rules, good
-	if [ ! -d $(LIB_ROOT) ] ; then mkdir -p $(LIB_ROOT) ; fi
-	cp $(so) $(LIB_ROOT)
+install: $(so:%=install-%)
+
+install-%:
+	install -d $(LIB_ROOT)
+	install $* $(LIB_ROOT)/$*
 
 clean:
-	# this is not one of make's implicit rules, good
 	rm -f *.o $(so)
 
 %.o: %.c
-	# this is not one of make's implicit rules, good
 	$(CC) $(CFLAGS) -c $< -o $@
 
 lib%.so: %.o
-	# this is not one of make's implicit rules, good
 	$(CC) $(CFLAGS) $(LDFLAGS) -shared $< -o $@
