@@ -1,0 +1,45 @@
+Layout of the trunk is:
+- include:      header files
+- src/bin:      source binary files
+- src/bin/test: miscellaneous test files
+- src/lib:      source library files
+- lib:          compiled libraries (created by make install if missing)
+- bin:          compiled binaries  (created by make install if missing)
+
+There is a Makefile in both src/bin and src/lib which is used respectively to
+build and install binaries or libraries. From the trunk do:
+
+ cd src/lib
+ make all
+ make install
+ cd ../bin
+ make all
+ make install
+
+There is also a Makefile in src/bin/test used to compile the test binaries.
+There is no install target for it. Simply do:
+ 
+ cd src/bin/test
+ make <name_of_executable_without_extension>
+
+or
+
+ make all
+
+The Makefiles in src/bin and src/bin/test will link with the necessary
+libraries (and it will make sure include and lib in the trunk are given to
+gcc). Before running a program in bin/ do:
+
+ export LD_LIBRARY_PATH=/path/to/trunk/lib
+
+To modify CFLAGS and other global parameters passed to gcc (or the compiler
+executable itself), see Makefile in the trunk directory, which is sourced by
+the other Makefiles.
+
+bin/server_main is the server program, bin/client is the client which includes
+a help (usage) message when run with no args.
+
+See comments at the beginning of src/lib/fpgatasks.c for the API used in the
+client progarm.
+
+Only tested on Linux >4.8.4 and FreeBSD 11.0
