@@ -22,6 +22,10 @@ There is no install target for it. Simply do:
  cd src/bin/test
  make <name_of_executable_without_extension>
 
+or
+
+ make all
+
 The Makefiles in src/bin and src/bin/test will link with the necessary
 libraries (and it will make sure include and lib in the trunk are given to
 gcc). Before running a program in bin/ do:
