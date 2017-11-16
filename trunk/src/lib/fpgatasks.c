@@ -294,7 +294,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #  endif
 #endif
 
-#define TSAVE_ROOT "/media/" // must have a trailing slash
+#define TSAVE_ROOT "/media/data/" // must have a trailing slash
 #define TSAVE_ONLYFILES      // for now we don't generate filenames
 #define TSAVE_SOFFSET  40 // beginning of file reserved for statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
