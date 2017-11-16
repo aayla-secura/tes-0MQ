@@ -68,7 +68,7 @@ struct data_t
 static void usage (const char* self);
 static int  print_stats (zloop_t* loop, int timer_id, void* stats_);
 static int  new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
-static int  coordinator_body (const char* ifname, uint64_t stat_period);
+static int  coordinator_body (const char* ifname, long int stat_period);
 
 /* ------------------------------------------------------------------------- */
 
@@ -210,7 +210,7 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 }
 
 static int
-coordinator_body (const char* ifname, uint64_t stat_period)
+coordinator_body (const char* ifname, long int stat_period)
 {
 	int rc;
 	struct data_t data;
@@ -309,7 +309,7 @@ main (int argc, char **argv)
 					"%s", optarg);
 				break;
 			case 'u':
-				stat_period = strtoul (optarg, &buf, 10);
+				stat_period = strtol (optarg, &buf, 10);
 				if (strlen (buf))
 				{
 					usage (argv[0]);
