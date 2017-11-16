@@ -41,11 +41,27 @@
 #include "net/fpgaif_manager.h"
 #include "common.h"
 #include <net/if.h> /* IFNAMSIZ */
+#include <sys/socket.h>
+#include <net/ethernet.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+
+#ifdef linux
+#  define ifr_index ifr_ifindex
+#  define sockaddr_dl sockaddr_ll
+#  define sdl_family sll_family 
+#  define sdl_index sll_ifindex
+#  define IFNAME "eth0"
+#else
+#  define IFNAME "igb1"
+#endif
+
+#define NEED_PROMISC // put the interface in promiscuous mode
 
 /* Defaults */
 #define UPDATE_INTERVAL 1             // in seconds
-/* #define FPGA_IF "vale0:vi1" */
-#define FPGA_IF "netmap:igb1"
+#define FPGA_IF "netmap:" IFNAME
 
 /*
  * Statistics, only used in foreground mode
@@ -65,15 +81,16 @@ struct data_t
 	ifdesc* ifd;
 };
 
-static void usage (const char* self);
-static int  print_stats (zloop_t* loop, int timer_id, void* stats_);
-static int  new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
-static int  coordinator_body (const char* ifname, long int stat_period);
+static void s_usage (const char* self);
+static int  s_prepare_if (void);
+static int  s_print_stats (zloop_t* loop, int timer_id, void* stats_);
+static int  s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
+static int  s_coordinator_body (const char* ifname, long int stat_period);
 
 /* ------------------------------------------------------------------------- */
 
 static void
-usage (const char* self)
+s_usage (const char* self)
 {
 	fprintf (stderr,
 		"Usage: %s [options]\n\n"
@@ -91,10 +108,111 @@ usage (const char* self)
 }
 
 /*
+ * Bring the interface up and put it in promiscuous mode.
+ */
+static int
+s_prepare_if (void)
+{
+	int rc;
+
+	/* A socket is needed for ioctl. */
+	int sock = socket (AF_INET, SOCK_DGRAM, htons (IPPROTO_IP));
+	if (sock == -1)
+	{
+		s_msg (errno, LOG_ERR, 0,
+			"Could not create a raw socket");
+		return -1;
+	}
+
+	/* Retrieve the index of the interface. */
+	struct ifreq ifr;
+	memset (&ifr, 0, sizeof (ifr));
+	strncpy (ifr.ifr_name, IFNAME, IFNAMSIZ);
+	rc = ioctl (sock, SIOCGIFINDEX, &ifr);
+	if (rc == -1)
+	{
+		s_msg (errno, LOG_ERR, 0,
+			"Could not get the interface's index");
+		return -1;
+	}
+
+	/* Bring the interface up. */
+	rc = ioctl (sock, SIOCGIFFLAGS, &ifr);
+	if (rc == -1)
+	{
+		s_msg (errno, LOG_ERR, 0,
+			"Could not get the interface's state");
+		return -1;
+	}
+	if (! (ifr.ifr_flags & IFF_UP))
+	{
+		ifr.ifr_flags = IFF_UP;
+		rc = ioctl (sock, SIOCSIFFLAGS, &ifr);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Could not bring the interface up");
+			return -1;
+		}
+		/* check */
+		rc = ioctl (sock, SIOCGIFFLAGS, &ifr);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Could not get the interface's state");
+			return -1;
+		}
+		if (! (ifr.ifr_flags & IFF_UP))
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Could not bring the interface up");
+			return -1;
+		}
+	}
+	s_msg (0, LOG_DEBUG, 0, "Interface is up");
+
+#ifdef NEED_PROMISC
+	/* Put the interface in promiscuous mode. */
+	if (! (ifr.ifr_flags & IFF_PROMISC))
+	{
+#ifdef linux
+		ifr.ifr_flags |= IFF_PROMISC;
+#else
+		ifr.ifr_flags &= ~IFF_PROMISC;
+		ifr.ifr_flagshigh |= IFF_PPROMISC >> 16;
+#endif
+		rc = ioctl (sock, SIOCSIFFLAGS, &ifr);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Could not put the interface in promiscuous mode");
+			return -1;
+		}
+		/* check */
+		rc = ioctl (sock, SIOCGIFFLAGS, &ifr);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Could not get the interface's state");
+			return -1;
+		}
+		if (! (ifr.ifr_flags & IFF_PROMISC))
+		{
+			s_msg (errno, LOG_ERR, 0,
+				"Could not put the interface in promiscuous mode");
+			return -1;
+		}
+	}
+	s_msg (0, LOG_DEBUG, 0, "Interface is in promiscuous mode");
+#endif /* NEED_PROMISC */
+
+	return 0;
+}
+/*
  * Print statistics (bandwidth, etc).
  */
 static int
-print_stats (zloop_t* loop, int timer_id, void* stats_)
+s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 {
 	dbg_assert (stats_ != NULL);
 	struct stats_t* stats = (struct stats_t*) stats_;
@@ -141,7 +259,7 @@ print_stats (zloop_t* loop, int timer_id, void* stats_)
  * Called when new packets arrive in the ring.
  */
 static int
-new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
+s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 {
 	dbg_assert (data_ != NULL);
 	struct data_t* data = (struct data_t*) data_;
@@ -159,7 +277,7 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		return -1;
 	}
 
-	/* Save statistics */
+	/* Save statistics. */
 	data->stats.polled++;
 	int skipped = 1;
 	for (int r = 0; r < NUM_RINGS; r++)
@@ -210,13 +328,18 @@ new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 }
 
 static int
-coordinator_body (const char* ifname, long int stat_period)
+s_coordinator_body (const char* ifname, long int stat_period)
 {
 	int rc;
 	struct data_t data;
 	memset (&data, 0, sizeof (data));
 
-	/* Open the interface */
+	/* Bring the interface up and put it in promiscuous mode. */
+	rc = s_prepare_if ();
+	if (rc == -1)
+		return -1;
+
+	/* Open the interface in netmap mode. */
 	data.ifd = if_open (ifname, NULL, 0, 0);
 	if (data.ifd == NULL)
 	{
@@ -226,7 +349,7 @@ coordinator_body (const char* ifname, long int stat_period)
 	}
 	s_msgf (0, LOG_INFO, 0, "Opened interface %s", ifname);
 
-	/* Get the ring, we support only one for now */
+	/* Get the ring, we support only one for now. */
 	dbg_assert (if_rxrings (data.ifd) == NUM_RINGS);
 
 	/* Start the tasks and register the readers. Tasks are initialized as
@@ -239,12 +362,12 @@ coordinator_body (const char* ifname, long int stat_period)
 		goto cleanup;
 	}
 
-	/* Register the FPGA interface as a poller */
+	/* Register the FPGA interface as a poller. */
 	struct zmq_pollitem_t pitem;
 	memset (&pitem, 0, sizeof (pitem));
 	pitem.fd = if_fd (data.ifd);
 	pitem.events = ZMQ_POLLIN;
-	rc = zloop_poller (loop, &pitem, new_pkts_hn, &data);
+	rc = zloop_poller (loop, &pitem, s_new_pkts_hn, &data);
 	if (rc == -1)
 	{
 		s_msg (errno, LOG_ERR, 0,
@@ -254,9 +377,9 @@ coordinator_body (const char* ifname, long int stat_period)
 
 	if (stat_period > 0)
 	{
-		/* Set the timer */
+		/* Set the timer. */
 		rc = zloop_timer (loop, 1000 * stat_period, 0,
-			print_stats, &data.stats);
+			s_print_stats, &data.stats);
 		if (rc == -1)
 		{
 			s_msg (errno, LOG_ERR, 0, "Could not set a timer");
@@ -292,7 +415,7 @@ main (int argc, char **argv)
 	// __fpga_self_test ();
 	int rc;
 
-	/* Process command-line options */
+	/* Process command-line options. */
 	is_daemon = 1;
 	is_verbose = 0;
 	int opt;
@@ -312,7 +435,7 @@ main (int argc, char **argv)
 				stat_period = strtol (optarg, &buf, 10);
 				if (strlen (buf))
 				{
-					usage (argv[0]);
+					s_usage (argv[0]);
 				}
 				break;
 			case 'f':
@@ -323,7 +446,7 @@ main (int argc, char **argv)
 				break;
 			case 'h':
 			case '?':
-				usage (argv[0]);
+				s_usage (argv[0]);
 				break;
 			default:
 				/* we forgot to handle an option */
@@ -341,7 +464,7 @@ main (int argc, char **argv)
 
 	if (is_daemon)
 	{
-		/* Go into background */
+		/* Go into background. */
 		/* TO DO: set a pidfile */
 		rc = daemonize (NULL);
 		if (rc == -1)
@@ -351,10 +474,10 @@ main (int argc, char **argv)
 			exit (EXIT_FAILURE);
 		}
 
-		/* Start syslog */
+		/* Start syslog. */
 		openlog ("FPGA server", 0, LOG_DAEMON);
 	}
 
-	rc = coordinator_body (ifname, stat_period);
+	rc = s_coordinator_body (ifname, stat_period);
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
