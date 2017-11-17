@@ -4,6 +4,7 @@
 PREFIX ?= /usr/local
 LIB_ROOT := $(PREFIX)/lib
 BIN_ROOT := $(PREFIX)/bin
+SBIN_ROOT := $(PREFIX)/sbin
 
 # PROJ_ROOT is set by Makefiles that include this one
 LIB_SRC := $(PROJ_ROOT)/src/lib

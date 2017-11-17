@@ -85,7 +85,7 @@ struct data_t
 };
 
 static void s_usage (const char* self);
-static int  s_prepare_if (const char* nmifname);
+static int  s_prepare_if (const char* ifname_full);
 static int  s_print_stats (zloop_t* loop, int timer_id, void* stats_);
 static int  s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
 static int  s_coordinator_body (const char* ifname, long int stat_period);
@@ -98,6 +98,9 @@ s_usage (const char* self)
 	fprintf (stderr,
 		"Usage: %s [options]\n\n"
 		"Options:\n"
+		"    -p <file>            Write pid to file <file>.\n"
+		"                         Only in daemon mode.\n"
+		"                         Defaults to "PIDFILE"\n"
 		"    -i <if>              Read packets from <if> interface\n"
 		"                         Defaults to "TES_IFNAME"\n"
 		"    -f                   Run in foreground\n"
@@ -114,34 +117,34 @@ s_usage (const char* self)
  * Bring the interface up and put it in promiscuous mode.
  */
 static int
-s_prepare_if (const char* nmifname)
+s_prepare_if (const char* ifname_full)
 {
 	int rc;
 
 	/* Parse the name, extract only the physical interface name. */
 	/* Vale ports don't need to even be up. */
-	if (memcmp (nmifname, "vale", 4) == 0)
+	if (memcmp (ifname_full, "vale", 4) == 0)
 		return 0;
 
 	char ifname[IFNAMSIZ];
 	memset (ifname, 0, IFNAMSIZ);
 
 	/* Skip over optional "netmap:" (or anything else?). */
-	const char* start = strchr (nmifname, ':');
+	const char* start = strchr (ifname_full, ':');
 	if (start == NULL)
-		start = nmifname;
+		start = ifname_full;
 	else
 		start++;
 
 	/* Find the start of any of the special suffixes. */
-	const char* end = nmifname;
+	const char* end = ifname_full;
 	for (; *end != '\0' &&
 		(strchr("+-*^{}/@", *end) == NULL); end++)
 		;
 	if (end <= start)
 	{
 		s_msgf (0, LOG_ERR, 0,
-			"Malformed interface name '%s'", nmifname);
+			"Malformed interface name '%s'", ifname_full);
 		return -1;
 	}
 
@@ -361,7 +364,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 }
 
 static int
-s_coordinator_body (const char* nmifname, long int stat_period)
+s_coordinator_body (const char* ifname_full, long int stat_period)
 {
 	int rc;
 	struct data_t data;
@@ -377,11 +380,11 @@ s_coordinator_body (const char* nmifname, long int stat_period)
 	 * then pass nifp->ni_name to s_prepare_if.
 	 */
 	/* Open the interface. */
-	data.ifd = tes_if_open (nmifname, NULL, 0, 0);
+	data.ifd = tes_if_open (ifname_full, NULL, 0, 0);
 	if (data.ifd == NULL)
 	{
 		s_msgf (errno, LOG_ERR, 0, "Could not open interface %s",
-			nmifname);
+			ifname_full);
 		return -1;
 	}
 	const char* ifname = tes_if_name (data.ifd);
@@ -464,8 +467,8 @@ main (int argc, char **argv)
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
-	char ifname[IFNAMSIZ];
-	memset (ifname, 0, sizeof (ifname));
+	char ifname_full[IFNAMSIZ];
+	memset (ifname_full, 0, sizeof (ifname_full));
 	char pidfile[PATH_MAX];
 	memset (pidfile, 0, sizeof (pidfile));
 	while ( (opt = getopt (argc, argv, "p:i:u:fvh")) != -1 )
@@ -477,7 +480,7 @@ main (int argc, char **argv)
 					"%s", optarg);
 				break;
 			case 'i':
-				snprintf (ifname, sizeof (ifname),
+				snprintf (ifname_full, sizeof (ifname_full),
 					"%s", optarg);
 				break;
 			case 'u':
@@ -502,9 +505,13 @@ main (int argc, char **argv)
 				assert (0);
 		}
 	}
-	if (strlen (ifname) == 0)
+	if (strlen (pidfile) == 0)
 	{
-		sprintf (ifname, TES_IFNAME);
+		sprintf (pidfile, PIDFILE);
+	}
+	if (strlen (ifname_full) == 0)
+	{
+		sprintf (ifname_full, TES_IFNAME);
 	}
 	if (stat_period == -1 && ! is_daemon)
 	{
@@ -524,8 +531,14 @@ main (int argc, char **argv)
 
 		/* Start syslog. */
 		openlog ("TES server", 0, LOG_DAEMON);
+
+		s_msgf (0, LOG_INFO, 0,
+			"Wrote pid to file '%s'", pidfile);
 	}
 
-	rc = s_coordinator_body (ifname, stat_period);
+	rc = s_coordinator_body (ifname_full, stat_period);
+
+	/* Should we remove the pidfile? */
+
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
