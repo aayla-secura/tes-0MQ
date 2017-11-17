@@ -4,9 +4,9 @@
  * the methods declared in the header files). This is to ensure that clients
  * including only fpgaif_reader.h cannot modify the data.
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––– DEV NOTES –––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ----------------------------------------------------------------------------
+ * -------------------------------- DEV NOTES ---------------------------------
+ * ----------------------------------------------------------------------------
  * For now this is just a wrapper around netmap. We can either never our struct
  * types and always cast the pointer to the corresponding netmap structure, or
  * define our structures to include a single member that is the corresponding
@@ -26,9 +26,9 @@
  * we use a given id return the corresponding object associated with the id
  * following it (not touching the cursor).
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ----------------------------------------------------------------------------
+ * ---------------------------------- TO DO -----------------------------------
+ * ----------------------------------------------------------------------------
  * - More rigorous checks when setting head or cursor. In particular, ensure
  *   cursor never ends up between head and tail since netmap poll will block
  *   forever.

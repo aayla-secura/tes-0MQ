@@ -26,6 +26,14 @@
 
 #include "daemon.h"
 
+#ifndef PATH_MAX
+#  ifdef MAXPATHLEN
+#    define PATH_MAX MAXPATHLEN
+#  else
+#    define PATH_MAX 4096
+#  endif
+#endif
+
 #ifndef NUM_RINGS
 #define NUM_RINGS 4 /* number of rx rings in interface */
 #endif

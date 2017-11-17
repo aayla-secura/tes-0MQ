@@ -19,7 +19,7 @@ fullclean:
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
 
 test_daemon: test_daemon.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -ldaemon -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -ldaemon-ng -o $@
 
 %threaded: %threaded.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -lpthread -o $@

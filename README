@@ -3,11 +3,12 @@ Layout of the trunk is:
 - src/bin:      source binary files
 - src/bin/test: miscellaneous test files
 - src/lib:      source library files
-- lib:          compiled libraries (created by make install if missing)
-- bin:          compiled binaries  (created by make install if missing)
 
 There is a Makefile in both src/bin and src/lib which is used respectively to
-build and install binaries or libraries. From the trunk do:
+build and install binaries or libraries. It is a GNU Makefile, so on FreeBSD
+use gmake instead of make.
+
+From the trunk do:
 
  cd src/lib
  make all
@@ -36,10 +37,14 @@ To modify CFLAGS and other global parameters passed to gcc (or the compiler
 executable itself), see Makefile in the trunk directory, which is sourced by
 the other Makefiles.
 
-bin/server_main is the server program, bin/client is the client which includes
-a help (usage) message when run with no args.
+src/bin/tesd.c is the server program, src/bin/tesc.c is the client which
+includes a help (usage) message when run with no args.
 
 See comments at the beginning of src/lib/fpgatasks.c for the API used in the
 client progarm.
 
 Only tested on Linux >4.8.4 and FreeBSD 11.0
+
+TO DO:
+ * Install header files as well.
+ * Rewrite Makefile: need a parent Makefile in the trunk that will install everything.
