@@ -635,7 +635,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			continue;
 		tespkt* pkt = (tespkt*) ifring_buf (
 				rxring, self->heads[r]);
-		uint16_t cur_fseq = frame_seq (pkt);
+		uint16_t cur_fseq = tespkt_fseq (pkt);
 		uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
 		if (fseq_gap <= missed)
 		{
@@ -950,7 +950,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 
 		/* TO DO: check packet */
 		uint16_t len = ifring_len (rxring, self->heads[ring_id]);
-		uint16_t plen = pkt_len (pkt);
+		uint16_t plen = tespkt_flen (pkt);
 		if (plen > len)
 		{ /* drop the frame */
 			s_msgf (0, LOG_DEBUG, self->id,
@@ -961,16 +961,16 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		dbg_assert (plen <= MAX_TES_FRAME_LEN);
 		int rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
 
-		uint16_t cur_fseq = frame_seq (pkt);
+		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
 
 		self->prev_fseq = cur_fseq;
-		if (is_mca (pkt))
-			self->prev_pseq_mca = proto_seq (pkt);
-		else if (is_trace (pkt))
-			self->prev_pseq_tr = proto_seq (pkt);
+		if (tespkt_is_mca (pkt))
+			self->prev_pseq_mca = tespkt_pseq (pkt);
+		else if (tespkt_is_trace (pkt))
+			self->prev_pseq_tr = tespkt_pseq (pkt);
 		else
-			self->prev_pseq_pls = proto_seq (pkt);
+			self->prev_pseq_pls = tespkt_pseq (pkt);
 
 		self->heads[ring_id] = ifring_following (
 				rxring, self->heads[ring_id]);
@@ -1174,7 +1174,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	/* TO DO: save err flags */
 	/* Update statistics. Size is updated in batches as write operations
 	 * finish. */
-	uint16_t cur_fseq = frame_seq (pkt);
+	uint16_t cur_fseq = tespkt_fseq (pkt);
 	if (sjob->st.frames > 0)
 		sjob->st.frames_lost += missed;
 		// sjob->st.frames_lost += (uint16_t)(cur_fseq
@@ -1193,7 +1193,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 #endif
 
 	sjob->st.frames++;
-	if (is_tick (pkt))
+	if (tespkt_is_tick (pkt))
 		sjob->st.ticks++;
 
 	/* Wrap cursor if needed */
@@ -1766,19 +1766,19 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 {
 	dbg_assert (self != NULL);
 
-	if ( ! is_mca (pkt) )
+	if ( ! tespkt_is_mca (pkt) )
 		return 0;
 
 	struct s_task_hist_data_t* hist =
 		(struct s_task_hist_data_t*) self->data;
 
-	if ( ! is_header (pkt) )
+	if ( ! tespkt_is_header (pkt) )
 	{
 		if (hist->discard) 
 			return 0;
 
 		/* Check protocol sequence */
-		uint16_t cur_pseq = proto_seq (pkt);
+		uint16_t cur_pseq = tespkt_pseq (pkt);
 		if ((uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
 		{
 			s_msgf (0, LOG_INFO, self->id,
@@ -1821,8 +1821,8 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		dbg_assert ( ! hist->discard );
 
 		/* Inspect header */
-		hist->nbins = mca_num_allbins (pkt);
-		hist->size  = mca_size (pkt);
+		hist->nbins = tespkt_mca_nbins_tot (pkt);
+		hist->size  = tespkt_mca_size (pkt);
 
 		/* TO DO: incorporate this into generic packet check */
 #if 0 /* until 'size' field calculation bug is fixed */
@@ -1841,7 +1841,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	}
 	dbg_assert ( ! hist->discard );
 
-	hist->cur_nbins += mca_num_bins (pkt);
+	hist->cur_nbins += tespkt_mca_nbins (pkt);
 	if (hist->cur_nbins > hist->nbins)
 	{
 		s_msgf (0, LOG_WARNING, self->id,
@@ -1852,7 +1852,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	}
 
 	/* Copy frame */
-	uint16_t fsize = pkt_len (pkt) - TES_HDR_LEN;
+	uint16_t fsize = tespkt_flen (pkt) - TES_HDR_LEN;
 	dbg_assert (hist->cur_size <= THIST_MAXSIZE - fsize);
 	memcpy (hist->buf + hist->cur_size,
 		(char*)pkt + TES_HDR_LEN, fsize);

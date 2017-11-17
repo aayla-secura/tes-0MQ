@@ -39,93 +39,93 @@
 typedef struct tespkt tespkt;
 
 /* Destination and source MAC addresses */
-static inline char* dst_eth_ntoa (tespkt* pkt);
-static inline char* src_eth_ntoa (tespkt* pkt);
-static inline struct ether_addr* dst_eth_aton (tespkt* pkt);
-static inline struct ether_addr* src_eth_aton (tespkt* pkt);
+static inline char*  tespkt_dst_eth_ntoa (tespkt* pkt);
+static inline char*  tespkt_src_eth_ntoa (tespkt* pkt);
+static inline struct ether_addr* tespkt_dst_eth_aton (tespkt* pkt);
+static inline struct ether_addr* tespkt_src_eth_aton (tespkt* pkt);
 /* Frame length (including ethernet header) */
-static inline uint16_t pkt_len   (tespkt* pkt);
+static inline uint16_t tespkt_flen   (tespkt* pkt);
 /* Frame and protocol sequences */
-static inline uint16_t frame_seq (tespkt* pkt);
-static inline uint16_t proto_seq (tespkt* pkt);
+static inline uint16_t tespkt_fseq (tespkt* pkt);
+static inline uint16_t tespkt_pseq (tespkt* pkt);
 /* True or false if frame is any header frame (protocol sequence == 0) */
-static inline int is_header (tespkt* pkt);
+static inline int tespkt_is_header (tespkt* pkt);
 /* True or false if frame is any MCA or any event frame (the two are
  * complementary) */
-static inline int is_mca   (tespkt* pkt);
-static inline int is_evt   (tespkt* pkt);
+static inline int tespkt_is_mca   (tespkt* pkt);
+static inline int tespkt_is_evt   (tespkt* pkt);
 /* True or false if frame is a tick, peak, area or pulse event */
-static inline int is_tick  (tespkt* pkt);
-static inline int is_peak  (tespkt* pkt);
-static inline int is_area  (tespkt* pkt);
-static inline int is_pulse (tespkt* pkt);
+static inline int tespkt_is_tick  (tespkt* pkt);
+static inline int tespkt_is_peak  (tespkt* pkt);
+static inline int tespkt_is_area  (tespkt* pkt);
+static inline int tespkt_is_pulse (tespkt* pkt);
 /* True or false if frame is any trace event */
-static inline int is_trace (tespkt* pkt);
+static inline int tespkt_is_trace (tespkt* pkt);
 /* True or false if frame is a single trace event */
-static inline int is_trace_sgl  (tespkt* pkt);
+static inline int tespkt_is_trace_sgl  (tespkt* pkt);
 /* True or false if frame is a single, average, dot-product or
  * trace-dot-product trace event */
-static inline int is_trace_avg  (tespkt* pkt);
-static inline int is_trace_dp   (tespkt* pkt);
-static inline int is_trace_dptr (tespkt* pkt);
+static inline int tespkt_is_trace_avg  (tespkt* pkt);
+static inline int tespkt_is_trace_dp   (tespkt* pkt);
+static inline int tespkt_is_trace_dptr (tespkt* pkt);
 /* Event's size (valid for all events) */
-static inline uint16_t evt_size (tespkt* pkt);
+static inline uint16_t tespkt_evt_size (tespkt* pkt);
 /* Size of histogram (valid for MCA header frames) */
-static inline uint16_t mca_size (tespkt* pkt);
+static inline uint16_t tespkt_mca_size (tespkt* pkt);
 /* Number of bins in this frame (valid for all MCA frames) */
-static inline uint16_t mca_num_bins (tespkt* pkt);
+static inline uint16_t tespkt_mca_nbins (tespkt* pkt);
 /* Number of bins in entire histogram (valid for MCA header frames) */
-static inline uint16_t mca_num_allbins (tespkt* pkt);
+static inline uint16_t tespkt_mca_nbins_tot (tespkt* pkt);
 /* Histogram's lowest value, most frequent bin, sum of all bins, start and stop
  * timestamp (valid for MCA header frames) */
-static inline uint32_t mca_lvalue (tespkt* pkt);
-static inline uint16_t mca_mfreq  (tespkt* pkt);
-static inline uint64_t mca_total  (tespkt* pkt);
-static inline uint64_t mca_startt (tespkt* pkt);
-static inline uint64_t mca_stopt  (tespkt* pkt);
+static inline uint32_t tespkt_mca_lvalue (tespkt* pkt);
+static inline uint16_t tespkt_mca_mfreq  (tespkt* pkt);
+static inline uint64_t tespkt_mca_total  (tespkt* pkt);
+static inline uint64_t tespkt_mca_startt (tespkt* pkt);
+static inline uint64_t tespkt_mca_stopt  (tespkt* pkt);
 /* Get bin number <bin> (starting at 0) of the current frame */
-static inline uint32_t mca_bin (tespkt* pkt, uint16_t bin);
+static inline uint32_t tespkt_mca_bin (tespkt* pkt, uint16_t bin);
 /* MCA flags as a struct with separate fields for each register (valid for all
  * MCA frames) */
-static inline struct mca_flags*   mca_fl  (tespkt* pkt);
+static inline struct tespkt_mca_flags*   tespkt_mca_fl  (tespkt* pkt);
 /* Event (or tick) flags as a struct with separate fields for each register
  * (valid for all event frames) */
-static inline struct event_flags* evt_fl  (tespkt* pkt);
-static inline struct tick_flags*  tick_fl (tespkt* pkt);
+static inline struct tespkt_event_flags* tespkt_evt_fl  (tespkt* pkt);
+static inline struct tespkt_tick_flags*  tespkt_tick_fl (tespkt* pkt);
 /* Trace flags as a struct with separate fields for each register  (valid for
  * trace events) */
-static inline struct trace_flags* trace_fl (tespkt* pkt);
+static inline struct tespkt_trace_flags* tespkt_trace_fl (tespkt* pkt);
 /* Event's time (valid for all events) */
-static inline uint16_t evt_toff (tespkt* pkt);
+static inline uint16_t tespkt_evt_toff (tespkt* pkt);
 /* Tick's period, timestamp, error registers and events lost (valid for tick
  * events) */
-static inline uint32_t tick_period (tespkt* pkt);
-static inline uint64_t tick_ts     (tespkt* pkt);
-static inline uint8_t  tick_ovrfl  (tespkt* pkt);
-static inline uint8_t  tick_err    (tespkt* pkt);
-static inline uint8_t  tick_cfd    (tespkt* pkt);
-static inline uint32_t tick_lost   (tespkt* pkt);
+static inline uint32_t tespkt_tick_period (tespkt* pkt);
+static inline uint64_t tespkt_tick_ts     (tespkt* pkt);
+static inline uint8_t  tespkt_tick_ovrfl  (tespkt* pkt);
+static inline uint8_t  tespkt_tick_err    (tespkt* pkt);
+static inline uint8_t  tespkt_tick_cfd    (tespkt* pkt);
+static inline uint32_t tespkt_tick_lost   (tespkt* pkt);
 /* Peak's height and rise time (valid for peak events)  */
-static inline uint16_t peak_ht    (tespkt* pkt);
-static inline uint16_t peak_riset (tespkt* pkt);
+static inline uint16_t tespkt_peak_ht    (tespkt* pkt);
+static inline uint16_t tespkt_peak_riset (tespkt* pkt);
 /* Area's area (valid for area events) */
-static inline uint32_t area_area  (tespkt* pkt);
+static inline uint32_t tespkt_area_area  (tespkt* pkt);
 /* FIX: Pulse's size, area, length, time offset (valid for pulse events) */
-static inline uint16_t pulse_size (tespkt* pkt);
-static inline uint32_t pulse_area (tespkt* pkt);
-static inline uint16_t pulse_len  (tespkt* pkt);
-static inline uint16_t pulse_toff (tespkt* pkt);
+static inline uint16_t tespkt_pulse_size (tespkt* pkt);
+static inline uint32_t tespkt_pulse_area (tespkt* pkt);
+static inline uint16_t tespkt_pulse_len  (tespkt* pkt);
+static inline uint16_t tespkt_pulse_toff (tespkt* pkt);
 /* FIX: Trace's size (valid for all trace events except average) */
-static inline uint16_t trace_size (tespkt* pkt);
+static inline uint16_t tespkt_trace_size (tespkt* pkt);
 /* FIX: Trace's area, length, time offset (valid for all trace events) */
-static inline uint32_t trace_area (tespkt* pkt);
-static inline uint16_t trace_len  (tespkt* pkt);
-static inline uint16_t trace_toff (tespkt* pkt);
+static inline uint32_t tespkt_trace_area (tespkt* pkt);
+static inline uint16_t tespkt_trace_len  (tespkt* pkt);
+static inline uint16_t tespkt_trace_toff (tespkt* pkt);
 /* Print info about packet */
 static void pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream);
 /* Check if packet is valid, returns 0 if all is ok, or one or more OR-ed flags */
-static int  is_valid (tespkt* pkt);
-/* Print info about each of the flags present in the return value of is_valid */
+static int  tespkt_is_valid (tespkt* pkt);
+/* Print info about each of the flags present in the return value of tespkt_is_valid */
 static void pkt_perror (FILE* stream, int err);
 
 #ifdef TESPKT_DEBUG
@@ -136,7 +136,7 @@ static void tespkt_self_test (void);
  * You can copy a flag integer into one of these structures to read off the
  * separate registers. Flags are always sent as big-endian.
  */
-struct mca_flags
+struct tespkt_mca_flags
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	uint8_t   :  8; /* reserved */
@@ -163,7 +163,7 @@ struct mca_flags
 #endif
 };
 
-struct event_flags
+struct tespkt_event_flags
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	uint8_t CH : 3;
@@ -188,7 +188,7 @@ struct event_flags
 #endif
 };
 
-struct tick_flags
+struct tespkt_tick_flags
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	uint8_t TL : 1;
@@ -211,7 +211,7 @@ struct tick_flags
 #endif
 };
 
-struct trace_flags
+struct tespkt_trace_flags
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	uint8_t STR : 5;
@@ -259,11 +259,11 @@ struct trace_flags
 
 /*
  * Redefine the event types for little-endian hosts, instead of using
- * ntohl/s, since we never return those as 16-bit integers (only used in is_*
- * helpers).
+ * ntohl/s, since we never return those as 16-bit integers (only used in
+ * tespkt_is_* helpers).
  */
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-#  define EVT_TYPE_MASK     0x0e03 /* all relevant bits of evt_type */
+#  define EVT_TYPE_MASK     0x0e03 /* all relevant bits of etype */
 #  define EVT_PKT_TYPE_MASK 0x0e00 /* the packet type and tick bits */
 #  define EVT_TICK_TYPE     0x0200
 #  define EVT_PEAK_TYPE     0x0000
@@ -275,7 +275,7 @@ struct trace_flags
 #  define EVT_TR_DP_TYPE    0x0c02
 #  define EVT_TR_DPTR_TYPE  0x0c03
 #else
-#  define EVT_TYPE_MASK     0x030e /* all relevant bits of evt_type */
+#  define EVT_TYPE_MASK     0x030e /* all relevant bits of etype */
 #  define EVT_PKT_TYPE_MASK 0x000e /* the packet type and tick bits */
 #  define EVT_TICK_TYPE     0x0002
 #  define EVT_PEAK_TYPE     0x0000
@@ -288,7 +288,7 @@ struct trace_flags
 #  define EVT_TR_DPTR_TYPE  0x030c
 #endif
 
-struct mca_header
+struct tespkt_mca_hdr
 {
 	uint16_t size;
 	uint16_t last_bin;
@@ -302,14 +302,14 @@ struct mca_header
 };
 
 /* Used to access flags and time in an event-type agnostic way */
-struct evt_header
+struct tespkt_evt_hdr
 {
 	uint32_t : 32;
 	uint16_t flags;
 	uint16_t toff;
 };
 
-struct tick_header
+struct tespkt_tick_hdr
 {
 	uint32_t period;
 	uint16_t flags;
@@ -322,7 +322,7 @@ struct tick_header
 	uint32_t lost;
 };
 
-struct peak_header
+struct tespkt_peak_hdr
 {
 	uint16_t height;
 	uint16_t rise_time;
@@ -330,7 +330,7 @@ struct peak_header
 	uint16_t toff;
 };
 
-struct peak
+struct tespkt_peak
 {
 	uint16_t height;
 	uint16_t rise_time;
@@ -338,30 +338,30 @@ struct peak
 	uint16_t toff;
 };
 
-struct area_header
+struct tespkt_area_hdr
 {
 	uint32_t area;
 	uint16_t flags;
 	uint16_t toff;
 };
 
-struct pulse
+struct tespkt_pulse
 {
 	uint32_t area;
 	uint16_t length;
 	uint16_t toffset;
 };
 
-struct pulse_header
+struct tespkt_pulse_hdr
 {
 	uint16_t size;
 	uint16_t : 16; /* reserved */
 	uint16_t flags;
 	uint16_t toff;
-	struct   pulse pulse;
+	struct   tespkt_pulse pulse;
 };
 
-struct trace_header
+struct tespkt_trace_hdr
 {
 	uint16_t size;
 	uint16_t tr_flags;
@@ -369,13 +369,13 @@ struct trace_header
 	uint16_t toff;
 };
 
-struct trace_full_header
+struct tespkt_trace_full_hdr
 {
-	struct trace_header trace;
-	struct pulse pulse;
+	struct tespkt_trace_hdr trace;
+	struct tespkt_pulse pulse;
 };
 
-struct dot_prod
+struct tespkt_dot_prod
 {
 	uint16_t : 16; /* reserved */
 	uint64_t dot_prod : 48;
@@ -390,348 +390,348 @@ struct tespkt
 	};
 	struct
 	{
-		uint16_t frame_seq;
-		uint16_t proto_seq;
-		uint16_t evt_size; /* undefined for MCA frames */
-		uint16_t evt_type; /* undefined for MCA frames */
-	} teshdr;
+		uint16_t fseq;
+		uint16_t pseq;
+		uint16_t esize; /* undefined for MCA frames */
+		uint16_t etype; /* undefined for MCA frames */
+	} tes_hdr;
 	char body[MAX_TES_FRAME_LEN - TES_HDR_LEN];
 };
 
 /* ------------------------------------------------------------------------- */
 
 static inline int
-is_header (tespkt* pkt)
+tespkt_is_header (tespkt* pkt)
 { /* Byte order is irrelevant */
-	return ( pkt->teshdr.proto_seq == 0 );
+	return ( pkt->tes_hdr.pseq == 0 );
 }
 
 /* Ethernet type is always big-endian */
 static inline int
-is_mca (tespkt* pkt)
+tespkt_is_mca (tespkt* pkt)
 {
 	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_MCA) );
 }
 
 static inline int
-is_evt (tespkt* pkt)
+tespkt_is_evt (tespkt* pkt)
 {
 	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_EVENT) );
 }
 
 static inline int
-is_tick (tespkt* pkt)
+tespkt_is_tick (tespkt* pkt)
 {
-	return ( is_evt (pkt) && pkt->teshdr.evt_type & EVT_TICK_TYPE );
+	return ( tespkt_is_evt (pkt) && pkt->tes_hdr.etype & EVT_TICK_TYPE );
 }
 
 static inline int
-is_peak (tespkt* pkt)
+tespkt_is_peak (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_PKT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
 			== EVT_PEAK_TYPE );
 }
 
 static inline int
-is_pulse (tespkt* pkt)
+tespkt_is_pulse (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_PKT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
 			== EVT_PLS_TYPE );
 }
 
 static inline int
-is_area (tespkt* pkt)
+tespkt_is_area (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_PKT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
 			== EVT_AREA_TYPE );
 }
 
 static inline int
-is_trace (tespkt* pkt)
+tespkt_is_trace (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_PKT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
 			== EVT_TR_TYPE );
 }
 
 static inline int
-is_trace_sgl (tespkt* pkt)
+tespkt_is_trace_sgl (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
 			== EVT_TR_SGL_TYPE );
 }
 
 static inline int
-is_trace_avg (tespkt* pkt)
+tespkt_is_trace_avg (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
 			== EVT_TR_AVG_TYPE );
 }
 
 static inline int
-is_trace_dp (tespkt* pkt)
+tespkt_is_trace_dp (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
 			== EVT_TR_DP_TYPE );
 }
 
 static inline int
-is_trace_dptr (tespkt* pkt)
+tespkt_is_trace_dptr (tespkt* pkt)
 {
-	return ( is_evt (pkt) &&
-		(pkt->teshdr.evt_type & EVT_TYPE_MASK)
+	return ( tespkt_is_evt (pkt) &&
+		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
 			== EVT_TR_DPTR_TYPE );
 }
 
 static inline char*
-dst_eth_ntoa (tespkt* pkt)
+tespkt_dst_eth_ntoa (tespkt* pkt)
 {
 	return ether_ntoa ((struct ether_addr*) pkt->eth_hdr.ether_dhost);
 }
 
 static inline char*
-src_eth_ntoa (tespkt* pkt)
+tespkt_src_eth_ntoa (tespkt* pkt)
 {
 	return ether_ntoa ((struct ether_addr*) pkt->eth_hdr.ether_shost);
 }
 
 static inline struct ether_addr*
-dst_eth_aton (tespkt* pkt)
+tespkt_dst_eth_aton (tespkt* pkt)
 {
 	return ((struct ether_addr*) pkt->eth_hdr.ether_dhost);
 }
 
 static inline struct ether_addr*
-src_eth_aton (tespkt* pkt)
+tespkt_src_eth_aton (tespkt* pkt)
 {
 	return ((struct ether_addr*) pkt->eth_hdr.ether_shost);
 }
 
 static inline uint16_t
-pkt_len (tespkt* pkt)
+tespkt_flen (tespkt* pkt)
 {
 	return ftohs (pkt->length);
 }
 
 static inline uint16_t
-frame_seq (tespkt* pkt)
+tespkt_fseq (tespkt* pkt)
 {
-	return ftohs (pkt->teshdr.frame_seq);
+	return ftohs (pkt->tes_hdr.fseq);
 }
 
 static inline uint16_t
-proto_seq (tespkt* pkt)
+tespkt_pseq (tespkt* pkt)
 {
-	return ftohs (pkt->teshdr.proto_seq);
+	return ftohs (pkt->tes_hdr.pseq);
 }
 
 static inline uint16_t
-evt_size (tespkt* pkt)
+tespkt_evt_size (tespkt* pkt)
 {
-	return ftohs (pkt->teshdr.evt_size);
+	return ftohs (pkt->tes_hdr.esize);
 }
 
 static inline uint16_t
-mca_size (tespkt* pkt)
+tespkt_mca_size (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->size);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->size);
 }
 
 static inline uint16_t
-mca_num_bins (tespkt* pkt)
+tespkt_mca_nbins (tespkt* pkt)
 {
-	if (is_header (pkt))
-		return ( (pkt_len (pkt) - TES_HDR_LEN - MCA_HDR_LEN )
+	if (tespkt_is_header (pkt))
+		return ( (tespkt_flen (pkt) - TES_HDR_LEN - MCA_HDR_LEN )
 			/ BIN_LEN );
 	else
-		return ( (pkt_len (pkt) - TES_HDR_LEN) / BIN_LEN );
+		return ( (tespkt_flen (pkt) - TES_HDR_LEN) / BIN_LEN );
 }
 
 static inline uint16_t
-mca_num_allbins (tespkt* pkt)
+tespkt_mca_nbins_tot (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->last_bin + 1);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->last_bin + 1);
 }
 
 static inline uint32_t
-mca_lvalue (tespkt* pkt)
+tespkt_mca_lvalue (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->lowest_value);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->lowest_value);
 }
 
 static inline uint16_t
-mca_mfreq (tespkt* pkt)
+tespkt_mca_mfreq (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->most_frequent);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->most_frequent);
 }
 
 static inline uint64_t
-mca_total (tespkt* pkt)
+tespkt_mca_total (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->total);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->total);
 }
 
 static inline uint64_t
-mca_startt (tespkt* pkt)
+tespkt_mca_startt (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->start_time);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->start_time);
 }
 
 static inline uint64_t
-mca_stopt (tespkt* pkt)
+tespkt_mca_stopt (tespkt* pkt)
 {
-	return ftohl (((struct mca_header*)(void*) &pkt->body)->stop_time);
+	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->stop_time);
 }
 
 static inline uint32_t
-mca_bin (tespkt* pkt, uint16_t bin)
+tespkt_mca_bin (tespkt* pkt, uint16_t bin)
 {
-	if (is_header (pkt))
+	if (tespkt_is_header (pkt))
 		return ftohl (pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ]);
 	else
 		return ftohl (pkt->body[ bin*BIN_LEN ]);
 }
 
-static inline struct mca_flags*
-mca_fl (tespkt* pkt)
+static inline struct tespkt_mca_flags*
+tespkt_mca_fl (tespkt* pkt)
 {
-	struct mca_header* mh = (struct mca_header*)(void*) &pkt->body; 
-	return (struct mca_flags*) &mh->flags;
+	struct tespkt_mca_hdr* mh = (struct tespkt_mca_hdr*)(void*) &pkt->body; 
+	return (struct tespkt_mca_flags*) &mh->flags;
 }
 
-static inline struct event_flags*
-evt_fl (tespkt* pkt)
+static inline struct tespkt_event_flags*
+tespkt_evt_fl (tespkt* pkt)
 {
-	struct evt_header* eh = (struct evt_header*)(void*) &pkt->body;
-	return (struct event_flags*) &eh->flags;
+	struct tespkt_evt_hdr* eh = (struct tespkt_evt_hdr*)(void*) &pkt->body;
+	return (struct tespkt_event_flags*) &eh->flags;
 }
 
-static inline struct tick_flags*
-tick_fl (tespkt* pkt)
+static inline struct tespkt_tick_flags*
+tespkt_tick_fl (tespkt* pkt)
 {
-	struct evt_header* eh = (struct evt_header*)(void*) &pkt->body;
-	return (struct tick_flags*) &eh->flags;
+	struct tespkt_evt_hdr* eh = (struct tespkt_evt_hdr*)(void*) &pkt->body;
+	return (struct tespkt_tick_flags*) &eh->flags;
 }
 
-static inline struct trace_flags*
-trace_fl (tespkt* pkt)
+static inline struct tespkt_trace_flags*
+tespkt_trace_fl (tespkt* pkt)
 {
-	struct trace_header* th = (struct trace_header*)(void*) &pkt->body;
-	return (struct trace_flags*) &th->tr_flags;
+	struct tespkt_trace_hdr* th = (struct tespkt_trace_hdr*)(void*) &pkt->body;
+	return (struct tespkt_trace_flags*) &th->tr_flags;
 }
 
 static inline uint16_t
-evt_toff (tespkt* pkt)
+tespkt_evt_toff (tespkt* pkt)
 {
-	return ftohs (((struct evt_header*)(void*) &pkt->body)->toff);
+	return ftohs (((struct tespkt_evt_hdr*)(void*) &pkt->body)->toff);
 }
 
 static inline uint32_t
-tick_period (tespkt* pkt)
+tespkt_tick_period (tespkt* pkt)
 {
-	return ftohs (((struct tick_header*)(void*) &pkt->body)->period);
+	return ftohs (((struct tespkt_tick_hdr*)(void*) &pkt->body)->period);
 }
 
 static inline uint64_t
-tick_ts (tespkt* pkt)
+tespkt_tick_ts (tespkt* pkt)
 {
-	return ftohs (((struct tick_header*)(void*) &pkt->body)->ts);
+	return ftohs (((struct tespkt_tick_hdr*)(void*) &pkt->body)->ts);
 }
 
 static inline uint8_t
-tick_ovrfl (tespkt* pkt)
+tespkt_tick_ovrfl (tespkt* pkt)
 {
-	return ftohs (((struct tick_header*)(void*) &pkt->body)->ovrfl);
+	return ftohs (((struct tespkt_tick_hdr*)(void*) &pkt->body)->ovrfl);
 }
 
 static inline uint8_t
-tick_err (tespkt* pkt)
+tespkt_tick_err (tespkt* pkt)
 {
-	return ftohs (((struct tick_header*)(void*) &pkt->body)->err);
+	return ftohs (((struct tespkt_tick_hdr*)(void*) &pkt->body)->err);
 }
 
 static inline uint8_t
-tick_cfd (tespkt* pkt)
+tespkt_tick_cfd (tespkt* pkt)
 {
-	return ftohs (((struct tick_header*)(void*) &pkt->body)->cfd);
+	return ftohs (((struct tespkt_tick_hdr*)(void*) &pkt->body)->cfd);
 }
 
 static inline uint32_t
-tick_lost (tespkt* pkt)
+tespkt_tick_lost (tespkt* pkt)
 {
-	return ftohs (((struct tick_header*)(void*) &pkt->body)->lost);
+	return ftohs (((struct tespkt_tick_hdr*)(void*) &pkt->body)->lost);
 }
 
 static inline uint16_t
-peak_ht (tespkt* pkt)
+tespkt_peak_ht (tespkt* pkt)
 {
-	return ftohs (((struct peak_header*)(void*) &pkt->body)->height);
+	return ftohs (((struct tespkt_peak_hdr*)(void*) &pkt->body)->height);
 }
 
 static inline uint16_t
-peak_riset (tespkt* pkt)
+tespkt_peak_riset (tespkt* pkt)
 {
-	return ftohs (((struct peak_header*)(void*) &pkt->body)->rise_time);
+	return ftohs (((struct tespkt_peak_hdr*)(void*) &pkt->body)->rise_time);
 }
 
 static inline uint32_t
-area_area (tespkt* pkt)
+tespkt_area_area (tespkt* pkt)
 {
-	return ftohs (((struct area_header*)(void*) &pkt->body)->area);
+	return ftohs (((struct tespkt_area_hdr*)(void*) &pkt->body)->area);
 }
 
 static inline uint16_t
-pulse_size (tespkt* pkt)
+tespkt_pulse_size (tespkt* pkt)
 {
-	return ftohs (((struct pulse_header*)(void*) &pkt->body)->size);
+	return ftohs (((struct tespkt_pulse_hdr*)(void*) &pkt->body)->size);
 }
 
 static inline uint32_t
-pulse_area (tespkt* pkt)
+tespkt_pulse_area (tespkt* pkt)
 {
-	return ftohs (((struct pulse_header*)(void*) &pkt->body)->pulse.area);
+	return ftohs (((struct tespkt_pulse_hdr*)(void*) &pkt->body)->pulse.area);
 }
 
 static inline uint16_t
-pulse_len (tespkt* pkt)
+tespkt_pulse_len (tespkt* pkt)
 {
-	return ftohs (((struct pulse_header*)(void*) &pkt->body)->pulse.length);
+	return ftohs (((struct tespkt_pulse_hdr*)(void*) &pkt->body)->pulse.length);
 }
 
 static inline uint16_t
-pulse_toff (tespkt* pkt)
+tespkt_pulse_toff (tespkt* pkt)
 {
-	return ftohs (((struct pulse_header*)(void*) &pkt->body)->pulse.toffset);
+	return ftohs (((struct tespkt_pulse_hdr*)(void*) &pkt->body)->pulse.toffset);
 }
 
 static inline uint16_t
-trace_size (tespkt* pkt)
+tespkt_trace_size (tespkt* pkt)
 {
-	return ftohs (((struct trace_header*)(void*) &pkt->body)->size);
+	return ftohs (((struct tespkt_trace_hdr*)(void*) &pkt->body)->size);
 }
 
 static inline uint32_t
-trace_area (tespkt* pkt)
+tespkt_trace_area (tespkt* pkt)
 {
-	return ftohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.area);
+	return ftohs (((struct tespkt_trace_full_hdr*)(void*) &pkt->body)->pulse.area);
 }
 
 static inline uint16_t
-trace_len (tespkt* pkt)
+tespkt_trace_len (tespkt* pkt)
 {
-	return ftohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.length);
+	return ftohs (((struct tespkt_trace_full_hdr*)(void*) &pkt->body)->pulse.length);
 }
 
 static inline uint16_t
-trace_toff (tespkt* pkt)
+tespkt_trace_toff (tespkt* pkt)
 {
-	return ftohs (((struct trace_full_header*)(void*) &pkt->body)->pulse.toffset);
+	return ftohs (((struct tespkt_trace_full_hdr*)(void*) &pkt->body)->pulse.toffset);
 }
 
 static void
@@ -740,35 +740,35 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 	if (estream == NULL)
 		estream = ostream;
 
-	fprintf (ostream, "Destination MAC:     %s\n",  dst_eth_ntoa (pkt));
-	fprintf (ostream, "Source MAC:          %s\n",  src_eth_ntoa (pkt));
-	fprintf (ostream, "Packet length:       %hu\n", pkt_len (pkt));
-	fprintf (ostream, "Frame sequence:      %hu\n", frame_seq (pkt));
-	fprintf (ostream, "Protocol sequence:   %hu\n", proto_seq (pkt));
+	fprintf (ostream, "Destination MAC:     %s\n",  tespkt_dst_eth_ntoa (pkt));
+	fprintf (ostream, "Source MAC:          %s\n",  tespkt_src_eth_ntoa (pkt));
+	fprintf (ostream, "Packet length:       %hu\n", tespkt_flen (pkt));
+	fprintf (ostream, "Frame sequence:      %hu\n", tespkt_fseq (pkt));
+	fprintf (ostream, "Protocol sequence:   %hu\n", tespkt_pseq (pkt));
 
 	/* ----- MCA */
-	if (is_mca (pkt))
+	if (tespkt_is_mca (pkt))
 	{
 		fprintf (ostream, "Stream type:         MCA\n");
-		fprintf (ostream, "Number of bins:      %u\n",   mca_num_bins (pkt));
-		if (!is_header (pkt))
+		fprintf (ostream, "Number of bins:      %u\n",   tespkt_mca_nbins (pkt));
+		if (!tespkt_is_header (pkt))
 			return;
-		fprintf (ostream, "Size:                %hu\n",  mca_size (pkt));
-		struct mca_flags* mf = mca_fl (pkt);
+		fprintf (ostream, "Size:                %hu\n",  tespkt_mca_size (pkt));
+		struct tespkt_mca_flags* mf = tespkt_mca_fl (pkt);
 		fprintf (ostream, "Flag Q:              %hhu\n", mf->Q);
 		fprintf (ostream, "Flag V:              %hhu\n", mf->V);
 		fprintf (ostream, "Flag T:              %hhu\n", mf->T);
 		fprintf (ostream, "Flag N:              %hhu\n", mf->N);
 		fprintf (ostream, "Flag C:              %hhu\n", mf->C);
-		fprintf (ostream, "Total number of bins:%u\n",   mca_num_allbins (pkt));
-		fprintf (ostream, "Lowest value:        %hu\n",  mca_lvalue (pkt));
-		fprintf (ostream, "Most frequent bin:   %hu\n",  mca_mfreq (pkt));
-		fprintf (ostream, "Total:               %lu\n",  mca_total (pkt));
-		fprintf (ostream, "Start time:          %lu\n",  mca_startt (pkt));
-		fprintf (ostream, "Stop time:           %lu\n",  mca_stopt (pkt));
+		fprintf (ostream, "Total number of bins:%u\n",   tespkt_mca_nbins_tot (pkt));
+		fprintf (ostream, "Lowest value:        %hu\n",  tespkt_mca_lvalue (pkt));
+		fprintf (ostream, "Most frequent bin:   %hu\n",  tespkt_mca_mfreq (pkt));
+		fprintf (ostream, "Total:               %lu\n",  tespkt_mca_total (pkt));
+		fprintf (ostream, "Start time:          %lu\n",  tespkt_mca_startt (pkt));
+		fprintf (ostream, "Stop time:           %lu\n",  tespkt_mca_stopt (pkt));
 		return;
 	}
-	if (!is_evt (pkt))
+	if (!tespkt_is_evt (pkt))
 	{
 		fprintf (estream, "Unknown stream type\n");
 		return;
@@ -776,28 +776,28 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 
 	/* ----- Event */
 	fprintf (ostream, "Stream type:         Event\n");
-	fprintf (ostream, "Event size:          %hu\n", evt_size (pkt));
-	fprintf (ostream, "Time offset:         %hu\n", evt_toff (pkt));
+	fprintf (ostream, "Event size:          %hu\n", tespkt_evt_size (pkt));
+	fprintf (ostream, "Time offset:         %hu\n", tespkt_evt_toff (pkt));
 	/* ---------- Tick event */
-	if (is_tick (pkt))
+	if (tespkt_is_tick (pkt))
 	{
-		struct tick_flags* tf = tick_fl (pkt);
+		struct tespkt_tick_flags* tf = tespkt_tick_fl (pkt);
 		fprintf (ostream, "Tick flag MF:        %hhu\n", tf->MF);
 		fprintf (ostream, "Tick flag EL:        %hhu\n", tf->EL);
 		fprintf (ostream, "Tick flag TL:        %hhu\n", tf->TL);
 		fprintf (ostream, "Tick flag T:         %hhu\n", tf->T);
 		fprintf (ostream, "Tick flag N:         %hhu\n", tf->N);
-		fprintf (ostream, "Period:              %u\n",   tick_period (pkt));
-		fprintf (ostream, "Timestamp:           %lu\n",  tick_ts (pkt));
-		fprintf (ostream, "Error ovrfl:         %hhu\n", tick_ovrfl (pkt));
-		fprintf (ostream, "Error err:           %hhu\n", tick_err (pkt));
-		fprintf (ostream, "Error cfd:           %hhu\n", tick_cfd (pkt));
-		fprintf (ostream, "Events lost:         %u\n",   tick_lost (pkt));
+		fprintf (ostream, "Period:              %u\n",   tespkt_tick_period (pkt));
+		fprintf (ostream, "Timestamp:           %lu\n",  tespkt_tick_ts (pkt));
+		fprintf (ostream, "Error ovrfl:         %hhu\n", tespkt_tick_ovrfl (pkt));
+		fprintf (ostream, "Error err:           %hhu\n", tespkt_tick_err (pkt));
+		fprintf (ostream, "Error cfd:           %hhu\n", tespkt_tick_cfd (pkt));
+		fprintf (ostream, "Events lost:         %u\n",   tespkt_tick_lost (pkt));
 		fprintf (ostream, "Type:                Tick\n");
 		return;
 	}
 	/* ---------- Non-tick event */
-	struct event_flags* ef = evt_fl (pkt);
+	struct tespkt_event_flags* ef = tespkt_evt_fl (pkt);
 	fprintf (ostream, "Event flag PC:       %hhu\n", ef->PC);
 	fprintf (ostream, "Event flag O:        %hhu\n", ef->O);
 	fprintf (ostream, "Event flag CH:       %hhu\n", ef->CH);
@@ -807,69 +807,69 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 	fprintf (ostream, "Event flag T:        %hhu\n", ef->T);
 	fprintf (ostream, "Event flag N:        %hhu\n", ef->N);
 	/* --------------- Peak */
-	if (is_peak (pkt))
+	if (tespkt_is_peak (pkt))
 	{
 		fprintf (ostream, "Type:                Peak\n");
-		fprintf (ostream, "Height:              %hu\n", peak_ht (pkt));
-		fprintf (ostream, "Rise time:           %hu\n", peak_riset (pkt));
+		fprintf (ostream, "Height:              %hu\n", tespkt_peak_ht (pkt));
+		fprintf (ostream, "Rise time:           %hu\n", tespkt_peak_riset (pkt));
 		return;
 	}
 	/* --------------- Area */
-	if (is_area (pkt))
+	if (tespkt_is_area (pkt))
 	{
 		fprintf (ostream, "Type:                Area\n");
-		fprintf (ostream, "Area:                %u\n", area_area (pkt));
+		fprintf (ostream, "Area:                %u\n", tespkt_area_area (pkt));
 		return;
 	}
 	/* --------------- Pulse */
-	if (is_pulse (pkt))
+	if (tespkt_is_pulse (pkt))
 	{
 		fprintf (ostream, "Type:                Pulse\n");
-		fprintf (ostream, "Size:                %hu\n", pulse_size (pkt));
-		fprintf (ostream, "Area:                %u\n",  pulse_area (pkt));
-		fprintf (ostream, "Length:              %hu\n", pulse_len (pkt));
-		fprintf (ostream, "Time offset:         %hu\n", pulse_toff (pkt));
+		fprintf (ostream, "Size:                %hu\n", tespkt_pulse_size (pkt));
+		fprintf (ostream, "Area:                %u\n",  tespkt_pulse_area (pkt));
+		fprintf (ostream, "Length:              %hu\n", tespkt_pulse_len (pkt));
+		fprintf (ostream, "Time offset:         %hu\n", tespkt_pulse_toff (pkt));
 		return;
 	}
-	if (!is_trace (pkt))
+	if (!tespkt_is_trace (pkt))
 	{
 		fprintf (estream, "Unknown event type\n");
 		return;
 	}
 	/* --------------- Trace */
 	fprintf (ostream, "Type:                Trace\n");
-	struct trace_flags* trf = trace_fl (pkt);
+	struct tespkt_trace_flags* trf = tespkt_trace_fl (pkt);
 	fprintf (ostream, "Trace flag MH:       %hhu\n", trf->MH);
 	fprintf (ostream, "Trace flag MP:       %hhu\n", trf->MP);
 	fprintf (ostream, "Trace flag STR:      %hhu\n", trf->STR);
 	fprintf (ostream, "Trace flag TT:       %hhu\n", trf->TT);
 	fprintf (ostream, "Trace flag TS:       %hhu\n", trf->TS);
 	fprintf (ostream, "Trace flag OFF:      %hhu\n", trf->OFF);
-	fprintf (ostream, "Trace size:          %hu\n", trace_size (pkt));
+	fprintf (ostream, "Trace size:          %hu\n", tespkt_trace_size (pkt));
 	/* -------------------- Average */
-	if (is_trace_avg (pkt))
+	if (tespkt_is_trace_avg (pkt))
 	{
 		fprintf (ostream, "Trace type:          Average\n");
 		return;
 	}
-	fprintf (ostream, "Area:                %u\n",  trace_area (pkt));
-	fprintf (ostream, "Length:              %hu\n", trace_len (pkt));
-	fprintf (ostream, "Time offset:         %hu\n", trace_toff (pkt));
+	fprintf (ostream, "Area:                %u\n",  tespkt_trace_area (pkt));
+	fprintf (ostream, "Length:              %hu\n", tespkt_trace_len (pkt));
+	fprintf (ostream, "Time offset:         %hu\n", tespkt_trace_toff (pkt));
 	/* -------------------- Single */
-	if (is_trace_sgl (pkt))
+	if (tespkt_is_trace_sgl (pkt))
 	{
 		fprintf (ostream, "Trace type:          Single\n");
 		return;
 	}
 	/* -------------------- Dot product */
-	if (is_trace_dp (pkt))
+	if (tespkt_is_trace_dp (pkt))
 	{
 		fprintf (ostream, "Trace type:          Dot product\n");
 		// fprintf (ostream, "Dot product:         \n", );
 		return;
 	}
 	/* -------------------- Dot product + trace */
-	if (is_trace_dptr (pkt))
+	if (tespkt_is_trace_dptr (pkt))
 	{
 		fprintf (ostream, "Trace type:          Dot product with trace\n");
 		// fprintf (ostream, "Dot product:         \n", );
@@ -885,29 +885,29 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 #define FE_EVTTYPE 1 << 3 // event type 
 #define FE_EVTSIZE 1 << 4 // event size for fixed size events
 static int
-is_valid (tespkt* pkt)
+tespkt_is_valid (tespkt* pkt)
 {
 	int rc = 0;
 	/* Frame length should be a multiple of 8. */
-	if (pkt_len (pkt) & 7 || pkt_len (pkt) > MAX_TES_FRAME_LEN)
+	if (tespkt_flen (pkt) & 7 || tespkt_flen (pkt) > MAX_TES_FRAME_LEN)
 		rc |= FE_ETHLEN;
 
-	if (is_evt (pkt))
+	if (tespkt_is_evt (pkt))
 	{
-		if (is_tick (pkt))
+		if (tespkt_is_tick (pkt))
 		{
-			if (evt_size (pkt) != 3)
+			if (tespkt_evt_size (pkt) != 3)
 				rc |= FE_EVTSIZE;
 		}
-		else if (is_trace (pkt) || is_peak (pkt) || is_area (pkt))
+		else if (tespkt_is_trace (pkt) || tespkt_is_peak (pkt) || tespkt_is_area (pkt))
 		{
-			if (evt_size (pkt) != 1)
+			if (tespkt_evt_size (pkt) != 1)
 				rc |= FE_EVTSIZE;
 		}
-		else if (!is_pulse (pkt))
+		else if (!tespkt_is_pulse (pkt))
 			rc |= FE_EVTTYPE;
 	}
-	else if (!is_mca (pkt))
+	else if (!tespkt_is_mca (pkt))
 		rc |= FE_ETHTYPE;
 	return rc;
 }
@@ -945,22 +945,22 @@ tespkt_self_test (void)
 {
 	assert (sizeof (tespkt) == MAX_TES_FRAME_LEN);
 	assert (offsetof (tespkt, body) == TES_HDR_LEN);
-	assert (sizeof (struct mca_header) == MCA_HDR_LEN);
-	assert (sizeof (struct tick_header) == TICK_HDR_LEN);
-	assert (sizeof (struct peak_header) == PEAK_HDR_LEN);
-	assert (sizeof (struct peak) == PEAK_LEN);
-	assert (sizeof (struct area_header) == AREA_HDR_LEN);
-	assert (sizeof (struct pulse) == PLS_LEN);
-	assert (sizeof (struct pulse_header) == PLS_HDR_LEN);
-	assert (sizeof (struct trace_header) == TR_HDR_LEN);
-	assert (sizeof (struct trace_full_header) == TR_FULL_HDR_LEN);
-	assert (sizeof (struct dot_prod) == DP_LEN);
-	assert (sizeof (struct mca_flags) == MCA_FL_LEN);
-	assert (sizeof (struct event_flags) == EVT_FL_LEN);
-	assert (sizeof (struct tick_flags) == EVT_FL_LEN);
-	assert (sizeof (struct trace_flags) == TR_FL_LEN);
+	assert (sizeof (struct tespkt_mca_hdr) == MCA_HDR_LEN);
+	assert (sizeof (struct tespkt_tick_hdr) == TICK_HDR_LEN);
+	assert (sizeof (struct tespkt_peak_hdr) == PEAK_HDR_LEN);
+	assert (sizeof (struct tespkt_peak) == PEAK_LEN);
+	assert (sizeof (struct tespkt_area_hdr) == AREA_HDR_LEN);
+	assert (sizeof (struct tespkt_pulse) == PLS_LEN);
+	assert (sizeof (struct tespkt_pulse_hdr) == PLS_HDR_LEN);
+	assert (sizeof (struct tespkt_trace_hdr) == TR_HDR_LEN);
+	assert (sizeof (struct tespkt_trace_full_hdr) == TR_FULL_HDR_LEN);
+	assert (sizeof (struct tespkt_dot_prod) == DP_LEN);
+	assert (sizeof (struct tespkt_mca_flags) == MCA_FL_LEN);
+	assert (sizeof (struct tespkt_event_flags) == EVT_FL_LEN);
+	assert (sizeof (struct tespkt_tick_flags) == EVT_FL_LEN);
+	assert (sizeof (struct tespkt_trace_flags) == TR_FL_LEN);
 
-	struct mca_flags mf;
+	struct tespkt_mca_flags mf;
 	memset (&mf, 0, MCA_FL_LEN);
 	mf.Q = 0x0f;
 	mf.V = 0x0f;
@@ -969,7 +969,7 @@ tespkt_self_test (void)
 	mf.C = 0x07;
 	assert ( flagtoul (&mf) == MCA_FL_MASK );
 
-	struct event_flags ef;
+	struct tespkt_event_flags ef;
 	memset (&ef, 0, EVT_FL_LEN);
 	ef.PC = 0x0f;
 	ef.O  = 0x01;
@@ -981,7 +981,7 @@ tespkt_self_test (void)
 	ef.N  = 0x01;
 	assert ( flagtous (&ef) == EVT_FL_MASK );
 
-	struct tick_flags tf;
+	struct tespkt_tick_flags tf;
 	memset (&tf, 0, EVT_FL_LEN);
 	tf.MF = 0x01;
 	tf.EL = 0x01;
@@ -990,7 +990,7 @@ tespkt_self_test (void)
 	tf.N  = 0x01;
 	assert ( flagtous (&tf) == TICK_FL_MASK );
 
-	struct trace_flags trf;
+	struct tespkt_trace_flags trf;
 	memset (&trf, 0, TR_FL_LEN);
 	trf.MH  = 0x01;
 	trf.MP  = 0x01;

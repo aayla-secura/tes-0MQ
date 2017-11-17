@@ -332,7 +332,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		tespkt* pkt = (tespkt*)
 			ifring_cur_buf (rxring); /* old head */
 		dbg_assert (pkt != NULL);
-		uint16_t fseqA = frame_seq (pkt);
+		uint16_t fseqA = tespkt_fseq (pkt);
 
 		/*
 		 * Look at the packet preceding the new head, in case the
@@ -341,7 +341,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		pkt = (tespkt*)
 			ifring_preceding_buf (rxring, new_head);
 		dbg_assert (pkt != NULL);
-		uint16_t fseqB = frame_seq (pkt);
+		uint16_t fseqB = tespkt_fseq (pkt);
 
 		ifring_goto_buf (rxring, new_head); /* cursor -> new head */
 		dbg_assert (ifring_cur (rxring) == new_head);
@@ -455,7 +455,7 @@ cleanup:
 int
 main (int argc, char **argv)
 {
-	// tespkt_self_test ();
+	tespkt_self_test ();
 	int rc;
 
 	/* Process command-line options. */

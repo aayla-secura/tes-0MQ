@@ -360,13 +360,13 @@ main_body (void* arg)
 			if (gstats.pkts.rcvd > 0)
 			{
 				uint16_t prev_frame = cur_frame;
-				cur_frame = pkt->teshdr.frame_seq;
+				cur_frame = pkt->tes_hdr.fseq;
 				gstats.pkts.missed += (u_int32_t) (
 					(uint16_t)(cur_frame - prev_frame) - 1);
 			}
 			else
 			{
-				cur_frame = pkt->teshdr.frame_seq;
+				cur_frame = pkt->tes_hdr.fseq;
 				INFO ("First received frame is #%hu\n", cur_frame);
 			}
 
@@ -377,7 +377,7 @@ main_body (void* arg)
 				pthread_exit (NULL);
 			}
 
-			if (is_tick (pkt))
+			if (tespkt_is_tick (pkt))
 			{
 				gstats.pkts.ticks++;
 				DEBUG ("Received tick #%d\n", gstats.pkts.ticks);

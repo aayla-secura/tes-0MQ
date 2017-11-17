@@ -127,7 +127,7 @@ main (void)
 		p++;
 
 		/* Send the packet */
-		uint16_t len = pkt_len ((tespkt*)pkt);
+		uint16_t len = tespkt_flen ((tespkt*)pkt);
 		if (len != h.len && len >= 60)
 			printf ("Packet #%5lu: frame len says %5hu, "
 				"caplen = %5hu, len = %5hu\n",
@@ -154,16 +154,16 @@ main (void)
 		/* Statistics */
 		if (sf == -1)
 		{
-			sf = (int)frame_seq ((tespkt*)pkt);
+			sf = (int)tespkt_fseq ((tespkt*)pkt);
 		}
 		else
 		{
 			missed += (uint64_t) (
-				(uint16_t)(frame_seq ((tespkt*)pkt) - ef) - 1 );
+				(uint16_t)(tespkt_fseq ((tespkt*)pkt) - ef) - 1 );
 		}
-		ef = frame_seq ((tespkt*)pkt);
+		ef = tespkt_fseq ((tespkt*)pkt);
 		pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
-		pkt_perror (stdout, is_valid ((tespkt*)pkt));
+		pkt_perror (stdout, tespkt_is_valid ((tespkt*)pkt));
 		printf ("\n");
 		// dump_pkt (pkt, TES_HDR_LEN);
 	}
