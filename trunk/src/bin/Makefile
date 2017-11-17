@@ -7,6 +7,10 @@ all: $(bins)
 
 install: $(bins:%=install-%)
 
+install-tesd:
+	install -d $(SBIN_ROOT)
+	install tesd $(SBIN_ROOT)/tesd
+
 install-%:
 	install -d $(BIN_ROOT)
 	install $* $(BIN_ROOT)/$*
@@ -22,5 +26,5 @@ clean:
 tesd: tesd.o $(HEADERS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) $(libs:%=-l% ) -o $@
 
-tesc: tesc.o
+%: %.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
