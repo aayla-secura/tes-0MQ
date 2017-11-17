@@ -29,10 +29,6 @@
 #define NMIF "vale0:vi1"
 #endif
 
-#ifndef QUIET
-#define VERBOSE
-#endif
-
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
