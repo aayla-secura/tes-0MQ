@@ -65,7 +65,7 @@ install: $(BIN_DEST)/tesd $(BIN_DEST)/tesc \
 	@echo "Now run 'make clean'"
 
 install-lib-%: $(LIB_DEST)/lib%.so
-	install -m 755 $< $(PREFIX)/lib/lib%.so
+	install -m 755 $< $(PREFIX)/lib/lib$*.so
 
 ##################################################
 
