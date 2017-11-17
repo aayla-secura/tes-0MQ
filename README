@@ -1,18 +1,98 @@
-Layout of the trunk is:
-- include:   header files
-- src/bin:   source files for the main server and client
-- src/lib:   source files for the libraries used by the main server
-- test-apps: source files for miscellaneous test programs
+----------------------------------------------------------------------------
+----------------------------------- API ------------------------------------
+----------------------------------------------------------------------------
+
+              -------                   -------
+              | REQ |                   | SUB |                       client
+              -------                   -------
+                 |                         |
+
+----------- save to file ------------- histogram ---------------------------
+
+                 |                         |
+             -------.                   -------
+             | REP |                    | PUB |
+             -------.                   -------
+          
+             --------                   --------
+             | PAIR |                   | PAIR |
+             --------                   --------                      server
+                |                          |
+             --------- task coordinator --------
+                |                          |
+             --------                   --------
+             | PAIR |                   | PAIR |           
+             --------                   --------
+
+------------------------------ REP INTERFACE -------------------------------
+
+Messages are sent and read via zsock_send, zsock_recv as "picture" messages.
+They are simply multi-frame ZMQ messages with each frame being a string
+representation of the value.
+
+Valid requests have a picture of "s81", replies have a picture of "18888",
+as explained below.
+
+ *** Format for valid save requests:
+  Frame 1 (char*):
+      Filename. It is relative to a hardcoded root, leading slashes are
+      ignored. Trailing slashes are not allowed. Missing directories are
+      created.
+  Frame 2 (uint64_t):
+      0: client requests status of the file (reply will be as described
+           below) or
+      N > 1: no. of ticks (NOTE it's read as unsigned int)
+  Frame 3 (uint8_t): (ignored if Frame 2 == 0)
+      0: create but do not overwrite or
+      1: create or overwrite,
+
+As a consequence of how zsock_recv parses arguments, the client may omit
+frames corresponding to ignored arguments or arguments = 0. Therefore to get
+a status of a file, only the filename is required.
+
+ *** Format for a reply to invalid request or an error:
+  Frame 1 (uint8_t):
+      0: request was invalid or
+         there was an error opening the file (in case of request for
+           overwrite) or
+         file exists (in case of request for create but not overwrite) or
+         file does not exist (in case of request for status)
+  Frames 2-5:
+   	 0: ignore
+
+ *** Format for a reply to valid request and no error:
+  Frame 1 (uint8_t):
+      1: OK
+  Frame 2 (uint64_t):
+      N: no. of ticks written (may be less than requested if error occurred
+           or if MAX_FSIZE was reached)
+  Frame 3 (uint64_t):
+      N: no. of bytes written
+  Frame 4 (uint64_t):
+      N: no. of frames written
+  Frame 5 (uint64_t):
+      N: no. of dropped frames
+
+At the moment we only handle one request at a time. Will block until done.
+
+------------------------------ PUB INTERFACE -------------------------------
+
+Sends ZMQ single-frame messages, each message contains one full histogram.
+You can receive these with zmq_recv for example.
+
+----------------------------------------------------------------------------
+--------------------------------- INSTALL ----------------------------------
+----------------------------------------------------------------------------
 
 To compile and install the client (tesc) and server (tesd) do:
 
- make
- make install
- make clean
+  make
+  make install
+  make clean
 
 The default install prefix is /usr/local, to change it do:
 
- make PREFIX=<path> install
+  make PREFIX=<path> install
 
 Note: it is a GNU makefile, so on some systems (e.g. FreeBSD) you need to use
 gmake.
@@ -25,4 +105,4 @@ everything. Test apps are not installed in system location.
 See comments at the beginning of src/lib/tesd_tasks.c for the API used in the
 client progarm.
 
-Only tested on Linux 4.8.4 and above, and FreeBSD 11.0
+Only tested on Linux 4.8.4 and above, and FreeBSD 11.0.
