@@ -81,7 +81,7 @@ struct stats_t
 struct data_t
 {
 	struct stats_t stats;
-	ifdesc* ifd;
+	tes_ifdesc* ifd;
 };
 
 static void s_usage (const char* self);
@@ -315,22 +315,22 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	int skipped = 1;
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
-		ifring* rxring = if_rxring (data->ifd, r);
-		if (ifring_tail (rxring) == ifring_head (rxring))
+		tes_ifring* rxring = tes_if_rxring (data->ifd, r);
+		if (tes_ifring_tail (rxring) == tes_ifring_head (rxring))
 			continue; /* nothing in this ring */
 
 		uint32_t new_head;
 		if (heads == NULL)
-			new_head = ifring_tail (rxring);
+			new_head = tes_ifring_tail (rxring);
 		else
 			new_head = heads[r];
 
-		if (new_head == ifring_head (rxring))
+		if (new_head == tes_ifring_head (rxring))
 			continue; /* nothing processed since last time */
 		skipped = 0;
 
 		tespkt* pkt = (tespkt*)
-			ifring_cur_buf (rxring); /* old head */
+			tes_ifring_cur_buf (rxring); /* old head */
 		dbg_assert (pkt != NULL);
 		uint16_t fseqA = tespkt_fseq (pkt);
 
@@ -339,19 +339,19 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		 * new head is the tail (not a valid userspace buffer)
 		 */
 		pkt = (tespkt*)
-			ifring_preceding_buf (rxring, new_head);
+			tes_ifring_preceding_buf (rxring, new_head);
 		dbg_assert (pkt != NULL);
 		uint16_t fseqB = tespkt_fseq (pkt);
 
-		ifring_goto_buf (rxring, new_head); /* cursor -> new head */
-		dbg_assert (ifring_cur (rxring) == new_head);
-		uint32_t num_new = ifring_done (rxring); /* cursor - old head */
+		tes_ifring_goto_buf (rxring, new_head); /* cursor -> new head */
+		dbg_assert (tes_ifring_cur (rxring) == new_head);
+		uint32_t num_new = tes_ifring_done (rxring); /* cursor - old head */
 
 		data->stats.received += num_new;
 		data->stats.missed += (uint16_t)(fseqB - fseqA - num_new + 1);
 
-		ifring_release_done_buf (rxring); /* head -> new head */
-		dbg_assert (ifring_head (rxring) == ifring_cur (rxring));
+		tes_ifring_release_done_buf (rxring); /* head -> new head */
+		dbg_assert (tes_ifring_head (rxring) == tes_ifring_cur (rxring));
 	}
 
 	if (skipped)
@@ -377,17 +377,17 @@ s_coordinator_body (const char* nmifname, long int stat_period)
 	 * then pass nifp->ni_name to s_prepare_if.
 	 */
 	/* Open the interface. */
-	data.ifd = if_open (nmifname, NULL, 0, 0);
+	data.ifd = tes_if_open (nmifname, NULL, 0, 0);
 	if (data.ifd == NULL)
 	{
 		s_msgf (errno, LOG_ERR, 0, "Could not open interface %s",
 			nmifname);
 		return -1;
 	}
-	const char* ifname = if_name (data.ifd);
+	const char* ifname = tes_if_name (data.ifd);
 	dbg_assert (ifname != NULL);
 	s_msgf (0, LOG_INFO, 0, "Opened interface %s", ifname);
-	dbg_assert (if_rxrings (data.ifd) == NUM_RINGS);
+	dbg_assert (tes_if_rxrings (data.ifd) == NUM_RINGS);
 
 	/* Bring the interface up and put it in promiscuous mode. */
 	rc = s_prepare_if (ifname);
@@ -408,7 +408,7 @@ s_coordinator_body (const char* nmifname, long int stat_period)
 	/* Register the TES interface as a poller. */
 	struct zmq_pollitem_t pitem;
 	memset (&pitem, 0, sizeof (pitem));
-	pitem.fd = if_fd (data.ifd);
+	pitem.fd = tes_if_fd (data.ifd);
 	pitem.events = ZMQ_POLLIN;
 	rc = zloop_poller (loop, &pitem, s_new_pkts_hn, &data);
 	if (rc == -1)
@@ -447,7 +447,7 @@ s_coordinator_body (const char* nmifname, long int stat_period)
 cleanup:
 	tasks_destroy ();
 	zloop_destroy (&loop);
-	if_close (data.ifd);
+	tes_if_close (data.ifd);
 	s_msg (0, LOG_DEBUG, 0, "Done");
 	return rc;
 }

@@ -32,7 +32,7 @@
  * - More rigorous checks when setting head or cursor. In particular, ensure
  *   cursor never ends up between head and tail since netmap poll will block
  *   forever.
- * - Provide a way to build an ifreq object.
+ * - Provide a way to build an tes_ifreq object.
  * - Subtract netmap's first ring ID from all ring IDs returned, so user is
  *   ensured IDs start at 0.
  */
@@ -42,22 +42,22 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h> /* defines 'unlikely' macro */
 
-struct _ifring
+struct tes_ifring
 {
 	struct netmap_ring n;
 };
 
-struct _ifdesc
+struct tes_ifdesc
 {
 	struct nm_desc n;
 };
 
-struct _ifreq
+struct tes_ifreq
 {
 	struct nmreq n;
 };
 
-struct _ifhdr
+struct tes_ifhdr
 {
 	struct nm_pkthdr n;
 };
@@ -65,47 +65,47 @@ struct _ifhdr
 /* ------------------------------------------------------------------------- */
 
 static inline uint32_t
-s_ring_preceding (ifring* ring, uint32_t idx)
+s_ring_preceding (tes_ifring* ring, uint32_t idx)
 {
 	if (unlikely (idx == 0))
 		return ring->n.num_slots - 1;
 	return idx - 1;
 }
 static inline uint32_t
-s_ring_following (ifring* ring, uint32_t idx)
+s_ring_following (tes_ifring* ring, uint32_t idx)
 {
 	if (unlikely (idx + 1 == ring->n.num_slots))
 		return 0;
 	return idx + 1;
 }
 static inline char*
-s_buf (ifring* ring, uint32_t idx)
+s_buf (tes_ifring* ring, uint32_t idx)
 {
 	return NETMAP_BUF (&ring->n, ring->n.slot[ idx ].buf_idx);
 }
-static inline ifring*
-s_txring (ifdesc* ifd, uint16_t idx)
+static inline tes_ifring*
+s_txring (tes_ifdesc* ifd, uint16_t idx)
 {
-	return (ifring*)NETMAP_TXRING (ifd->n.nifp, idx);
+	return (tes_ifring*)NETMAP_TXRING (ifd->n.nifp, idx);
 }
-static inline ifring*
-s_rxring (ifdesc* ifd, uint16_t idx)
+static inline tes_ifring*
+s_rxring (tes_ifdesc* ifd, uint16_t idx)
 {
-	return (ifring*)NETMAP_RXRING (ifd->n.nifp, idx);
+	return (tes_ifring*)NETMAP_RXRING (ifd->n.nifp, idx);
 }
 
 /* -------------------------------- MANAGER -------------------------------- */
 
 
 /* Open or close an interface. */
-ifdesc*
-if_open (const char *name, const ifreq *req,
-	uint64_t flags, const ifdesc *arg)
+tes_ifdesc*
+tes_if_open (const char *name, const tes_ifreq *req,
+	uint64_t flags, const tes_ifdesc *arg)
 {
-	return (ifdesc*)nm_open (name, &req->n, flags, &arg->n);
+	return (tes_ifdesc*)nm_open (name, &req->n, flags, &arg->n);
 }
 int
-if_close (ifdesc* ifd)
+tes_if_close (tes_ifdesc* ifd)
 { /* to keep the signature of nm_close we don't take a double pointer, so
    * caller should nullify it */
 	return nm_close (&ifd->n);
@@ -113,42 +113,42 @@ if_close (ifdesc* ifd)
 
 /* Get the file descriptor */
 int
-if_fd (ifdesc* ifd)
+tes_if_fd (tes_ifdesc* ifd)
 {
 	return ifd->n.fd;
 }
 
 /* Get the interface name */
 char*
-if_name (ifdesc* ifd)
+tes_if_name (tes_ifdesc* ifd)
 {
 	return ifd->n.nifp->ni_name;
 }
 
 /* Set and get the first, previous, next, <idx> or last tx or rx ring.
  * Returns NULL for rings beyond the last one. */
-ifring*
-if_rewind_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_rewind_txring (tes_ifdesc* ifd)
 {
 	ifd->n.cur_tx_ring = ifd->n.first_tx_ring;
 	return s_txring (ifd, ifd->n.cur_tx_ring);
 }
-ifring*
-if_previous_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_previous_txring (tes_ifdesc* ifd)
 {
 	if (unlikely (ifd->n.cur_tx_ring == ifd->n.first_tx_ring))
 		return NULL;
 	return s_txring (ifd, --ifd->n.cur_tx_ring);
 }
-ifring*
-if_next_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_next_txring (tes_ifdesc* ifd)
 {
 	if (unlikely (ifd->n.cur_tx_ring == ifd->n.last_tx_ring))
 		return NULL;
 	return s_txring (ifd, ++ifd->n.cur_tx_ring);
 }
-ifring*
-if_goto_txring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_goto_txring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx > ifd->n.last_tx_ring))
@@ -156,34 +156,34 @@ if_goto_txring (ifdesc* ifd, uint16_t idx)
 	ifd->n.cur_tx_ring = idx;
 	return s_txring (ifd, ifd->n.cur_tx_ring);
 }
-ifring*
-if_goto_last_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_goto_last_txring (tes_ifdesc* ifd)
 {
 	ifd->n.cur_tx_ring = ifd->n.last_tx_ring;
 	return s_txring (ifd, ifd->n.cur_tx_ring);
 }
-ifring*
-if_rewind_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_rewind_rxring (tes_ifdesc* ifd)
 {
 	ifd->n.cur_rx_ring = ifd->n.first_rx_ring;
 	return s_rxring (ifd, ifd->n.cur_rx_ring);
 }
-ifring*
-if_previous_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_previous_rxring (tes_ifdesc* ifd)
 {
 	if (unlikely (ifd->n.cur_rx_ring == ifd->n.first_rx_ring))
 		return NULL;
 	return s_rxring (ifd, --ifd->n.cur_rx_ring);
 }
-ifring*
-if_next_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_next_rxring (tes_ifdesc* ifd)
 {
 	if (unlikely (ifd->n.cur_rx_ring == ifd->n.last_rx_ring))
 		return NULL;
 	return s_rxring (ifd, ++ifd->n.cur_rx_ring);
 }
-ifring*
-if_goto_rxring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_goto_rxring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx > ifd->n.last_rx_ring))
@@ -191,8 +191,8 @@ if_goto_rxring (ifdesc* ifd, uint16_t idx)
 	ifd->n.cur_rx_ring = idx;
 	return s_rxring (ifd, ifd->n.cur_rx_ring);
 }
-ifring*
-if_goto_last_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_goto_last_rxring (tes_ifdesc* ifd)
 {
 	ifd->n.cur_rx_ring = ifd->n.last_rx_ring;
 	return s_rxring (ifd, ifd->n.cur_rx_ring);
@@ -202,13 +202,13 @@ if_goto_last_rxring (ifdesc* ifd)
  * tail-1.
  * previous and next return NULL when reaching the head-1 or tail. */
 char*
-ifring_rewind_buf (ifring* ring)
+tes_ifring_rewind_buf (tes_ifring* ring)
 {
 	ring->n.cur = ring->n.head;
 	return s_buf (ring, ring->n.cur);
 }
 char*
-ifring_previous_buf (ifring* ring)
+tes_ifring_previous_buf (tes_ifring* ring)
 {
 	if (unlikely (ring->n.cur == ring->n.head))
 		return NULL;
@@ -216,7 +216,7 @@ ifring_previous_buf (ifring* ring)
 	return s_buf (ring, ring->n.cur);
 }
 char*
-ifring_next_buf (ifring* ring)
+tes_ifring_next_buf (tes_ifring* ring)
 {
 	ring->n.cur = s_ring_following (ring, ring->n.cur);
 	if (unlikely (ring->n.cur == ring->n.tail))
@@ -224,13 +224,13 @@ ifring_next_buf (ifring* ring)
 	return s_buf (ring, ring->n.cur);
 }
 char*
-ifring_goto_buf (ifring* ring, uint32_t idx)
+tes_ifring_goto_buf (tes_ifring* ring, uint32_t idx)
 {
 	ring->n.cur = idx;
 	return s_buf (ring, ring->n.cur);
 }
 char*
-ifring_goto_last_buf (ifring* ring)
+tes_ifring_goto_last_buf (tes_ifring* ring)
 {
 	ring->n.cur = s_ring_preceding (ring, ring->n.tail);
 	return s_buf (ring, ring->n.cur);
@@ -238,19 +238,19 @@ ifring_goto_last_buf (ifring* ring)
 
 /* Set and get the head buffer of a ring to next, <idx> or cur. */
 char*
-ifring_release_one_buf (ifring* ring)
+tes_ifring_release_one_buf (tes_ifring* ring)
 {
 	ring->n.head = s_ring_following (ring, ring->n.head);
 	return s_buf (ring, ring->n.head);
 }
 char*
-ifring_release_to_buf (ifring* ring, uint32_t idx)
+tes_ifring_release_to_buf (tes_ifring* ring, uint32_t idx)
 {
 	ring->n.head = idx;
 	return s_buf (ring, ring->n.head);
 }
 char*
-ifring_release_done_buf (ifring* ring)
+tes_ifring_release_done_buf (tes_ifring* ring)
 {
 	ring->n.head = ring->n.cur;
 	return s_buf (ring, ring->n.head);
@@ -258,7 +258,7 @@ ifring_release_done_buf (ifring* ring)
 
 /* Set the current buffer of a ring to tail+num. */
 void
-ifring_wait_for_more (ifring* ring, uint32_t num)
+tes_ifring_wait_for_more (tes_ifring* ring, uint32_t num)
 {
 	ring->n.cur = ring->n.tail + num;
 	while (ring->n.cur >= ring->n.num_slots)
@@ -267,25 +267,25 @@ ifring_wait_for_more (ifring* ring, uint32_t num)
 
 /* Set both the head and current buffer to tail. */
 void
-ifring_release_all (ifring* ring)
+tes_ifring_release_all (tes_ifring* ring)
 {
 	ring->n.head = ring->n.cur = ring->n.tail;
 }
 
 /* Same as nm_inject. */
 int
-if_inject (ifdesc* ifd, const void* buf, size_t len)
+tes_if_inject (tes_ifdesc* ifd, const void* buf, size_t len)
 {
 	return nm_inject (&ifd->n, buf, len);
 }
 
 /* Same as nm_dispatch. */
 int
-if_dispatch (ifdesc* ifd, int cnt, ifpkt_hn handler,
+tes_if_dispatch (tes_ifdesc* ifd, int cnt, tes_ifpkt_hn handler,
 	unsigned char* arg)
 {
-	/* The cast to nm_cb_t suppresses the GCC warning, due to ifpkt_hn
-	 * accepting an ifhdr* rather than (the equivalent) struct nm_pkthdr* */
+	/* The cast to nm_cb_t suppresses the GCC warning, due to tes_ifpkt_hn
+	 * accepting an tes_ifhdr* rather than (the equivalent) struct nm_pkthdr* */
 	return nm_dispatch (&ifd->n, cnt, (nm_cb_t)handler, arg);
 }
 
@@ -293,12 +293,12 @@ if_dispatch (ifdesc* ifd, int cnt, ifpkt_hn handler,
 
 /* Get the number of tx or rx rings. */
 uint16_t
-if_txrings (ifdesc* ifd)
+tes_if_txrings (tes_ifdesc* ifd)
 {
 	return (ifd->n.last_tx_ring - ifd->n.first_tx_ring + 1);
 }
 uint16_t
-if_rxrings (ifdesc* ifd)
+tes_if_rxrings (tes_ifdesc* ifd)
 {
 	return (ifd->n.last_rx_ring - ifd->n.first_rx_ring + 1);
 }
@@ -309,18 +309,18 @@ if_rxrings (ifdesc* ifd)
 /* Get the first, current, <idx>, preceding <idx>, following <idx> or last tx
  * or rx ring. It is not done in a circular fashion.
  * Returns NULL for rings before first or beyond the last one. */
-ifring*
-if_first_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_first_txring (tes_ifdesc* ifd)
 {
 	return s_txring (ifd, ifd->n.first_tx_ring);
 }
-ifring*
-if_cur_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_cur_txring (tes_ifdesc* ifd)
 {
 	return s_txring (ifd, ifd->n.cur_tx_ring);
 }
-ifring*
-if_txring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_txring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx < ifd->n.first_tx_ring
@@ -328,8 +328,8 @@ if_txring (ifdesc* ifd, uint16_t idx)
 		return NULL;
 	return s_txring (ifd, idx);
 }
-ifring*
-if_preceding_txring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_preceding_txring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx <= ifd->n.first_tx_ring ||
@@ -337,8 +337,8 @@ if_preceding_txring (ifdesc* ifd, uint16_t idx)
 		return NULL;
 	return s_txring (ifd, idx - 1);
 }
-ifring*
-if_following_txring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_following_txring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_tx_ring;
 	if (unlikely (idx + 1 < ifd->n.first_tx_ring ||
@@ -346,23 +346,23 @@ if_following_txring (ifdesc* ifd, uint16_t idx)
 		return NULL;
 	return s_txring (ifd, idx + 1);
 }
-ifring*
-if_last_txring (ifdesc* ifd)
+tes_ifring*
+tes_if_last_txring (tes_ifdesc* ifd)
 {
 	return s_txring (ifd, ifd->n.last_tx_ring);
 }
-ifring*
-if_first_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_first_rxring (tes_ifdesc* ifd)
 {
 	return s_rxring (ifd, ifd->n.first_rx_ring);
 }
-ifring*
-if_cur_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_cur_rxring (tes_ifdesc* ifd)
 {
 	return s_rxring (ifd, ifd->n.cur_rx_ring);
 }
-ifring*
-if_rxring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_rxring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx < ifd->n.first_rx_ring
@@ -370,8 +370,8 @@ if_rxring (ifdesc* ifd, uint16_t idx)
 		return NULL;
 	return s_rxring (ifd, idx);
 }
-ifring*
-if_preceding_rxring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_preceding_rxring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx <= ifd->n.first_rx_ring ||
@@ -379,8 +379,8 @@ if_preceding_rxring (ifdesc* ifd, uint16_t idx)
 		return NULL;
 	return s_rxring (ifd, idx - 1);
 }
-ifring*
-if_following_rxring (ifdesc* ifd, uint16_t idx)
+tes_ifring*
+tes_if_following_rxring (tes_ifdesc* ifd, uint16_t idx)
 {
 	idx += ifd->n.first_rx_ring;
 	if (unlikely (idx + 1 < ifd->n.first_rx_ring ||
@@ -388,44 +388,44 @@ if_following_rxring (ifdesc* ifd, uint16_t idx)
 		return NULL;
 	return s_rxring (ifd, idx + 1);
 }
-ifring*
-if_last_rxring (ifdesc* ifd)
+tes_ifring*
+tes_if_last_rxring (tes_ifdesc* ifd)
 {
 	return s_rxring (ifd, ifd->n.last_rx_ring);
 }
 
 /* Get the index of the current or last tx or rx ring. */
 uint16_t
-if_cur_txring_id (ifdesc* ifd)
+tes_if_cur_txring_id (tes_ifdesc* ifd)
 {
 	return ifd->n.cur_tx_ring - ifd->n.first_tx_ring;
 }
 uint16_t
-if_last_txring_id (ifdesc* ifd)
+tes_if_last_txring_id (tes_ifdesc* ifd)
 {
 	return ifd->n.last_tx_ring - ifd->n.first_tx_ring;
 }
 uint16_t
-if_cur_rxring_id (ifdesc* ifd)
+tes_if_cur_rxring_id (tes_ifdesc* ifd)
 {
 	return ifd->n.cur_rx_ring - ifd->n.first_rx_ring;
 }
 uint16_t
-if_last_rxring_id (ifdesc* ifd)
+tes_if_last_rxring_id (tes_ifdesc* ifd)
 {
 	return ifd->n.last_rx_ring - ifd->n.first_rx_ring;
 }
 
 /* Get the number of buffers in the ring. */
 uint32_t
-ifring_bufs (ifring* ring)
+tes_ifring_bufs (tes_ifring* ring)
 {
 	return ring->n.num_slots;
 }
 
 /* Get the physical size of the buffers in the ring. */
 uint32_t
-ifring_buf_size (ifring* ring)
+tes_ifring_buf_size (tes_ifring* ring)
 {
 	return ring->n.nr_buf_size;
 }
@@ -434,7 +434,7 @@ ifring_buf_size (ifring* ring)
  * Returns -1 or 1 if ida is closer or farther from the head than idb.
  * Returns 0 if they are equal. */
 int
-ifring_compare_ids (ifring* ring, uint32_t ida, uint32_t idb)
+tes_ifring_compare_ids (tes_ifring* ring, uint32_t ida, uint32_t idb)
 {
 	if (unlikely (ida == idb))
 		return 0;
@@ -452,7 +452,7 @@ ifring_compare_ids (ifring* ring, uint32_t ida, uint32_t idb)
  * Returns the buf id that is closer (smaller) or farther (larger) to the
  * ring's head in a forward direction. */
 uint32_t
-ifring_earlier_id (ifring* ring, uint32_t ida, uint32_t idb)
+tes_ifring_earlier_id (tes_ifring* ring, uint32_t ida, uint32_t idb)
 {
 	if (unlikely (ida == idb))
 		return ida;
@@ -464,7 +464,7 @@ ifring_earlier_id (ifring* ring, uint32_t ida, uint32_t idb)
 	return (ida < idb) ? idb : ida;
 }
 uint32_t
-ifring_later_id (ifring* ring, uint32_t ida, uint32_t idb)
+tes_ifring_later_id (tes_ifring* ring, uint32_t ida, uint32_t idb)
 {
 	if (unlikely (ida == idb))
 		return ida;
@@ -479,42 +479,42 @@ ifring_later_id (ifring* ring, uint32_t ida, uint32_t idb)
 /* Get the head, current, preceding <idx>, following <idx> or tail buffer id of
  * a ring. Wraps around. */
 uint32_t
-ifring_head (ifring* ring)
+tes_ifring_head (tes_ifring* ring)
 {
 	return ring->n.head;
 }
 uint32_t
-ifring_cur (ifring* ring)
+tes_ifring_cur (tes_ifring* ring)
 {
 	return ring->n.cur;
 }
 uint32_t
-ifring_preceding (ifring* ring, uint32_t idx)
+tes_ifring_preceding (tes_ifring* ring, uint32_t idx)
 {
 	return s_ring_preceding (ring, idx);
 }
 uint32_t
-ifring_following (ifring* ring, uint32_t idx)
+tes_ifring_following (tes_ifring* ring, uint32_t idx)
 {
 	return s_ring_following (ring, idx);
 }
 uint32_t
-ifring_tail (ifring* ring)
+tes_ifring_tail (tes_ifring* ring)
 {
 	return ring->n.tail;
 }
 
 /* Get the current tx or rx ring's current buffer. */
 char*
-if_cur_txbuf (ifdesc* ifd)
+tes_if_cur_txbuf (tes_ifdesc* ifd)
 {
-	ifring* ring = s_txring (ifd, ifd->n.cur_tx_ring);
+	tes_ifring* ring = s_txring (ifd, ifd->n.cur_tx_ring);
 	return s_buf (ring, ring->n.cur);
 }
 char*
-if_cur_rxbuf (ifdesc* ifd)
+tes_if_cur_rxbuf (tes_ifdesc* ifd)
 {
-	ifring* ring = s_rxring (ifd, ifd->n.cur_rx_ring);
+	tes_ifring* ring = s_rxring (ifd, ifd->n.cur_rx_ring);
 	return s_buf (ring, ring->n.cur);
 }
 
@@ -522,29 +522,29 @@ if_cur_rxbuf (ifdesc* ifd)
  * buffer of a ring. Wraps around.
  * preceding and following return NULL when reaching the head-1 or tail. */
 char*
-ifring_head_buf (ifring* ring)
+tes_ifring_head_buf (tes_ifring* ring)
 {
 	return s_buf (ring, ring->n.head);
 }
 char*
-ifring_cur_buf (ifring* ring)
+tes_ifring_cur_buf (tes_ifring* ring)
 {
 	return s_buf (ring, ring->n.cur);
 }
 char*
-ifring_buf (ifring* ring, uint32_t idx)
+tes_ifring_buf (tes_ifring* ring, uint32_t idx)
 {
 	return s_buf (ring, idx);
 }
 char*
-ifring_preceding_buf (ifring* ring, uint32_t idx)
+tes_ifring_preceding_buf (tes_ifring* ring, uint32_t idx)
 {
 	if (unlikely (idx == ring->n.head))
 		return NULL;
 	return s_buf (ring, s_ring_preceding (ring, idx));
 }
 char*
-ifring_following_buf (ifring* ring, uint32_t idx)
+tes_ifring_following_buf (tes_ifring* ring, uint32_t idx)
 {
 	idx = s_ring_following (ring, idx);
 	if (unlikely (idx == ring->n.tail))
@@ -552,19 +552,19 @@ ifring_following_buf (ifring* ring, uint32_t idx)
 	return s_buf (ring, idx);
 }
 char*
-ifring_last_buf (ifring* ring)
+tes_ifring_last_buf (tes_ifring* ring)
 {
 	return s_buf (ring, s_ring_preceding (ring, ring->n.tail));
 }
 
 /* Get the length of the current or <idx> buffer. */
 uint16_t
-ifring_cur_len (ifring* ring)
+tes_ifring_cur_len (tes_ifring* ring)
 {
 	return ring->n.slot[ ring->n.cur ].len;
 }
 uint16_t
-ifring_len (ifring* ring, uint32_t idx)
+tes_ifring_len (tes_ifring* ring, uint32_t idx)
 {
 	return ring->n.slot[ idx ].len;
 }
@@ -573,7 +573,7 @@ ifring_len (ifring* ring, uint32_t idx)
  * For rx rings, this is the number of uninspected received slots.
  * For tx rings, this is the number of free slots. */
 uint32_t
-ifring_pending (ifring* ring)
+tes_ifring_pending (tes_ifring* ring)
 {
 	if (ring->n.tail >= ring->n.cur)
 		return ring->n.tail - ring->n.cur;
@@ -584,7 +584,7 @@ ifring_pending (ifring* ring)
  * For rx rings, this is the number of inspected received slots.
  * For tx rings, this is the number of received slots. */
 uint32_t
-ifring_done (ifring* ring)
+tes_ifring_done (tes_ifring* ring)
 {
 	if (ring->n.cur >= ring->n.head)
 		return ring->n.cur - ring->n.head;
@@ -595,7 +595,7 @@ ifring_done (ifring* ring)
  * For rx rings, this is the total number of received slots.
  * For tx rings, this is the number of received + free slots. */
 uint32_t
-ifring_total (ifring* ring)
+tes_ifring_total (tes_ifring* ring)
 {
 	if (ring->n.tail >= ring->n.head)
 		return ring->n.tail - ring->n.head;

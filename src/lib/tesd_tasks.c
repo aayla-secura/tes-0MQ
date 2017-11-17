@@ -107,7 +107,7 @@
  *         const char* front_addr;     // the socket addresses, comma separated
  *         const int   front_type;     // one of ZMQ_*
  *         int         id;             // the task ID
- *         ifdesc*     ifd;            // netmap interface
+ *         tes_ifdesc* ifd;            // netmap interface
  *         uint32_t    heads[NUM_RINGS]; // per-ring task's head
  *         uint16_t    nrings;         // number of rings <= NUM_RINGS
  *         uint16_t    prev_fseq;      // previous frame sequence
@@ -160,7 +160,7 @@
  * If the task is not interested in receiving packets, is sets its active flag
  * to false. It won't receive SIG_WAKEUP if it is not active and its heads
  * won't be synchronized with the real heads. When it needs to process packets,
- * it must set its private heads to the global heads (by calling ifring_head
+ * it must set its private heads to the global heads (by calling tes_ifring_head
  * for each ring) and then set its active flag to true.
  * Tasks are initialized as inactive, the task should enable the flag either in
  * its initializer or in its client frontend handler.
@@ -205,7 +205,6 @@
  */
 
 #include "tesd_tasks.h"
-#include "net/tesif_reader.h"
 #include "common.h"
 #include "aio.h"
 
@@ -231,7 +230,7 @@ struct _task_t
 	const char* front_addr;
 	const int   front_type;
 	int         id;
-	ifdesc*     ifd;
+	tes_ifdesc* ifd;
 	uint32_t    heads[NUM_RINGS];
 	uint16_t    nrings;
 	uint16_t    prev_fseq;
@@ -270,7 +269,7 @@ static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
 static zactor_fn       s_task_shim;
 
-static int  s_task_start (ifdesc* ifd, task_t* self);
+static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
 static inline void s_task_activate (task_t* self);
 static int s_task_dispatch (task_t* self, zloop_t* loop,
@@ -415,7 +414,7 @@ static task_t tasks[] = {
  * Returns 0 on success, -1 on error.
  */
 int
-tasks_start (ifdesc* ifd, zloop_t* c_loop)
+tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 {
 	dbg_assert (ifd != NULL);
 	dbg_assert (NUM_TASKS == sizeof (tasks) / sizeof (task_t));
@@ -540,8 +539,8 @@ tasks_get_heads (void)
 			{
 				for (int r = 0; r < NUM_RINGS; r++)
 				{
-					ifring* rxring = if_rxring (self->ifd, r);
-					heads[r] = ifring_earlier_id (
+					tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+					heads[r] = tes_ifring_earlier_id (
 							rxring, heads[r],
 							self->heads[r]);
 				}
@@ -630,10 +629,10 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	int next_ring_id = -1; /* next to process */
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
-		ifring* rxring = if_rxring (self->ifd, r);
-		if (ifring_tail (rxring) == self->heads[r])
+		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+		if (tes_ifring_tail (rxring) == self->heads[r])
 			continue;
-		tespkt* pkt = (tespkt*) ifring_buf (
+		tespkt* pkt = (tespkt*) tes_ifring_buf (
 				rxring, self->heads[r]);
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
@@ -852,13 +851,13 @@ cleanup:
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_start (ifdesc* ifd, task_t* self)
+s_task_start (tes_ifdesc* ifd, task_t* self)
 {
 	dbg_assert (self != NULL);
 	dbg_assert (ifd != NULL);
 
 	self->ifd = ifd;
-	dbg_assert (if_rxrings (ifd) == NUM_RINGS);
+	dbg_assert (tes_if_rxrings (ifd) == NUM_RINGS);
 
 	/* Start the thread, will block until the handler signals */
 	self->shim = zactor_new (s_task_shim, self);
@@ -911,8 +910,8 @@ s_task_activate (task_t* self)
 	dbg_assert (self != NULL);
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
-		ifring* rxring = if_rxring (self->ifd, r);
-		self->heads[r] = ifring_head (rxring);
+		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+		self->heads[r] = tes_ifring_head (rxring);
 	}
 	self->active = 1;
 }
@@ -933,7 +932,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	self->dbg_stats.pkts.missed += missed;
 #endif
 
-	ifring* rxring = if_rxring (self->ifd, ring_id);
+	tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
 	/*
 	 * First exec of the loop uses the head from the last time
 	 * dispatch was called with this ring_id.
@@ -941,7 +940,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	uint16_t fseq_gap = missed;
 	do
 	{
-		tespkt* pkt = (tespkt*) ifring_buf (
+		tespkt* pkt = (tespkt*) tes_ifring_buf (
 			rxring, self->heads[ring_id]);
 		dbg_assert (pkt != NULL);
 #ifdef FULL_DBG
@@ -949,7 +948,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #endif
 
 		/* TO DO: check packet */
-		uint16_t len = ifring_len (rxring, self->heads[ring_id]);
+		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t plen = tespkt_flen (pkt);
 		if (plen > len)
 		{ /* drop the frame */
@@ -972,7 +971,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		else
 			self->prev_pseq_pls = tespkt_pseq (pkt);
 
-		self->heads[ring_id] = ifring_following (
+		self->heads[ring_id] = tes_ifring_following (
 				rxring, self->heads[ring_id]);
 
 		/* TO DO: return codes */
@@ -982,7 +981,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		if (fseq_gap > 0)
 			return 0;
 
-	} while (self->heads[ring_id] != ifring_tail (rxring));
+	} while (self->heads[ring_id] != tes_ifring_tail (rxring));
 
 	return 0;
 }
