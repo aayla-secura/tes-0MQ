@@ -10,7 +10,7 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define NM_IFNAME "vale:fpga{1"
+#define NM_IFNAME "vale:tes{1"
 #define PCAPFILE  "noise drive.pcapng"
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
@@ -127,13 +127,13 @@ main (void)
 		p++;
 
 		/* Send the packet */
-		uint16_t len = pkt_len ((fpga_pkt*)pkt);
+		uint16_t len = pkt_len ((tespkt*)pkt);
 		if (len != h.len && len >= 60)
 			printf ("Packet #%5lu: frame len says %5hu, "
 				"caplen = %5hu, len = %5hu\n",
 				p, len, h.caplen, h.len);
-		if (len > MAX_FPGA_FRAME_LEN)
-			len = MAX_FPGA_FRAME_LEN;
+		if (len > MAX_TES_FRAME_LEN)
+			len = MAX_TES_FRAME_LEN;
 		rc = poll (&pfd, 1, -1);
 		if (rc == -1)
 		{
@@ -154,18 +154,18 @@ main (void)
 		/* Statistics */
 		if (sf == -1)
 		{
-			sf = (int)frame_seq ((fpga_pkt*)pkt);
+			sf = (int)frame_seq ((tespkt*)pkt);
 		}
 		else
 		{
 			missed += (uint64_t) (
-				(uint16_t)(frame_seq ((fpga_pkt*)pkt) - ef) - 1 );
+				(uint16_t)(frame_seq ((tespkt*)pkt) - ef) - 1 );
 		}
-		ef = frame_seq ((fpga_pkt*)pkt);
-		pkt_pretty_print ((fpga_pkt*)pkt, stdout, stderr);
-		pkt_perror (stdout, is_valid ((fpga_pkt*)pkt));
+		ef = frame_seq ((tespkt*)pkt);
+		pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
+		pkt_perror (stdout, is_valid ((tespkt*)pkt));
 		printf ("\n");
-		// dump_pkt (pkt, FPGA_HDR_LEN);
+		// dump_pkt (pkt, TES_HDR_LEN);
 	}
 
 	pcap_close (pc);

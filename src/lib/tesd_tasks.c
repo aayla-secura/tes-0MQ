@@ -216,7 +216,7 @@
 /* ---------------------------------- API ---------------------------------- */
 
 typedef int (s_data_fn)(task_t*);
-typedef int (s_pkt_fn)(zloop_t*, fpga_pkt*, uint16_t, uint16_t, task_t*);
+typedef int (s_pkt_fn)(zloop_t*, tespkt*, uint16_t, uint16_t, task_t*);
 
 /* See DEV NOTES */
 struct _task_t
@@ -329,7 +329,7 @@ struct s_task_save_data_t
 	uint64_t batches;
 	uint64_t failed_batches;
 	uint64_t num_cleared;
-	unsigned char prev_hdr[FPGA_HDR_LEN];
+	unsigned char prev_hdr[TES_HDR_LEN];
 #endif
 	char*    filename;
 };
@@ -633,7 +633,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		ifring* rxring = if_rxring (self->ifd, r);
 		if (ifring_tail (rxring) == self->heads[r])
 			continue;
-		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
+		tespkt* pkt = (tespkt*) ifring_buf (
 				rxring, self->heads[r]);
 		uint16_t cur_fseq = frame_seq (pkt);
 		uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
@@ -941,7 +941,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	uint16_t fseq_gap = missed;
 	do
 	{
-		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
+		tespkt* pkt = (tespkt*) ifring_buf (
 			rxring, self->heads[ring_id]);
 		dbg_assert (pkt != NULL);
 #ifdef FULL_DBG
@@ -958,7 +958,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 				"ring slot is %hu)", plen, len);
 			return 0;
 		}
-		dbg_assert (plen <= MAX_FPGA_FRAME_LEN);
+		dbg_assert (plen <= MAX_TES_FRAME_LEN);
 		int rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
 
 		uint16_t cur_fseq = frame_seq (pkt);
@@ -1132,7 +1132,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
  * says.
  */
 static int
-s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
+s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
@@ -1145,7 +1145,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 
 #ifdef FULL_DBG
 	if (sjob->bufzone.enqueued + sjob->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN)
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN)
 	{
 		s_msgf (0, LOG_DEBUG, self->id,
 			"Waiting: %lu, in queue: %lu free: %ld, "
@@ -1159,7 +1159,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	}
 #endif
 	dbg_assert (sjob->bufzone.enqueued + sjob->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN);
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
 	dbg_assert (sjob->bufzone.cur >= sjob->bufzone.base);
 	dbg_assert (sjob->bufzone.tail >= sjob->bufzone.base);
 	dbg_assert (sjob->bufzone.cur < sjob->bufzone.ceil);
@@ -1184,12 +1184,12 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	{
 		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
 			self->prev_fseq, cur_fseq);
-		s_dump_buf (sjob->prev_hdr, FPGA_HDR_LEN);
-		s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
+		s_dump_buf (sjob->prev_hdr, TES_HDR_LEN);
+		s_dump_buf ((void*)pkt, TES_HDR_LEN);
 		self->error = 1;
 		return -1;
 	}
-	memcpy (sjob->prev_hdr, pkt, FPGA_HDR_LEN);
+	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
 #endif
 
 	sjob->st.frames++;
@@ -1222,7 +1222,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	/* If there is no space for a full frame, force write until there is.
 	 * If we are finalizingm wait for all bytes to be written. */
 	while ( ( sjob->bufzone.enqueued + sjob->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN || ! self->active )
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN || ! self->active )
 		&& jobrc == EINPROGRESS )
 	{
 		jobrc = s_task_save_queue (sjob, 1);
@@ -1258,7 +1258,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 #endif /* skip writing */
 
 	dbg_assert (sjob->bufzone.enqueued + sjob->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN);
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
 
 	if ( ! self->active )
 	{
@@ -1761,7 +1761,7 @@ s_task_save_canonicalize_path (const char* filename, int checkonly, int task_id)
  * frames are received (i.e. the size field appears to small).
  */
 static int
-s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
+s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
@@ -1852,10 +1852,10 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	}
 
 	/* Copy frame */
-	uint16_t fsize = pkt_len (pkt) - FPGA_HDR_LEN;
+	uint16_t fsize = pkt_len (pkt) - TES_HDR_LEN;
 	dbg_assert (hist->cur_size <= THIST_MAXSIZE - fsize);
 	memcpy (hist->buf + hist->cur_size,
-		(char*)pkt + FPGA_HDR_LEN, fsize);
+		(char*)pkt + TES_HDR_LEN, fsize);
 
 	hist->cur_size += fsize;
 

@@ -13,8 +13,7 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGAPKT_DEBUG
-// #define FPGA_USE_MACROS
+#define TESPKT_DEBUG
 #include <net/tespkt.h>
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
@@ -22,7 +21,7 @@
 #define UPDATE_INTERVAL 1
 #define MAX_TICKS 10000000 /* Set to 0 for unlimited */
 
-#define NM_IFNAME "vale:fpga"
+#define NM_IFNAME "vale:tes"
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
@@ -44,7 +43,7 @@ static struct
 		struct timeval last_check;
 	} timers;
 	struct {
-		fpga_pkt* cur_mca;
+		tespkt* cur_mca;
 		u_int32_t last_rcvd;
 		u_int32_t rcvd;
 		u_int32_t ticks;
@@ -300,8 +299,8 @@ main (void)
 		{
 			u_int32_t cur_bufid =
 				rxring->slot[ rxring->cur ].buf_idx;
-			fpga_pkt* pkt =
-				(fpga_pkt*) NETMAP_BUF (rxring, cur_bufid);
+			tespkt* pkt =
+				(tespkt*) NETMAP_BUF (rxring, cur_bufid);
 
 #ifdef SAVE_FILE
 			/* ------------------------------------------------- */
@@ -324,13 +323,13 @@ main (void)
 			if (gobj.pkts.rcvd > 0)
 			{
 				uint16_t prev_frame = cur_frame;
-				cur_frame = pkt->fpga_hdr.frame_seq;
+				cur_frame = pkt->teshdr.frame_seq;
 				gobj.pkts.missed += (u_int32_t) (
 					(uint16_t)(cur_frame - prev_frame) - 1);
 			}
 			else
 			{
-				cur_frame = pkt->fpga_hdr.frame_seq;
+				cur_frame = pkt->teshdr.frame_seq;
 				INFO ("First received frame is #%hu\n", cur_frame);
 			}
 
@@ -350,7 +349,7 @@ main (void)
 				raise (SIGTERM); /* done */
 
 #ifdef SAVE_FILE
-			if (gobj.b_written + MAX_FPGA_FRAME_LEN > MAX_FSIZE)
+			if (gobj.b_written + MAX_TES_FRAME_LEN > MAX_FSIZE)
 				raise (SIGTERM); /* done */
 #endif /* SAVE_FILE */
 		} while ( ! nm_ring_empty (rxring) );
