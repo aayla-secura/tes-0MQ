@@ -16,7 +16,7 @@
 
 #define FPGAPKT_DEBUG
 // #define FPGA_USE_MACROS
-#include <net/fpgapkt.h>
+#include <net/tespkt.h>
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
 // #define SAVE_FILE  "/media/nm_test"

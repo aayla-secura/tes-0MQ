@@ -18,7 +18,7 @@
 #include <net/netmap_user.h>
 
 #define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#include <net/tespkt.h>
 
 #ifndef NMRING
 #define NMRING

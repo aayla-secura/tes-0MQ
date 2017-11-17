@@ -1,4 +1,4 @@
-#include "daemon.h"
+#include "daemon_ng.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <syslog.h>

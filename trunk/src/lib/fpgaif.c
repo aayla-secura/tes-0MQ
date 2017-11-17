@@ -2,7 +2,7 @@
  * This is an API for setting and getting the fields of ring structures in an
  * opaque way (clients should only deal with pointers to them and pass them to
  * the methods declared in the header files). This is to ensure that clients
- * including only fpgaif_reader.h cannot modify the data.
+ * including only tesif_reader.h cannot modify the data.
  *
  * ----------------------------------------------------------------------------
  * -------------------------------- DEV NOTES ---------------------------------
@@ -37,7 +37,7 @@
  *   ensured IDs start at 0.
  */
 
-#include "net/fpgaif_manager.h"
+#include "net/tesif_manager.h"
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h> /* defines 'unlikely' macro */

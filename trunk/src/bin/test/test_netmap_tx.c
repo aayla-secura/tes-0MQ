@@ -18,7 +18,7 @@
 #include <net/netmap_user.h>
 
 #define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#include <net/tespkt.h>
 
 #define FPGA_BYTE_ORDER __LITTLE_ENDIAN 
 #if __BYTE_ORDER == FPGA_BYTE_ORDER
