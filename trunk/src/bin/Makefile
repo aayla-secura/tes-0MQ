@@ -19,8 +19,8 @@ clean:
 
 %: %.c
 
-server_main: server_main.o
+tesd: tesd.o $(HEADERS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) $(libs:%=-l% ) -o $@
 
-client: client.o
+tesc: tesc.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@

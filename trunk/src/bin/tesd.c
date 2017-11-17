@@ -1,9 +1,9 @@
 /*
  * See src/lib/fpgatasks.c for the API.
  *
- * ————————————————————————————————————————————————————————————————————————————
- * ———————————————————————————————— DEV NOTES —————————————————————————————————
- * ————————————————————————————————————————————————————————————————————————————
+ * ----------------------------------------------------------------------------
+ * -------------------------------- DEV NOTES ---------------------------------
+ * ----------------------------------------------------------------------------
  * When debugging we use assert throughout to catch bugs. Normally these
  * statements should never be reached regardless of user input. Other errors
  * are handled gracefully with messages to clients and/or syslog or stderr/out.
@@ -31,9 +31,9 @@
  *
  * Note: bool type and true/false macros are ensured by CZMQ.
  *
- * ————————————————————————————————————————————————————————————————————————————
- * —————————————————————————————————— TO DO ———————————————————————————————————
- * ————————————————————————————————————————————————————————————————————————————
+ * ----------------------------------------------------------------------------
+ * ---------------------------------- TO DO -----------------------------------
+ * ----------------------------------------------------------------------------
  * - chroot and drop privileges.
  */
 
@@ -46,6 +46,8 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
+
+#define PROGNAME "tesd"
 
 #ifdef linux
 #  define ifr_index ifr_ifindex
@@ -62,6 +64,7 @@
 /* Defaults */
 #define UPDATE_INTERVAL 1             // in seconds
 #define FPGA_IFNAME "netmap:" IFNAME
+#define PIDFILE "/var/run/" PROGNAME ".pid"
 
 /*
  * Statistics, only used in foreground mode
@@ -463,10 +466,16 @@ main (int argc, char **argv)
 	long int stat_period = -1;
 	char ifname[IFNAMSIZ];
 	memset (ifname, 0, sizeof (ifname));
-	while ( (opt = getopt (argc, argv, "i:u:fvh")) != -1 )
+	char pidfile[PATH_MAX];
+	memset (pidfile, 0, sizeof (pidfile));
+	while ( (opt = getopt (argc, argv, "p:i:u:fvh")) != -1 )
 	{
 		switch (opt)
 		{
+			case 'p':
+				snprintf (pidfile, sizeof (pidfile),
+					"%s", optarg);
+				break;
 			case 'i':
 				snprintf (ifname, sizeof (ifname),
 					"%s", optarg);
@@ -505,8 +514,7 @@ main (int argc, char **argv)
 	if (is_daemon)
 	{
 		/* Go into background. */
-		/* TO DO: set a pidfile */
-		rc = daemonize (NULL);
+		rc = daemonize (pidfile);
 		if (rc == -1)
 		{
 			s_msg (errno, LOG_ERR, 0,

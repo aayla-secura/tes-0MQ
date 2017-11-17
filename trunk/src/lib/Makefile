@@ -18,5 +18,5 @@ clean:
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-lib%.so: %.o
+lib%.so: %.o $(HEADERS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -shared $< -o $@

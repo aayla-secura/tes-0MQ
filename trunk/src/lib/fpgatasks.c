@@ -1,31 +1,31 @@
 /*
- * ————————————————————————————————————————————————————————————————————————————
- * ——————————————————————————————————— API ————————————————————————————————————
- * ————————————————————————————————————————————————————————————————————————————
+ * ----------------------------------------------------------------------------
+ * ----------------------------------- API ------------------------------------
+ * ----------------------------------------------------------------------------
  * 
- *               ———————                   ———————
+ *               -------                   -------
  *               | REQ |                   | SUB |                       client
- *               ———————                   ———————
+ *               -------                   -------
  *                  |                         |
  *
- * ——————————— save to file ————————————— histogram ———————————————————————————
+ * ----------- save to file ------------- histogram ---------------------------
  *
  *                  |                         |
- *              ———————.                   ———————
+ *              -------.                   -------
  *              | REP |                    | PUB |
- *              ———————.                   ———————
+ *              -------.                   -------
  *           
- *              ————————                   ————————
+ *              --------                   --------
  *              | PAIR |                   | PAIR |
- *              ————————                   ————————                      server
+ *              --------                   --------                      server
  *                 |                          |
- *              ————————— task coordinator ————————
+ *              --------- task coordinator --------
  *                 |                          |
- *              ————————                   ————————
+ *              --------                   --------
  *              | PAIR |                   | PAIR |           
- *              ————————                   ————————
+ *              --------                   --------
  *
- * —————————————————————————————— REP INTERFACE ———————————————————————————————
+ * ------------------------------ REP INTERFACE -------------------------------
  * 
  * Messages are sent and read via zsock_send, zsock_recv as "picture" messages.
  * Valid requests have a picture of "s81", replies have a picture of "18888":
@@ -72,14 +72,14 @@
  * At the moment we only handle one save-to-file request at a time. Will block
  * until it is done.
  *
- * —————————————————————————————— PUB INTERFACE ———————————————————————————————
+ * ------------------------------ PUB INTERFACE -------------------------------
  * Sends ZMQ single-frame messages (they are long, so will be fragmented on the
  * wire), each message contains one full histogram. You can receive these with
  * zmq_recv for example.
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––– DEV NOTES –––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ----------------------------------------------------------------------------
+ * -------------------------------- DEV NOTES ---------------------------------
+ * ----------------------------------------------------------------------------
  * There is a separate thread for each "task". Threads are zactors.
  * Currently there are two tasks:
  * 1) Listen on a REP socket and save all frames to file (until a requested
@@ -190,9 +190,9 @@
  * define s_task_stop as a wrapper around zactor_destroy, which sends SIG_STOP
  * and then calls zactor_destroy to wait for the handler to return.
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ----------------------------------------------------------------------------
+ * ---------------------------------- TO DO -----------------------------------
+ * ----------------------------------------------------------------------------
  * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
  * - Check if packet is valid and drop (increment another counter for malformed
  *   packets).
@@ -283,14 +283,6 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define REQ_OK          1
 #define REQ_PIC      "s81"
 #define REP_PIC    "18888"
-
-#ifndef PATH_MAX
-#  ifdef MAXPATHLEN
-#    define PATH_MAX MAXPATHLEN
-#  else
-#    define PATH_MAX 4096
-#  endif
-#endif
 
 #define TSAVE_ROOT "/media/data/" // must have a trailing slash
 #define TSAVE_ONLYFILES      // for now we don't generate filenames
