@@ -14,16 +14,15 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGAPKT_DEBUG
-// #define FPGA_USE_MACROS
-#include <net/fpgapkt.h>
+#define TESPKT_DEBUG
+#include <net/tespkt.h>
 
 #define MAX_FSIZE  5ULL << 32 /* 20GB */
 // #define SAVE_FILE  "/media/nm_test"
 #define UPDATE_INTERVAL 1
 #define MAX_TICKS 1000000 /* Set to 0 for unlimited */
 
-#define NM_IFNAME "vale:fpga"
+#define NM_IFNAME "vale:tes"
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
@@ -43,7 +42,7 @@ static struct
 		struct timeval last_check;
 	} timers;
 	struct {
-		fpga_pkt* cur_mca;
+		tespkt* cur_mca;
 		u_int32_t last_rcvd;
 		u_int32_t rcvd;
 		u_int32_t ticks;
@@ -53,10 +52,10 @@ static struct
 	struct {
 		pthread_t th_id;
 		int pipefd[2];
-	} fpga_th;
+	} tes_th;
 } gstats;
 
-/* Data managed by the thread communicating with the FPGA */
+/* Data managed by the thread communicating with the TES */
 struct t_data
 {
 	struct nm_desc* nmd;
@@ -160,7 +159,7 @@ print_stats (int sig)
 }
 
 static void
-fpga_cleanup (void* data_)
+cleanup (void* data_)
 {
 	// sleep (1); /* for debugging */
 	struct t_data* data = (struct t_data*) data_;
@@ -183,7 +182,7 @@ fpga_cleanup (void* data_)
 	}
 #endif /* SAVE_FILE */
 	DEBUG ("Cleaned up\n");
-	write (gstats.fpga_th.pipefd[1], "0", 1); /* signal to main thread */
+	write (gstats.tes_th.pipefd[1], "0", 1); /* signal to main thread */
 }
 
 static void
@@ -208,9 +207,9 @@ main_cleanup (int sig)
 		gstats.pkts.cur_mca = NULL;
 	}
 
-	if ( pthread_cancel (gstats.fpga_th.th_id) == 0)
+	if ( pthread_cancel (gstats.tes_th.th_id) == 0)
 	{
-		if ( (errno = pthread_join (gstats.fpga_th.th_id, NULL)) )
+		if ( (errno = pthread_join (gstats.tes_th.th_id, NULL)) )
 			perror ("");
 	}
 
@@ -263,7 +262,7 @@ main_body (void* arg)
 	print_desc_info (data.nmd);
 
 	/* Set up thread destructors */
-	pthread_cleanup_push (fpga_cleanup, &data);
+	pthread_cleanup_push (cleanup, &data);
 
 	/* Get the ring (we only use one) */
 	assert (data.nmd->first_rx_ring == data.nmd->last_rx_ring);
@@ -334,8 +333,8 @@ main_body (void* arg)
 		{
 			u_int32_t cur_bufid =
 				rxring->slot[ rxring->cur ].buf_idx;
-			fpga_pkt* pkt =
-				(fpga_pkt*) NETMAP_BUF (rxring, cur_bufid);
+			tespkt* pkt =
+				(tespkt*) NETMAP_BUF (rxring, cur_bufid);
 
 #ifdef SAVE_FILE
 			/* ------------------------------------------------- */
@@ -361,13 +360,13 @@ main_body (void* arg)
 			if (gstats.pkts.rcvd > 0)
 			{
 				uint16_t prev_frame = cur_frame;
-				cur_frame = pkt->fpga_hdr.frame_seq;
+				cur_frame = pkt->tes_hdr.fseq;
 				gstats.pkts.missed += (u_int32_t) (
 					(uint16_t)(cur_frame - prev_frame) - 1);
 			}
 			else
 			{
-				cur_frame = pkt->fpga_hdr.frame_seq;
+				cur_frame = pkt->tes_hdr.fseq;
 				INFO ("First received frame is #%hu\n", cur_frame);
 			}
 
@@ -378,7 +377,7 @@ main_body (void* arg)
 				pthread_exit (NULL);
 			}
 
-			if (is_tick (pkt))
+			if (tespkt_is_tick (pkt))
 			{
 				gstats.pkts.ticks++;
 				DEBUG ("Received tick #%d\n", gstats.pkts.ticks);
@@ -387,7 +386,7 @@ main_body (void* arg)
 				pthread_exit (NULL); /* done */
 
 #ifdef SAVE_FILE
-			if (gstats.b_written + MAX_FPGA_FRAME_LEN > MAX_FSIZE)
+			if (gstats.b_written + MAX_TES_FRAME_LEN > MAX_FSIZE)
 				pthread_exit (NULL); /* done */
 #endif /* SAVE_FILE */
 		} while ( ! nm_ring_empty (rxring) );
@@ -404,8 +403,8 @@ main (void)
 {
 	int rc;
 
-	/* Open the pipe for talking to the FPGA thread */
-	rc = pipe (gstats.fpga_th.pipefd);
+	/* Open the pipe for talking to the TES thread */
+	rc = pipe (gstats.tes_th.pipefd);
 	if (rc == -1)
 	{
 		ERROR ("Could not open a pipe\n");
@@ -443,14 +442,14 @@ main (void)
 		exit (EXIT_FAILURE);
 	}
 
-	rc = pthread_create (&gstats.fpga_th.th_id, &t_attr, main_body, NULL);
+	rc = pthread_create (&gstats.tes_th.th_id, &t_attr, main_body, NULL);
 	if (rc)
 	{
 		errno = rc; /* pthread_* do not set it */
-		ERROR ("Could not start FPGA thread\n");
+		ERROR ("Could not start TES thread\n");
 		exit (EXIT_FAILURE);
 	}
-	DEBUG ("Started FPGA thread\n");
+	DEBUG ("Started TES thread\n");
 
 	/* Setup signal handlers and unblock signals */
 	struct sigaction sigact;
@@ -487,7 +486,7 @@ main (void)
 
 	/* Do stuff */
 	struct pollfd pfd;
-	pfd.fd = gstats.fpga_th.pipefd[0];
+	pfd.fd = gstats.tes_th.pipefd[0];
 	pfd.events = POLLIN;
 	do
 	{

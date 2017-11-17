@@ -21,18 +21,28 @@
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
 
-#define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
-
-#include "daemon.h"
-
-#define NUM_RINGS 4 /* number of rx rings in interface */
+#include "daemon_ng.h"
 
 #define FULL_DBG
 #ifdef FULL_DBG
+#  define TESPKT_DEBUG
 #  define dbg_assert(...) assert (__VA_ARGS__)
 #else
 #  define dbg_assert(...)
+#endif
+
+#include <net/tespkt.h>
+
+#ifndef PATH_MAX
+#  ifdef MAXPATHLEN
+#    define PATH_MAX MAXPATHLEN
+#  else
+#    define PATH_MAX 4096
+#  endif
+#endif
+
+#ifndef NUM_RINGS
+#define NUM_RINGS 4 /* number of rx rings in interface */
 #endif
 
 /* ------------------------------------------------------------------------- */

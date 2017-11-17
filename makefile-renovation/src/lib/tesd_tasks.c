@@ -1,31 +1,31 @@
 /*
- * ————————————————————————————————————————————————————————————————————————————
- * ——————————————————————————————————— API ————————————————————————————————————
- * ————————————————————————————————————————————————————————————————————————————
+ * ----------------------------------------------------------------------------
+ * ----------------------------------- API ------------------------------------
+ * ----------------------------------------------------------------------------
  * 
- *               ———————                   ———————
+ *               -------                   -------
  *               | REQ |                   | SUB |                       client
- *               ———————                   ———————
+ *               -------                   -------
  *                  |                         |
  *
- * ——————————— save to file ————————————— histogram ———————————————————————————
+ * ----------- save to file ------------- histogram ---------------------------
  *
  *                  |                         |
- *              ———————.                   ———————
+ *              -------.                   -------
  *              | REP |                    | PUB |
- *              ———————.                   ———————
+ *              -------.                   -------
  *           
- *              ————————                   ————————
+ *              --------                   --------
  *              | PAIR |                   | PAIR |
- *              ————————                   ————————                      server
+ *              --------                   --------                      server
  *                 |                          |
- *              ————————— task coordinator ————————
+ *              --------- task coordinator --------
  *                 |                          |
- *              ————————                   ————————
+ *              --------                   --------
  *              | PAIR |                   | PAIR |           
- *              ————————                   ————————
+ *              --------                   --------
  *
- * —————————————————————————————— REP INTERFACE ———————————————————————————————
+ * ------------------------------ REP INTERFACE -------------------------------
  * 
  * Messages are sent and read via zsock_send, zsock_recv as "picture" messages.
  * Valid requests have a picture of "s81", replies have a picture of "18888":
@@ -72,14 +72,14 @@
  * At the moment we only handle one save-to-file request at a time. Will block
  * until it is done.
  *
- * —————————————————————————————— PUB INTERFACE ———————————————————————————————
+ * ------------------------------ PUB INTERFACE -------------------------------
  * Sends ZMQ single-frame messages (they are long, so will be fragmented on the
  * wire), each message contains one full histogram. You can receive these with
  * zmq_recv for example.
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––– DEV NOTES –––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ----------------------------------------------------------------------------
+ * -------------------------------- DEV NOTES ---------------------------------
+ * ----------------------------------------------------------------------------
  * There is a separate thread for each "task". Threads are zactors.
  * Currently there are two tasks:
  * 1) Listen on a REP socket and save all frames to file (until a requested
@@ -88,7 +88,7 @@
  *
  * Tasks have read-only access to rings (they cannot modify the cursor or head)
  * and each task keeps its own head (for each ring), which is visible by the
- * coordinator (fpgacoord.c). For each ring, the coordinator sets the true head
+ * coordinator (tesd.c). For each ring, the coordinator sets the true head
  * to the per-task head which lags behind all others.
  *
  * Tasks are largely similar, so we pass the same handler, s_task_shim, to
@@ -107,7 +107,7 @@
  *         const char* front_addr;     // the socket addresses, comma separated
  *         const int   front_type;     // one of ZMQ_*
  *         int         id;             // the task ID
- *         ifdesc*     ifd;            // netmap interface
+ *         tes_ifdesc* ifd;            // netmap interface
  *         uint32_t    heads[NUM_RINGS]; // per-ring task's head
  *         uint16_t    nrings;         // number of rings <= NUM_RINGS
  *         uint16_t    prev_fseq;      // previous frame sequence
@@ -160,7 +160,7 @@
  * If the task is not interested in receiving packets, is sets its active flag
  * to false. It won't receive SIG_WAKEUP if it is not active and its heads
  * won't be synchronized with the real heads. When it needs to process packets,
- * it must set its private heads to the global heads (by calling ifring_head
+ * it must set its private heads to the global heads (by calling tes_ifring_head
  * for each ring) and then set its active flag to true.
  * Tasks are initialized as inactive, the task should enable the flag either in
  * its initializer or in its client frontend handler.
@@ -190,9 +190,9 @@
  * define s_task_stop as a wrapper around zactor_destroy, which sends SIG_STOP
  * and then calls zactor_destroy to wait for the handler to return.
  *
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
- * –––––––––––––––––––––––––––––––––– TO DO –––––––––––––––––––––––––––––––––––
- * ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+ * ----------------------------------------------------------------------------
+ * ---------------------------------- TO DO -----------------------------------
+ * ----------------------------------------------------------------------------
  * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
  * - Check if packet is valid and drop (increment another counter for malformed
  *   packets).
@@ -204,8 +204,7 @@
  *   valgrind? A: https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  */
 
-#include "fpgatasks.h"
-#include "net/fpgaif_reader.h"
+#include "tesd_tasks.h"
 #include "common.h"
 #include "aio.h"
 
@@ -213,12 +212,10 @@
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
-#define NUM_RINGS 4 /* number of rx rings in interface */
-
 /* ---------------------------------- API ---------------------------------- */
 
 typedef int (s_data_fn)(task_t*);
-typedef int (s_pkt_fn)(zloop_t*, fpga_pkt*, uint16_t, uint16_t, task_t*);
+typedef int (s_pkt_fn)(zloop_t*, tespkt*, uint16_t, uint16_t, task_t*);
 
 /* See DEV NOTES */
 struct _task_t
@@ -233,7 +230,7 @@ struct _task_t
 	const char* front_addr;
 	const int   front_type;
 	int         id;
-	ifdesc*     ifd;
+	tes_ifdesc* ifd;
 	uint32_t    heads[NUM_RINGS];
 	uint16_t    nrings;
 	uint16_t    prev_fseq;
@@ -272,7 +269,7 @@ static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
 static zactor_fn       s_task_shim;
 
-static int  s_task_start (ifdesc* ifd, task_t* self);
+static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
 static inline void s_task_activate (task_t* self);
 static int s_task_dispatch (task_t* self, zloop_t* loop,
@@ -286,15 +283,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define REQ_PIC      "s81"
 #define REP_PIC    "18888"
 
-#ifndef PATH_MAX
-#  ifdef MAXPATHLEN
-#    define PATH_MAX MAXPATHLEN
-#  else
-#    define PATH_MAX 4096
-#  endif
-#endif
-
-#define TSAVE_ROOT "/media/" // must have a trailing slash
+#define TSAVE_ROOT "/media/data/" // must have a trailing slash
 #define TSAVE_ONLYFILES      // for now we don't generate filenames
 #define TSAVE_SOFFSET  40 // beginning of file reserved for statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
@@ -339,7 +328,7 @@ struct s_task_save_data_t
 	uint64_t batches;
 	uint64_t failed_batches;
 	uint64_t num_cleared;
-	unsigned char prev_hdr[FPGA_HDR_LEN];
+	unsigned char prev_hdr[TES_HDR_LEN];
 #endif
 	char*    filename;
 };
@@ -425,7 +414,7 @@ static task_t tasks[] = {
  * Returns 0 on success, -1 on error.
  */
 int
-tasks_start (ifdesc* ifd, zloop_t* c_loop)
+tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 {
 	dbg_assert (ifd != NULL);
 	dbg_assert (NUM_TASKS == sizeof (tasks) / sizeof (task_t));
@@ -550,8 +539,8 @@ tasks_get_heads (void)
 			{
 				for (int r = 0; r < NUM_RINGS; r++)
 				{
-					ifring* rxring = if_rxring (self->ifd, r);
-					heads[r] = ifring_earlier_id (
+					tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+					heads[r] = tes_ifring_earlier_id (
 							rxring, heads[r],
 							self->heads[r]);
 				}
@@ -640,12 +629,12 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	int next_ring_id = -1; /* next to process */
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
-		ifring* rxring = if_rxring (self->ifd, r);
-		if (ifring_tail (rxring) == self->heads[r])
+		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+		if (tes_ifring_tail (rxring) == self->heads[r])
 			continue;
-		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
+		tespkt* pkt = (tespkt*) tes_ifring_buf (
 				rxring, self->heads[r]);
-		uint16_t cur_fseq = frame_seq (pkt);
+		uint16_t cur_fseq = tespkt_fseq (pkt);
 		uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
 		if (fseq_gap <= missed)
 		{
@@ -862,13 +851,13 @@ cleanup:
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_start (ifdesc* ifd, task_t* self)
+s_task_start (tes_ifdesc* ifd, task_t* self)
 {
 	dbg_assert (self != NULL);
 	dbg_assert (ifd != NULL);
 
 	self->ifd = ifd;
-	dbg_assert (if_rxrings (ifd) == NUM_RINGS);
+	dbg_assert (tes_if_rxrings (ifd) == NUM_RINGS);
 
 	/* Start the thread, will block until the handler signals */
 	self->shim = zactor_new (s_task_shim, self);
@@ -921,8 +910,8 @@ s_task_activate (task_t* self)
 	dbg_assert (self != NULL);
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
-		ifring* rxring = if_rxring (self->ifd, r);
-		self->heads[r] = ifring_head (rxring);
+		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+		self->heads[r] = tes_ifring_head (rxring);
 	}
 	self->active = 1;
 }
@@ -943,7 +932,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	self->dbg_stats.pkts.missed += missed;
 #endif
 
-	ifring* rxring = if_rxring (self->ifd, ring_id);
+	tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
 	/*
 	 * First exec of the loop uses the head from the last time
 	 * dispatch was called with this ring_id.
@@ -951,7 +940,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	uint16_t fseq_gap = missed;
 	do
 	{
-		fpga_pkt* pkt = (fpga_pkt*) ifring_buf (
+		tespkt* pkt = (tespkt*) tes_ifring_buf (
 			rxring, self->heads[ring_id]);
 		dbg_assert (pkt != NULL);
 #ifdef FULL_DBG
@@ -959,8 +948,8 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #endif
 
 		/* TO DO: check packet */
-		uint16_t len = ifring_len (rxring, self->heads[ring_id]);
-		uint16_t plen = pkt_len (pkt);
+		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
+		uint16_t plen = tespkt_flen (pkt);
 		if (plen > len)
 		{ /* drop the frame */
 			s_msgf (0, LOG_DEBUG, self->id,
@@ -968,21 +957,21 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 				"ring slot is %hu)", plen, len);
 			return 0;
 		}
-		dbg_assert (plen <= MAX_FPGA_FRAME_LEN);
+		dbg_assert (plen <= MAX_TES_FRAME_LEN);
 		int rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
 
-		uint16_t cur_fseq = frame_seq (pkt);
+		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
 
 		self->prev_fseq = cur_fseq;
-		if (is_mca (pkt))
-			self->prev_pseq_mca = proto_seq (pkt);
-		else if (is_trace (pkt))
-			self->prev_pseq_tr = proto_seq (pkt);
+		if (tespkt_is_mca (pkt))
+			self->prev_pseq_mca = tespkt_pseq (pkt);
+		else if (tespkt_is_trace (pkt))
+			self->prev_pseq_tr = tespkt_pseq (pkt);
 		else
-			self->prev_pseq_pls = proto_seq (pkt);
+			self->prev_pseq_pls = tespkt_pseq (pkt);
 
-		self->heads[ring_id] = ifring_following (
+		self->heads[ring_id] = tes_ifring_following (
 				rxring, self->heads[ring_id]);
 
 		/* TO DO: return codes */
@@ -992,7 +981,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		if (fseq_gap > 0)
 			return 0;
 
-	} while (self->heads[ring_id] != ifring_tail (rxring));
+	} while (self->heads[ring_id] != tes_ifring_tail (rxring));
 
 	return 0;
 }
@@ -1142,7 +1131,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
  * says.
  */
 static int
-s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
+s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
@@ -1155,7 +1144,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 
 #ifdef FULL_DBG
 	if (sjob->bufzone.enqueued + sjob->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN)
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN)
 	{
 		s_msgf (0, LOG_DEBUG, self->id,
 			"Waiting: %lu, in queue: %lu free: %ld, "
@@ -1169,7 +1158,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	}
 #endif
 	dbg_assert (sjob->bufzone.enqueued + sjob->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN);
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
 	dbg_assert (sjob->bufzone.cur >= sjob->bufzone.base);
 	dbg_assert (sjob->bufzone.tail >= sjob->bufzone.base);
 	dbg_assert (sjob->bufzone.cur < sjob->bufzone.ceil);
@@ -1184,7 +1173,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	/* TO DO: save err flags */
 	/* Update statistics. Size is updated in batches as write operations
 	 * finish. */
-	uint16_t cur_fseq = frame_seq (pkt);
+	uint16_t cur_fseq = tespkt_fseq (pkt);
 	if (sjob->st.frames > 0)
 		sjob->st.frames_lost += missed;
 		// sjob->st.frames_lost += (uint16_t)(cur_fseq
@@ -1194,16 +1183,16 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	{
 		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
 			self->prev_fseq, cur_fseq);
-		s_dump_buf (sjob->prev_hdr, FPGA_HDR_LEN);
-		s_dump_buf ((void*)pkt, FPGA_HDR_LEN);
+		s_dump_buf (sjob->prev_hdr, TES_HDR_LEN);
+		s_dump_buf ((void*)pkt, TES_HDR_LEN);
 		self->error = 1;
 		return -1;
 	}
-	memcpy (sjob->prev_hdr, pkt, FPGA_HDR_LEN);
+	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
 #endif
 
 	sjob->st.frames++;
-	if (is_tick (pkt))
+	if (tespkt_is_tick (pkt))
 		sjob->st.ticks++;
 
 	/* Wrap cursor if needed */
@@ -1232,7 +1221,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	/* If there is no space for a full frame, force write until there is.
 	 * If we are finalizingm wait for all bytes to be written. */
 	while ( ( sjob->bufzone.enqueued + sjob->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN || ! self->active )
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN || ! self->active )
 		&& jobrc == EINPROGRESS )
 	{
 		jobrc = s_task_save_queue (sjob, 1);
@@ -1268,7 +1257,7 @@ s_task_save_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 #endif /* skip writing */
 
 	dbg_assert (sjob->bufzone.enqueued + sjob->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_FPGA_FRAME_LEN);
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
 
 	if ( ! self->active )
 	{
@@ -1771,24 +1760,24 @@ s_task_save_canonicalize_path (const char* filename, int checkonly, int task_id)
  * frames are received (i.e. the size field appears to small).
  */
 static int
-s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
+s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
 
-	if ( ! is_mca (pkt) )
+	if ( ! tespkt_is_mca (pkt) )
 		return 0;
 
 	struct s_task_hist_data_t* hist =
 		(struct s_task_hist_data_t*) self->data;
 
-	if ( ! is_header (pkt) )
+	if ( ! tespkt_is_header (pkt) )
 	{
 		if (hist->discard) 
 			return 0;
 
 		/* Check protocol sequence */
-		uint16_t cur_pseq = proto_seq (pkt);
+		uint16_t cur_pseq = tespkt_pseq (pkt);
 		if ((uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
 		{
 			s_msgf (0, LOG_INFO, self->id,
@@ -1831,8 +1820,8 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 		dbg_assert ( ! hist->discard );
 
 		/* Inspect header */
-		hist->nbins = mca_num_allbins (pkt);
-		hist->size  = mca_size (pkt);
+		hist->nbins = tespkt_mca_nbins_tot (pkt);
+		hist->size  = tespkt_mca_size (pkt);
 
 		/* TO DO: incorporate this into generic packet check */
 #if 0 /* until 'size' field calculation bug is fixed */
@@ -1851,7 +1840,7 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	}
 	dbg_assert ( ! hist->discard );
 
-	hist->cur_nbins += mca_num_bins (pkt);
+	hist->cur_nbins += tespkt_mca_nbins (pkt);
 	if (hist->cur_nbins > hist->nbins)
 	{
 		s_msgf (0, LOG_WARNING, self->id,
@@ -1862,10 +1851,10 @@ s_task_hist_pkt_hn (zloop_t* loop, fpga_pkt* pkt, uint16_t plen,
 	}
 
 	/* Copy frame */
-	uint16_t fsize = pkt_len (pkt) - FPGA_HDR_LEN;
+	uint16_t fsize = tespkt_flen (pkt) - TES_HDR_LEN;
 	dbg_assert (hist->cur_size <= THIST_MAXSIZE - fsize);
 	memcpy (hist->buf + hist->cur_size,
-		(char*)pkt + FPGA_HDR_LEN, fsize);
+		(char*)pkt + TES_HDR_LEN, fsize);
 
 	hist->cur_size += fsize;
 

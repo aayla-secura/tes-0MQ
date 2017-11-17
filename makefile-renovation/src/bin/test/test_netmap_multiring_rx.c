@@ -17,8 +17,8 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#define TESPKT_DEBUG
+#include <net/tespkt.h>
 
 #ifndef NMRING
 #define NMRING
@@ -27,10 +27,6 @@
 #define UPDATE_INTERVAL 1
 #ifndef NMIF
 #define NMIF "vale0:vi1"
-#endif
-
-#ifndef QUIET
-#define VERBOSE
 #endif
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
@@ -180,9 +176,9 @@ cleanup (int sig)
 static void
 rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 {
-	fpga_pkt* pkt = (fpga_pkt*)buf;
+	tespkt* pkt = (tespkt*)buf;
 	uint16_t ri = gobj.nmd->cur_rx_ring;
-	uint16_t cur_frame = pkt->fpga_hdr.frame_seq;
+	uint16_t cur_frame = pkt->tes_hdr.fseq;
 	if (gobj.pkts.rcvd > 0)
 	{
 		gobj.pkts.missed += (u_int32_t) (

@@ -17,8 +17,8 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#define TESPKT_DEBUG
+#include <net/tespkt.h>
 
 #define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
 #define SRC_HW_ADDR "5a:ce:be:b7:b2:91"
@@ -28,7 +28,7 @@
 #define NMRING
 #endif
 #define MAX_RINGS 24
-#define PKT_LEN MAX_FPGA_FRAME_LEN
+#define PKT_LEN MAX_TES_FRAME_LEN
 #define UPDATE_INTERVAL 1
 #ifndef NMIF
 #define NMIF "vale0:vi0"
@@ -207,7 +207,7 @@ main (void)
 	print_desc_info ();
 
 	/* A dummy packet */
-	fpga_pkt pkt;
+	tespkt pkt;
 	assert (sizeof (pkt) == PKT_LEN);
 	memset (&pkt, 0, PKT_LEN);
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
@@ -252,7 +252,7 @@ main (void)
 		{
 			gobj.pkts.sent++;
 			gobj.pkts.inslot[gobj.nmd->cur_tx_ring]++;
-			pkt.fpga_hdr.frame_seq++;
+			pkt.tes_hdr.fseq++;
 #define ADV_RIDX
 #define RAND_RIDX
 #ifdef ADV_RIDX

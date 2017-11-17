@@ -17,11 +17,11 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#define TESPKT_DEBUG
+#include <net/tespkt.h>
 
-#define FPGA_BYTE_ORDER __LITTLE_ENDIAN 
-#if __BYTE_ORDER == FPGA_BYTE_ORDER
+#define TES_BYTE_ORDER __LITTLE_ENDIAN 
+#if __BYTE_ORDER == TES_BYTE_ORDER
 #  define htofs
 #  define htofl
 #else
@@ -33,7 +33,7 @@
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 #define UPDATE_INTERVAL 1
 
-#define NM_IFNAME "vale:fpga"
+#define NM_IFNAME "vale:tes"
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
 			* signal handler */
 
@@ -41,23 +41,23 @@
 #define MAX_MCA_FRAMES        45
 // #define MAX_TRACE_FRAMES
 #define MAX_MCA_BINS_ALL      ((65528 - MCA_HDR_LEN) / BIN_LEN)
-#define MAX_MCA_BINS_HFR      ((MAX_FPGA_FRAME_LEN - MCA_HDR_LEN - \
-				FPGA_HDR_LEN) / BIN_LEN)
-#define MAX_MCA_BINS_SFR      ((MAX_FPGA_FRAME_LEN - \
-				FPGA_HDR_LEN) / BIN_LEN)
-#define MAX_PLS_PEAKS         ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_MCA_BINS_HFR      ((MAX_TES_FRAME_LEN - MCA_HDR_LEN - \
+				TES_HDR_LEN) / BIN_LEN)
+#define MAX_MCA_BINS_SFR      ((MAX_TES_FRAME_LEN - \
+				TES_HDR_LEN) / BIN_LEN)
+#define MAX_PLS_PEAKS         ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				PLS_HDR_LEN) / PEAK_LEN)
-#define MAX_TR_SGL_PEAKS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_TR_SGL_PEAKS_HFR  ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				TR_FULL_HDR_LEN) / PEAK_LEN)
-#define MAX_TR_SGL_SMPLS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_TR_SGL_SMPLS_HFR  ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				TR_FULL_HDR_LEN) / SMPL_LEN)
-#define MAX_TR_AVG_SMPLS_HFR  ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_TR_AVG_SMPLS_HFR  ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				TR_HDR_LEN) / SMPL_LEN)
-#define MAX_TR_DP_PEAKS_HFR   ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_TR_DP_PEAKS_HFR   ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				TR_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
-#define MAX_TR_DPTR_PEAKS_HFR ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_TR_DPTR_PEAKS_HFR ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				TR_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
-#define MAX_TR_DPTR_SMPLS_HFR ((MAX_FPGA_FRAME_LEN - FPGA_HDR_LEN - \
+#define MAX_TR_DPTR_SMPLS_HFR ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
 				TR_FULL_HDR_LEN - DP_LEN) / SMPL_LEN)
 
 #define SRC_HW_ADDR "ff:ff:ff:ff:ff:ff"
@@ -68,64 +68,64 @@
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
 static void
-pkt_set_type_mca (fpga_pkt* pkt)
+set_type_mca (tespkt* pkt)
 {
 	pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_MCA);
 }
 
 static void
-pkt_set_type_evt (fpga_pkt* pkt)
+set_type_evt (tespkt* pkt)
 {
 	pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
 }
 
 static void
-evt_set_type (fpga_pkt* pkt, uint16_t type)
+set_evt_type (tespkt* pkt, uint16_t type)
 {
 	/* event types are defined to match host byte order */
-	pkt->fpga_hdr.evt_type = type;
+	pkt->tes_hdr.etype = type;
 }
 
 static void
-pkt_set_frame_seq (fpga_pkt* pkt, uint16_t seq)
+set_fseq (tespkt* pkt, uint16_t seq)
 {
-	pkt->fpga_hdr.frame_seq = htofs (seq);
+	pkt->tes_hdr.fseq = htofs (seq);
 }
 
 static void
-pkt_set_proto_seq (fpga_pkt* pkt, uint16_t seq)
+set_pseq (tespkt* pkt, uint16_t seq)
 {
-	pkt->fpga_hdr.proto_seq = htofs (seq);
+	pkt->tes_hdr.pseq = htofs (seq);
 }
 
 static void
-pkt_inc_frame_seq (fpga_pkt* pkt, uint16_t seq)
+pkt_inc_fseq (tespkt* pkt, uint16_t seq)
 {
-	pkt->fpga_hdr.frame_seq = htofs (frame_seq (pkt) + seq);
+	pkt->tes_hdr.fseq = htofs (tespkt_fseq (pkt) + seq);
 }
 
 static void
-pkt_inc_proto_seq (fpga_pkt* pkt, uint16_t seq)
+pkt_inc_pseq (tespkt* pkt, uint16_t seq)
 {
-	pkt->fpga_hdr.proto_seq = htofs (proto_seq (pkt) + seq);
+	pkt->tes_hdr.pseq = htofs (tespkt_pseq (pkt) + seq);
 }
 
 static void
-pkt_set_len (fpga_pkt* pkt, uint16_t len)
+set_len (tespkt* pkt, uint16_t len)
 {
 	pkt->length = htofs (len);
 }
 
 static void
-pkt_inc_len (fpga_pkt* pkt, uint16_t len)
+pkt_inc_len (tespkt* pkt, uint16_t len)
 {
-	pkt->length = htofs (pkt_len (pkt) + len);
+	pkt->length = htofs (tespkt_flen (pkt) + len);
 }
 
 static inline void
-pkt_set_evt_size (fpga_pkt* pkt, uint16_t size)
+set_evt_size (tespkt* pkt, uint16_t size)
 {
-	pkt->fpga_hdr.evt_size = htofs (size);
+	pkt->tes_hdr.esize = htofs (size);
 }
 
 /*
@@ -152,7 +152,7 @@ static struct
 		struct timeval last_check;
 	} timers;
 	struct {
-		fpga_pkt* slots[MAX_PKTS];
+		tespkt* slots[MAX_PKTS];
 		int last;       /* highest allocated index */
 
 		int first_free; /* lowest unallocated index */
@@ -165,25 +165,25 @@ static struct
 } gobj = { .pkts.last = -1, .pkts.cur = -1 };
 
 static inline
-fpga_pkt* next_pkt (void)
+tespkt* next_pkt (void)
 {
 	if (gobj.pkts.last == -1)
 		return NULL;
 
-	fpga_pkt* pkt;
+	tespkt* pkt;
 	do {
 		if (gobj.pkts.cur == gobj.pkts.last)
 			gobj.pkts.cur = -1;
 		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
 	} while (pkt == NULL);
 
-	pkt_set_frame_seq (pkt, gobj.pkts.sent); /* .sent is incremented
+	set_fseq (pkt, gobj.pkts.sent); /* .sent is incremented
 						   * before sending */
 	return pkt;
 }
 
-static fpga_pkt*
-new_fpga_pkt (void)
+static tespkt*
+new_tespkt (void)
 {
 	if (gobj.pkts.first_free == MAX_PKTS)
 	{
@@ -192,20 +192,20 @@ new_fpga_pkt (void)
 		return NULL;
 	}
 
-	fpga_pkt* pkt = malloc (MAX_FPGA_FRAME_LEN);
+	tespkt* pkt = malloc (MAX_TES_FRAME_LEN);
 	if (pkt == NULL)
 	{
 		errno = ENOMEM;
 		raise (SIGTERM);
 	}
-	memset (pkt, 0, MAX_FPGA_FRAME_LEN);
+	memset (pkt, 0, MAX_TES_FRAME_LEN);
 
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
-	pkt_set_frame_seq (pkt, 0); /* incremented as we send them */
-	pkt_set_len (pkt, FPGA_HDR_LEN); /* incremented later */
+	set_fseq (pkt, 0); /* incremented as we send them */
+	set_len (pkt, TES_HDR_LEN); /* incremented later */
 
 	/* store a global pointer */
 	gobj.pkts.slots[gobj.pkts.first_free] = pkt;
@@ -232,22 +232,22 @@ new_fpga_pkt (void)
 	return pkt;
 }
 
-static fpga_pkt*
-new_mca_pkt (int seq, int num_bins,
+static tespkt*
+new_mca_pkt (int seq, int nbins,
 		      int num_all_bins,
 		      u_int32_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_mca (pkt);
-	pkt_inc_len (pkt, num_bins * BIN_LEN);
+	set_type_mca (pkt);
+	pkt_inc_len (pkt, nbins * BIN_LEN);
 
-	pkt_set_proto_seq (pkt, seq);
+	set_pseq (pkt, seq);
 	if (seq == 0)
 	{
 		pkt_inc_len (pkt, MCA_HDR_LEN);
-		struct mca_header* mh = (struct mca_header*) &pkt->body;
+		struct tespkt_mca_hdr* mh = (struct tespkt_mca_hdr*) &pkt->body;
 		mh->size = MCA_HDR_LEN + num_all_bins * BIN_LEN;
 		mh->last_bin = num_all_bins - 1;
 		mh->lowest_value = (u_int32_t) random ();
@@ -261,18 +261,18 @@ new_mca_pkt (int seq, int num_bins,
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_tick_pkt (u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 	pkt_inc_len (pkt, TICK_HDR_LEN);
-	pkt_set_evt_size (pkt, 3);
-	evt_set_type (pkt, EVT_TICK_TYPE);
+	set_evt_size (pkt, 3);
+	set_evt_type (pkt, EVT_TICK_TYPE);
 
-	struct tick_header* th = (struct tick_header*) &pkt->body;
+	struct tespkt_tick_hdr* th = (struct tespkt_tick_hdr*) &pkt->body;
 	th->period = (u_int32_t) random ();
 	th->flags = flags;
 	th->toff = (u_int16_t) random ();
@@ -285,18 +285,18 @@ new_tick_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_peak_pkt (u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 	pkt_inc_len (pkt, PEAK_HDR_LEN);
-	pkt_set_evt_size (pkt, 1);
-	evt_set_type (pkt, EVT_PEAK_TYPE);
+	set_evt_size (pkt, 1);
+	set_evt_type (pkt, EVT_PEAK_TYPE);
 
-	struct peak_header* ph = (struct peak_header*) &pkt->body;
+	struct tespkt_peak_hdr* ph = (struct tespkt_peak_hdr*) &pkt->body;
 	ph->height = (u_int16_t) random ();
 	ph->rise_time = (u_int16_t) random ();
 	ph->flags = flags;
@@ -305,19 +305,19 @@ new_peak_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_area_pkt (u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 	pkt_inc_len (pkt, AREA_HDR_LEN);
-	pkt_set_evt_size (pkt, 1);
-	evt_set_type (pkt, EVT_AREA_TYPE);
+	set_evt_size (pkt, 1);
+	set_evt_type (pkt, EVT_AREA_TYPE);
 
-	struct area_header* ah =
-		(struct area_header*) &pkt->body;
+	struct tespkt_area_hdr* ah =
+		(struct tespkt_area_hdr*) &pkt->body;
 	ah->area = (u_int32_t) random ();
 	ah->flags = flags;
 	ah->toff = (u_int16_t) random ();
@@ -325,18 +325,18 @@ new_area_pkt (u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_pulse_pkt (int num_peaks, u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 	pkt_inc_len (pkt, PLS_HDR_LEN + num_peaks * PEAK_LEN);
-	pkt_set_evt_size (pkt, num_peaks); /* FIX: is it?? */
-	evt_set_type (pkt, EVT_PLS_TYPE);
+	set_evt_size (pkt, num_peaks); /* FIX: is it?? */
+	set_evt_type (pkt, EVT_PLS_TYPE);
 
-	struct pulse_header* ph = (struct pulse_header*) &pkt->body;
+	struct tespkt_pulse_hdr* ph = (struct tespkt_pulse_hdr*) &pkt->body;
 	ph->size = (u_int16_t) random ();
 	ph->flags = flags;
 	ph->toff = (u_int16_t) random ();
@@ -349,23 +349,23 @@ new_pulse_pkt (int num_peaks, u_int16_t flags)
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_trace_sgl_pkt (int num_peaks,
 				    int num_samples,
 				    u_int16_t tr_flags,
 				    u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 	pkt_inc_len (pkt, TR_FULL_HDR_LEN + num_peaks *
 		PEAK_LEN + num_samples * SMPL_LEN);
-	pkt_set_evt_size (pkt, 1);
-	evt_set_type (pkt, EVT_TR_SGL_TYPE);
+	set_evt_size (pkt, 1);
+	set_evt_type (pkt, EVT_TR_SGL_TYPE);
 
-	struct trace_full_header* th =
-		(struct trace_full_header*) &pkt->body;
+	struct tespkt_trace_full_hdr* th =
+		(struct tespkt_trace_full_hdr*) &pkt->body;
 	th->trace.size = (u_int16_t) random ();
 	th->trace.tr_flags = tr_flags;
 	th->trace.flags = flags;
@@ -381,34 +381,34 @@ new_trace_sgl_pkt (int num_peaks,
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_trace_avg_pkt (int num_samples,
 				    u_int16_t tr_flags,
 				    u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_trace_dp_pkt (int num_peaks,
 				   u_int16_t tr_flags,
 				   u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 	pkt_inc_len (pkt, TR_FULL_HDR_LEN + num_peaks * PEAK_LEN);
-	pkt_set_evt_size (pkt, 1);
-	evt_set_type (pkt, EVT_TR_DP_TYPE);
+	set_evt_size (pkt, 1);
+	set_evt_type (pkt, EVT_TR_DP_TYPE);
 
-	struct trace_full_header* th =
-		(struct trace_full_header*) &pkt->body;
+	struct tespkt_trace_full_hdr* th =
+		(struct tespkt_trace_full_hdr*) &pkt->body;
 	th->trace.size = (u_int16_t) random ();
 	th->trace.tr_flags = tr_flags;
 	th->trace.flags = flags;
@@ -419,12 +419,12 @@ new_trace_dp_pkt (int num_peaks,
 
 	/* peaks */
 
-	struct dot_prod* dp = (struct dot_prod*)(
-		(u_char*) pkt + pkt_len (pkt) );
+	struct tespkt_dot_prod* dp = (struct tespkt_dot_prod*)(
+		(u_char*) pkt + tespkt_flen (pkt) );
 	/* Don't know how to cast to 48-bit integer and don't want to write to
 	 * reserved bits, so write 64-bits to a temporary struct and copy only
 	 * the used field */
-	struct dot_prod dptmp = {0,};
+	struct tespkt_dot_prod dptmp = {0,};
 	u_int64_t rand = random ();
 	memcpy (&dptmp, &rand, DP_LEN);
 	dp->dot_prod = dptmp.dot_prod;
@@ -433,16 +433,16 @@ new_trace_dp_pkt (int num_peaks,
 	return pkt;
 }
 
-static fpga_pkt*
+static tespkt*
 new_trace_dptr_pkt (int num_peaks,
 				     int num_samples,
 				     u_int16_t tr_flags,
 				     u_int16_t flags)
 {
-	fpga_pkt* pkt = new_fpga_pkt ();
+	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	pkt_set_type_evt (pkt);
+	set_type_evt (pkt);
 
 	return pkt;
 }
@@ -452,7 +452,7 @@ destroy_pkt (int id)
 {
 	assert (id >= 0);
 	assert (id <= gobj.pkts.last);
-	fpga_pkt* pkt = gobj.pkts.slots[id];
+	tespkt* pkt = gobj.pkts.slots[id];
 	if (pkt)
 	{
 		DEBUG ("Destroying packet #%d\n", id);
@@ -467,9 +467,9 @@ destroy_pkt (int id)
 }
 
 static void
-dump_pkt (fpga_pkt* _pkt)
+dump_pkt (tespkt* _pkt)
 {
-	u_int16_t len = pkt_len (_pkt);
+	u_int16_t len = tespkt_flen (_pkt);
 	const char* pkt = (const char*)_pkt;
 	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
 
@@ -607,7 +607,7 @@ int
 main (void)
 {
 	/* Debugging */
-	fpgapkt_self_test ();
+	tespkt_self_test ();
 
 	srandom ( (unsigned int) random () );
 	int rc;
@@ -645,13 +645,13 @@ main (void)
 
 	/* ------------------------------------------------------------ */
 
-	/* Create some packets before starting and only increment frame_seq
+	/* Create some packets before starting and only increment tespkt_fseq
 	 * while sending */
 	do
 	{
-		fpga_pkt* pkt; /* for checking is max is reached */
+		tespkt* pkt; /* for checking is max is reached */
 		int err;
-		// pkt = new_fpga_pkt ();
+		// pkt = new_tespkt ();
 		// break;
 
 		/* --------------- A full MCA histogram --------------- */
@@ -660,14 +660,14 @@ main (void)
 		pkt = new_mca_pkt (0, MAX_MCA_BINS_HFR, MAX_MCA_BINS_ALL, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 		nbins_left -= MAX_MCA_BINS_HFR;
 		/* the rest of the frames */
 		for (int f = 1; ; f++)
@@ -686,14 +686,14 @@ main (void)
 			}
 			if (pkt == NULL)
 				break; /* Reached max */
-			err = is_valid (pkt);
+			err = tespkt_is_valid (pkt);
 			if (err)
 			{
 				pkt_perror (stdout, err);
 				raise (SIGTERM);
 			}
 			dump_pkt (pkt);
-			assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+			assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 			nbins_left -= MAX_MCA_BINS_SFR;
 		}
 
@@ -701,70 +701,70 @@ main (void)
 		pkt = new_tick_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 		pkt = new_peak_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 		pkt = new_pulse_pkt (MAX_PLS_PEAKS, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 		pkt = new_area_pkt (0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 		pkt = new_trace_sgl_pkt (MAX_TR_SGL_PEAKS_HFR / 2,
 			MAX_TR_SGL_SMPLS_HFR / 2, 0, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 		pkt = new_trace_dp_pkt (MAX_TR_DP_PEAKS_HFR, 0, 0);
 		if (pkt == NULL)
 			break; /* Reached max */
-		err = is_valid (pkt);
+		err = tespkt_is_valid (pkt);
 		if (err)
 		{
 			pkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (pkt_len (pkt) <= MAX_FPGA_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
 	} while (0);
 
 	/* Get the ring (we only use one) */
@@ -801,16 +801,16 @@ main (void)
 
 		while ( ! nm_ring_empty (txring) )
 		{
-			fpga_pkt* pkt = next_pkt ();
+			tespkt* pkt = next_pkt ();
 			assert (pkt);
 
 			struct netmap_slot* cur_slot =
 				&txring->slot[ txring->cur ];
 			nm_pkt_copy (pkt,
 				     NETMAP_BUF (txring, cur_slot->buf_idx),
-				     pkt_len (pkt));
+				     tespkt_flen (pkt));
 		
-			cur_slot->len = pkt_len (pkt);
+			cur_slot->len = tespkt_flen (pkt);
 			txring->head = txring->cur =
 				nm_ring_next (txring, txring->cur);
 			gobj.pkts.sent++;

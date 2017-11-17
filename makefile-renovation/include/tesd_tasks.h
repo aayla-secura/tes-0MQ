@@ -1,7 +1,7 @@
-#ifndef __FPGATASKS_H__INCLUDED__
-#define __FPGATASKS_H__INCLUDED__
+#ifndef __TESD_TASKS_H__INCLUDED__
+#define __TESD_TASKS_H__INCLUDED__
 
-#include "net/fpgaif_reader.h"
+#include "net/tesif_reader.h"
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
 
@@ -12,7 +12,7 @@ typedef struct _task_t task_t;
  * each task.
  * Returns 0 on success, -1 on error.
  */
-int  tasks_start (ifdesc* ifd, zloop_t* c_loop);
+int  tasks_start (tes_ifdesc* ifd, zloop_t* c_loop);
 /*
  * Register a generic reader with the loop. The reader will listen to all tasks
  * and terminate the loop when a task dies. This is called by tasks_start if
