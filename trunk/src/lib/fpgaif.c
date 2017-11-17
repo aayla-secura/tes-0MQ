@@ -118,6 +118,13 @@ if_fd (ifdesc* ifd)
 	return ifd->n.fd;
 }
 
+/* Get the interface name */
+char*
+if_name (ifdesc* ifd)
+{
+	return ifd->n.nifp->ni_name;
+}
+
 /* Set and get the first, previous, next, <idx> or last tx or rx ring.
  * Returns NULL for rings beyond the last one. */
 ifring*

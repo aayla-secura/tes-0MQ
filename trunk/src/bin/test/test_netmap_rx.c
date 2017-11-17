@@ -344,7 +344,7 @@ main (void)
 			if (is_tick (pkt))
 			{
 				gobj.pkts.ticks++;
-				DEBUG ("Received tick #%d\n", gobj.pkts.ticks);
+				/* DEBUG ("Received tick #%d\n", gobj.pkts.ticks); */
 			}
 			if (MAX_TICKS > 0 && gobj.pkts.ticks == MAX_TICKS)
 				raise (SIGTERM); /* done */

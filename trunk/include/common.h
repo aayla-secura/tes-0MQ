@@ -26,7 +26,9 @@
 
 #include "daemon.h"
 
+#ifndef NUM_RINGS
 #define NUM_RINGS 4 /* number of rx rings in interface */
+#endif
 
 #define FULL_DBG
 #ifdef FULL_DBG

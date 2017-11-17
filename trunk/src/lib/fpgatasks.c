@@ -213,8 +213,6 @@
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
-#define NUM_RINGS 4 /* number of rx rings in interface */
-
 /* ---------------------------------- API ---------------------------------- */
 
 typedef int (s_data_fn)(task_t*);

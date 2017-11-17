@@ -61,7 +61,7 @@
 
 /* Defaults */
 #define UPDATE_INTERVAL 1             // in seconds
-#define FPGA_IF "netmap:" IFNAME
+#define FPGA_IFNAME "netmap:" IFNAME
 
 /*
  * Statistics, only used in foreground mode
@@ -82,7 +82,7 @@ struct data_t
 };
 
 static void s_usage (const char* self);
-static int  s_prepare_if (void);
+static int  s_prepare_if (const char* nmifname);
 static int  s_print_stats (zloop_t* loop, int timer_id, void* stats_);
 static int  s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
 static int  s_coordinator_body (const char* ifname, long int stat_period);
@@ -96,7 +96,7 @@ s_usage (const char* self)
 		"Usage: %s [options]\n\n"
 		"Options:\n"
 		"    -i <if>              Read packets from <if> interface\n"
-		"                         Defaults to "FPGA_IF"\n"
+		"                         Defaults to "FPGA_IFNAME"\n"
 		"    -f                   Run in foreground\n"
 		"    -u <n>               Print statistics every <n> seconds\n"
 		"                         Set to 0 to disable. Default is %d\n"
@@ -111,9 +111,39 @@ s_usage (const char* self)
  * Bring the interface up and put it in promiscuous mode.
  */
 static int
-s_prepare_if (void)
+s_prepare_if (const char* nmifname)
 {
 	int rc;
+
+	/* Parse the name, extract only the physical interface name. */
+	/* Vale ports don't need to even be up. */
+	if (memcmp (nmifname, "vale", 4) == 0)
+		return 0;
+
+	char ifname[IFNAMSIZ];
+	memset (ifname, 0, IFNAMSIZ);
+
+	/* Skip over optional "netmap:" (or anything else?). */
+	const char* start = strchr (nmifname, ':');
+	if (start == NULL)
+		start = nmifname;
+	else
+		start++;
+
+	/* Find the start of any of the special suffixes. */
+	const char* end = nmifname;
+	for (; *end != '\0' &&
+		(strchr("+-*^{}/@", *end) == NULL); end++)
+		;
+	if (end <= start)
+	{
+		s_msgf (0, LOG_ERR, 0,
+			"Malformed interface name '%s'", nmifname);
+		return -1;
+	}
+
+	snprintf (ifname, end - start + 1, "%s", start);
+	dbg_assert (strlen (ifname) == end - start);
 
 	/* A socket is needed for ioctl. */
 	int sock = socket (AF_INET, SOCK_DGRAM, htons (IPPROTO_IP));
@@ -127,7 +157,7 @@ s_prepare_if (void)
 	/* Retrieve the index of the interface. */
 	struct ifreq ifr;
 	memset (&ifr, 0, sizeof (ifr));
-	strncpy (ifr.ifr_name, IFNAME, IFNAMSIZ);
+	strcpy (ifr.ifr_name, ifname);
 	rc = ioctl (sock, SIOCGIFINDEX, &ifr);
 	if (rc == -1)
 	{
@@ -328,29 +358,39 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 }
 
 static int
-s_coordinator_body (const char* ifname, long int stat_period)
+s_coordinator_body (const char* nmifname, long int stat_period)
 {
 	int rc;
 	struct data_t data;
 	memset (&data, 0, sizeof (data));
 
-	/* Bring the interface up and put it in promiscuous mode. */
-	rc = s_prepare_if ();
-	if (rc == -1)
-		return -1;
-
-	/* Open the interface in netmap mode. */
-	data.ifd = if_open (ifname, NULL, 0, 0);
+	/*
+	 * (struct nm_desc).nifp->ni_name contains the true name as opened,
+	 * e.g. if the interface is a persistent vale port, it will contain
+	 * vale*:<port> even if nm_open was passed netmap:<port>. (struct
+	 * nm_desc).req.nr_name contains the name of the interface passed to
+	 * nm_open minus the ring specification and minus optional netmap:
+	 * prefix, even if interface is a vale port. So we first open it and
+	 * then pass nifp->ni_name to s_prepare_if.
+	 */
+	/* Open the interface. */
+	data.ifd = if_open (nmifname, NULL, 0, 0);
 	if (data.ifd == NULL)
 	{
 		s_msgf (errno, LOG_ERR, 0, "Could not open interface %s",
-			ifname);
+			nmifname);
 		return -1;
 	}
+	const char* ifname = if_name (data.ifd);
+	dbg_assert (ifname != NULL);
 	s_msgf (0, LOG_INFO, 0, "Opened interface %s", ifname);
-
-	/* Get the ring, we support only one for now. */
 	dbg_assert (if_rxrings (data.ifd) == NUM_RINGS);
+
+	/* Bring the interface up and put it in promiscuous mode. */
+	rc = s_prepare_if (ifname);
+	if (rc == -1)
+		goto cleanup; /* s_prepare_if will print the error */
+
 
 	/* Start the tasks and register the readers. Tasks are initialized as
 	 * inactive. */
@@ -421,7 +461,7 @@ main (int argc, char **argv)
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
-	char ifname[IFNAMSIZ + 1];
+	char ifname[IFNAMSIZ];
 	memset (ifname, 0, sizeof (ifname));
 	while ( (opt = getopt (argc, argv, "i:u:fvh")) != -1 )
 	{
@@ -455,7 +495,7 @@ main (int argc, char **argv)
 	}
 	if (strlen (ifname) == 0)
 	{
-		sprintf (ifname, FPGA_IF);
+		sprintf (ifname, FPGA_IFNAME);
 	}
 	if (stat_period == -1 && ! is_daemon)
 	{

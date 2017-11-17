@@ -21,6 +21,9 @@ int if_close (ifdesc* ifd);
 /* Get the file descriptor */
 int if_fd (ifdesc* ifd);
 
+/* Get the interface name */
+char* if_name (ifdesc* ifd);
+
 /* Set and get the first, previous, next, <idx> or last tx or rx ring.
  * It is not done in a circular fashion.
  * Returns NULL for rings beyond the last one. */
