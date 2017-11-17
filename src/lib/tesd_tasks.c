@@ -88,7 +88,7 @@
  *
  * Tasks have read-only access to rings (they cannot modify the cursor or head)
  * and each task keeps its own head (for each ring), which is visible by the
- * coordinator (fpgacoord.c). For each ring, the coordinator sets the true head
+ * coordinator (tesd.c). For each ring, the coordinator sets the true head
  * to the per-task head which lags behind all others.
  *
  * Tasks are largely similar, so we pass the same handler, s_task_shim, to
@@ -204,8 +204,8 @@
  *   valgrind? A: https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  */
 
-#include "fpgatasks.h"
-#include "net/fpgaif_reader.h"
+#include "tesd_tasks.h"
+#include "net/tesif_reader.h"
 #include "common.h"
 #include "aio.h"
 

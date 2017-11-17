@@ -10,7 +10,7 @@
 #ifndef __NET_FPGAIF_MANAGER_H_INCLUDED__
 #define __NET_FPGAIF_MANAGER_H_INCLUDED__
 
-#include "net/fpgaif_reader.h"
+#include "net/tesif_reader.h"
 #include "sys/types.h"
 
 /* Open or close an interface. */

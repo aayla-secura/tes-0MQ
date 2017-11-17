@@ -22,9 +22,9 @@
 #include <czmq.h>
 
 #define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#include <net/tespkt.h>
 
-#include "daemon.h"
+#include "daemon_ng.h"
 
 #ifndef PATH_MAX
 #  ifdef MAXPATHLEN

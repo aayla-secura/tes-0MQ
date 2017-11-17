@@ -18,7 +18,7 @@
 #include <net/netmap_user.h>
 
 #define FPGAPKT_DEBUG
-#include <net/fpgapkt.h>
+#include <net/tespkt.h>
 
 #define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
 #define SRC_HW_ADDR "5a:ce:be:b7:b2:91"

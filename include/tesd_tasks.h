@@ -1,7 +1,7 @@
 #ifndef __FPGATASKS_H__INCLUDED__
 #define __FPGATASKS_H__INCLUDED__
 
-#include "net/fpgaif_reader.h"
+#include "net/tesif_reader.h"
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
 

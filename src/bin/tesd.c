@@ -1,5 +1,5 @@
 /*
- * See src/lib/fpgatasks.c for the API.
+ * See src/lib/tesd_tasks.c for the API.
  *
  * ----------------------------------------------------------------------------
  * -------------------------------- DEV NOTES ---------------------------------
@@ -8,7 +8,7 @@
  * statements should never be reached regardless of user input. Other errors
  * are handled gracefully with messages to clients and/or syslog or stderr/out.
  *
- * There is a separate thread for each "task" (see fpgatasks.h). Tasks are
+ * There is a separate thread for each "task" (see tesd_tasks.h). Tasks are
  * started with tasks_start. Each task has read-only access to rings (they
  * cannot modify the cursor or head) and each task keeps its own head, which is
  * visible by the coordinator (fpgacoord.h).
@@ -25,7 +25,7 @@
  *
  * The coordinator must register a generic task reader with its zloop, so that
  * when tasks encounter an error the coordinator's loop is terminated. The
- * signal handler is generic, internal to fpgatasks. Coordinator simply passes
+ * signal handler is generic, internal to tesd_tasks. Coordinator simply passes
  * the loop to tasks_start and after exiting from its loop (for whatever reason)
  * calls tasks_stop to shutdown all tasks cleanly.
  *
@@ -37,8 +37,8 @@
  * - chroot and drop privileges.
  */
 
-#include "fpgatasks.h"
-#include "net/fpgaif_manager.h"
+#include "tesd_tasks.h"
+#include "net/tesif_manager.h"
 #include "common.h"
 #include <net/if.h> /* IFNAMSIZ */
 #include <sys/socket.h>
