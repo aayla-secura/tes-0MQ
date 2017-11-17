@@ -7,8 +7,8 @@
  * ifring_release_*
  */
 
-#ifndef __NET_FPGAIF_MANAGER_H_INCLUDED__
-#define __NET_FPGAIF_MANAGER_H_INCLUDED__
+#ifndef __NET_TESIF_MANAGER_H_INCLUDED__
+#define __NET_TESIF_MANAGER_H_INCLUDED__
 
 #include "net/tesif_reader.h"
 #include "sys/types.h"

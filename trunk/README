@@ -40,7 +40,7 @@ the other Makefiles.
 src/bin/tesd.c is the server program, src/bin/tesc.c is the client which
 includes a help (usage) message when run with no args.
 
-See comments at the beginning of src/lib/fpgatasks.c for the API used in the
+See comments at the beginning of src/lib/tesd_tasks.c for the API used in the
 client progarm.
 
 Only tested on Linux >4.8.4 and FreeBSD 11.0

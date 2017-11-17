@@ -3,8 +3,8 @@
  * a wrapper around netmap.
  */
 
-#ifndef __NET_FPGAIF_READER_H_INCLUDED__
-#define __NET_FPGAIF_READER_H_INCLUDED__
+#ifndef __NET_TESIF_READER_H_INCLUDED__
+#define __NET_TESIF_READER_H_INCLUDED__
 
 #include <stdint.h>
 

@@ -11,7 +11,7 @@
  * There is a separate thread for each "task" (see tesd_tasks.h). Tasks are
  * started with tasks_start. Each task has read-only access to rings (they
  * cannot modify the cursor or head) and each task keeps its own head, which is
- * visible by the coordinator (fpgacoord.h).
+ * visible by the coordinator (tesd.c).
  *
  * After receiving new packets, the coordinator sets the true cursor and head
  * to the per-task head which lags behind all others (tasks_head).
@@ -63,7 +63,7 @@
 
 /* Defaults */
 #define UPDATE_INTERVAL 1             // in seconds
-#define FPGA_IFNAME "netmap:" IFNAME
+#define TES_IFNAME "netmap:" IFNAME
 #define PIDFILE "/var/run/" PROGNAME ".pid"
 
 /*
@@ -99,7 +99,7 @@ s_usage (const char* self)
 		"Usage: %s [options]\n\n"
 		"Options:\n"
 		"    -i <if>              Read packets from <if> interface\n"
-		"                         Defaults to "FPGA_IFNAME"\n"
+		"                         Defaults to "TES_IFNAME"\n"
 		"    -f                   Run in foreground\n"
 		"    -u <n>               Print statistics every <n> seconds\n"
 		"                         Set to 0 to disable. Default is %d\n"
@@ -329,7 +329,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 			continue; /* nothing processed since last time */
 		skipped = 0;
 
-		fpga_pkt* pkt = (fpga_pkt*)
+		tespkt* pkt = (tespkt*)
 			ifring_cur_buf (rxring); /* old head */
 		dbg_assert (pkt != NULL);
 		uint16_t fseqA = frame_seq (pkt);
@@ -338,7 +338,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		 * Look at the packet preceding the new head, in case the
 		 * new head is the tail (not a valid userspace buffer)
 		 */
-		pkt = (fpga_pkt*)
+		pkt = (tespkt*)
 			ifring_preceding_buf (rxring, new_head);
 		dbg_assert (pkt != NULL);
 		uint16_t fseqB = frame_seq (pkt);
@@ -405,7 +405,7 @@ s_coordinator_body (const char* nmifname, long int stat_period)
 		goto cleanup;
 	}
 
-	/* Register the FPGA interface as a poller. */
+	/* Register the TES interface as a poller. */
 	struct zmq_pollitem_t pitem;
 	memset (&pitem, 0, sizeof (pitem));
 	pitem.fd = if_fd (data.ifd);
@@ -455,7 +455,7 @@ cleanup:
 int
 main (int argc, char **argv)
 {
-	// __fpga_self_test ();
+	// tespkt_self_test ();
 	int rc;
 
 	/* Process command-line options. */
@@ -504,7 +504,7 @@ main (int argc, char **argv)
 	}
 	if (strlen (ifname) == 0)
 	{
-		sprintf (ifname, FPGA_IFNAME);
+		sprintf (ifname, TES_IFNAME);
 	}
 	if (stat_period == -1 && ! is_daemon)
 	{
@@ -523,7 +523,7 @@ main (int argc, char **argv)
 		}
 
 		/* Start syslog. */
-		openlog ("FPGA server", 0, LOG_DAEMON);
+		openlog ("TES server", 0, LOG_DAEMON);
 	}
 
 	rc = s_coordinator_body (ifname, stat_period);
