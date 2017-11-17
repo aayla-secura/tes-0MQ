@@ -31,7 +31,7 @@
 #  define dbg_assert(...)
 #endif
 
-#include <net/tespkt.h>
+#include "net/tespkt.h"
 
 #ifndef PATH_MAX
 #  ifdef MAXPATHLEN
