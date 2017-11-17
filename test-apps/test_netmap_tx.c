@@ -18,7 +18,7 @@
 #include <net/netmap_user.h>
 
 #define TESPKT_DEBUG
-#include <net/tespkt.h>
+#include "net/tespkt.h"
 
 #define TES_BYTE_ORDER __LITTLE_ENDIAN 
 #if __BYTE_ORDER == TES_BYTE_ORDER

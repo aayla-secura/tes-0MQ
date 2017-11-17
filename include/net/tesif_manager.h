@@ -11,7 +11,7 @@
 #define __NET_TESIF_MANAGER_H_INCLUDED__
 
 #include "net/tesif_reader.h"
-#include "sys/types.h"
+#include <sys/types.h>
 
 /* Open or close an interface. */
 tes_ifdesc* tes_if_open (const char *name, const tes_ifreq *req,

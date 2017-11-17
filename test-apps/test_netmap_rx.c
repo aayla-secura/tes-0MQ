@@ -5,57 +5,57 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/mman.h>
 #include <errno.h>
 #include <assert.h>
 #include <poll.h>
-#include <net/ethernet.h>
-#ifdef linux
-# include <netinet/ether.h>
-#endif
-#include <net/if.h> /* IFNAMSIZ */
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
 #define TESPKT_DEBUG
-#include <net/tespkt.h>
+#include "net/tespkt.h"
 
-#ifndef NMRING
-#define NMRING
-#endif
-#define MAX_RINGS 24
+#define MAX_FSIZE  5ULL << 32 /* 20GB */
+// #define SAVE_FILE  "/media/nm_test"
 #define UPDATE_INTERVAL 1
-#ifndef NMIF
-#define NMIF "vale0:vi1"
-#endif
+#define MAX_TICKS 10000000 /* Set to 0 for unlimited */
+
+#define NM_IFNAME "vale:tes"
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
 
+#define USE_MMAP
+// #define USE_DISPATCH
+
 static struct
 {
 	struct nm_desc* nmd;
+#ifdef SAVE_FILE
+	int save_fd;
+	void* save_map;
+	u_int64_t b_written;
+#endif /* SAVE_FILE */
 	struct {
 		struct timeval start;
 		struct timeval last_check;
 	} timers;
 	struct {
+		tespkt* cur_mca;
 		u_int32_t last_rcvd;
 		u_int32_t rcvd;
+		u_int32_t ticks;
 		u_int32_t missed;
-		u_int16_t last_id;
-		u_int32_t inslot[MAX_RINGS];
 	} pkts;
 	u_int32_t loop;
-	u_int8_t skipped;
 } gobj;
 
 static void
 print_desc_info (void)
 {
 	INFO (
-		"name: %s\n"
 		"ringid: %hu, flags: %u, cmd: %hu\n"
 		"extra rings: %hu, extra buffers: %u\n"
 		"done_mmap: %d\n"
@@ -64,7 +64,6 @@ print_desc_info (void)
 		"first rx: %hu, last rx: %hu\n"
 		"first tx: %hu, last tx: %hu\n"
 		"snaplen: %d\npromisc: %d\n",
-		gobj.nmd->nifp->ni_name,
 		gobj.nmd->req.nr_ringid,
 		gobj.nmd->req.nr_flags,
 		gobj.nmd->req.nr_cmd,
@@ -106,12 +105,11 @@ print_stats (int sig)
 		/* Alarm went off, update stats */
 		u_int32_t new_rcvd = gobj.pkts.rcvd - gobj.pkts.last_rcvd;
 		INFO (
-			"total pkts received: %10u ; "
-			"total pkts missed: %10u ; "
+			"ticks: %10u ; total pkts received: %10u ; "
 			/* "new pkts received: %10u ; " */
 			"avg bandwidth: %10.3e pps\n",
+			gobj.pkts.ticks,
 			gobj.pkts.rcvd,
-			gobj.pkts.missed,
 			/* new_rcvd, */
 			(double) new_rcvd / tdelta
 			);
@@ -129,25 +127,19 @@ print_stats (int sig)
 		INFO (
 			"\n-----------------------------\n"
 			"looped:            %10u\n"
-			"packets received:  %10u / %u\n"
+			"ticks:             %10u\n"
+			"packets received:  %10u\n"
 			"packets missed:    %10u\n"
 			"avg pkts per loop: %10u\n"
 			"avg bandwidth:     %10.3e pps\n"
 			"-----------------------------\n",
 			gobj.loop,
+			gobj.pkts.ticks,
 			gobj.pkts.rcvd,
-			gobj.pkts.rcvd + gobj.pkts.missed,
 			gobj.pkts.missed,
 			(gobj.loop > 0) ? gobj.pkts.rcvd / gobj.loop : 0,
 			(double) gobj.pkts.rcvd / tdelta
 			);
-		for (int s = 0; s <= gobj.nmd->last_rx_ring - gobj.nmd->first_rx_ring; s++)
-		{
-			INFO (
-				"slot %d received:  %10u\n",
-				s, gobj.pkts.inslot[s]
-			);
-		}
 	}
 }
 
@@ -170,78 +162,41 @@ cleanup (int sig)
 		nm_close (gobj.nmd);
 	}
 
+	if (gobj.pkts.cur_mca != NULL)
+	{
+		free (gobj.pkts.cur_mca);
+		gobj.pkts.cur_mca = NULL;
+	}
+
+#ifdef SAVE_FILE
+	if ( gobj.save_map != NULL && gobj.save_map != (void*)-1)
+		munmap (gobj.save_map, MAX_FSIZE);
+
+	if (gobj.b_written)
+	{
+		errno = 0;
+		ftruncate (gobj.save_fd, gobj.b_written);
+		if (errno)
+			perror (""); /* non-fatal, but print info */
+	}
+	close (gobj.save_fd);
+#endif /* SAVE_FILE */
+
 	exit (rc);
 }
 
 static void
 rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 {
-	tespkt* pkt = (tespkt*)buf;
-	uint16_t ri = gobj.nmd->cur_rx_ring;
-	uint16_t cur_frame = pkt->tes_hdr.fseq;
-	if (gobj.pkts.rcvd > 0)
-	{
-		gobj.pkts.missed += (u_int32_t) (
-			(uint16_t)(cur_frame - gobj.pkts.last_id) - 1);
-	}
-	gobj.pkts.rcvd++;
-	gobj.pkts.last_id = cur_frame;
-	gobj.pkts.inslot[ri]++;
-	assert (gobj.nmd->cur_rx_ring <= gobj.nmd->last_rx_ring);
-#ifdef VERBOSE
-	INFO ("Packet in ring %hu, pending in ring %u\n",
-			gobj.nmd->cur_rx_ring,
-			nm_ring_space (NETMAP_RXRING (
-					gobj.nmd->nifp,
-					gobj.nmd->cur_rx_ring)));
-#endif
-#define LIMIT_RATE
-#ifdef LIMIT_RATE
-	/* limit rate */
-	if (gobj.pkts.rcvd % 100 == 0)
-		poll (NULL, 0, 1);
-#endif
+	
+	/* ----------------------------------------------------------------- */
 
+	gobj.pkts.rcvd++;
 	if (gobj.pkts.rcvd + 1 == 0)
 	{
-		INFO ("Reached max received packets");
+		errno = EOVERFLOW;
 		raise (SIGTERM);
 	}
-}
-
-static int nm_dispatch_fixed (struct nm_desc *d,
-		int cnt, nm_cb_t cb, u_char *arg)
-{
-	int n = d->last_rx_ring - d->first_rx_ring + 1;
-	int c, got = 0, ri = d->cur_rx_ring;
-
-	if (cnt == 0)
-		cnt = -1;
-	/* cnt == -1 means infinite, but rings have a finite amount
-	 * of buffers and the int is large enough that we never wrap,
-	 * so we can omit checking for -1
-	 */
-	for (c=0; c < n && cnt != got; c++, ri++) {
-		/* compute current ring to use */
-		struct netmap_ring *ring;
-
-		if (ri > d->last_rx_ring)
-			ri = d->first_rx_ring;
-		d->cur_rx_ring = ri;
-		ring = NETMAP_RXRING(d->nifp, ri);
-		for ( ; !nm_ring_empty(ring) && cnt != got; got++) {
-			u_int i = ring->cur;
-			u_int idx = ring->slot[i].buf_idx;
-			u_char *buf = (u_char *)NETMAP_BUF(ring, idx);
-
-			// __builtin_prefetch(buf);
-			d->hdr.len = d->hdr.caplen = ring->slot[i].len;
-			d->hdr.ts = ring->ts;
-			cb(arg, &d->hdr, buf);
-			ring->head = ring->cur = nm_ring_next(ring, i);
-		}
-	}
-	return got;
 }
 
 int
@@ -272,15 +227,39 @@ main (void)
 	}
 
 	/* Open the interface */
-	gobj.nmd = nm_open(NMIF NMRING, NULL,
-			NETMAP_NO_TX_POLL, NULL);
+	gobj.nmd = nm_open(NM_IFNAME"}1", NULL, 0, 0);
 	if (gobj.nmd == NULL)
 	{
-		perror ("Could not open interface");
+		ERROR ("Could not open interface %s\n", NM_IFNAME);
 		exit (EXIT_FAILURE);
 	}
-	assert (gobj.nmd->last_rx_ring - gobj.nmd->first_rx_ring + 1 <= MAX_RINGS);
 	print_desc_info ();
+
+	/* Get the ring (we only use one) */
+	assert (gobj.nmd->first_rx_ring == gobj.nmd->last_rx_ring);
+	struct netmap_ring* rxring = NETMAP_RXRING (
+			gobj.nmd->nifp, gobj.nmd->cur_rx_ring);
+
+#ifdef SAVE_FILE
+	/* Open the file */
+	gobj.save_fd = open (SAVE_FILE, O_CREAT | O_RDWR,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (gobj.save_fd == -1)
+		raise (SIGTERM);
+	rc = posix_fallocate (gobj.save_fd, 0, MAX_FSIZE);
+	if (rc)
+	{
+		errno = rc;
+		raise (SIGTERM);
+	}
+
+#ifdef USE_MMAP
+	gobj.save_map = mmap (NULL, MAX_FSIZE, PROT_WRITE,
+		MAP_SHARED, gobj.save_fd, 0);
+	if (gobj.save_map == (void*)-1)
+		raise (SIGTERM);
+#endif /* USE_MMAP */
+#endif /* SAVE_FILE */
 
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
@@ -296,13 +275,15 @@ main (void)
 	pfd.events = POLLIN;
 	INFO ("Starting poll\n");
 
+	uint16_t cur_frame = -1;
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
-#define DO_POLL
-#ifdef DO_POLL
-		rc = poll (&pfd, 1, -1);
+		rc = poll (&pfd, 1, 1000);
 		if (rc == -1 && errno == EINTR)
-			errno = 0; /* alarm went off */
+		{
+			errno = 0;
+			continue;
+		}
 		else if (rc == -1)
 			raise (SIGTERM);
 		else if (rc == 0)
@@ -310,14 +291,69 @@ main (void)
 			DEBUG ("poll timed out\n"); 
 			continue;
 		}
-#else
-		ioctl (gobj.nmd->fd, NIOCRXSYNC);
-#endif
 
-#ifdef VERBOSE
-		INFO ("Dispatching\n");
-#endif
-		nm_dispatch_fixed (gobj.nmd, -1, rx_handler, NULL);
+#ifdef USE_DISPATCH
+		nm_dispatch (gobj.nmd, -1, rx_handler, NULL);
+#else
+		do
+		{
+			u_int32_t cur_bufid =
+				rxring->slot[ rxring->cur ].buf_idx;
+			tespkt* pkt =
+				(tespkt*) NETMAP_BUF (rxring, cur_bufid);
+
+#ifdef SAVE_FILE
+			/* ------------------------------------------------- */
+			/* ------------------ save packet ------------------ */
+#ifdef USE_MMAP
+			memcpy ((char*)gobj.save_map + gobj.b_written, pkt,
+				pkt->length);
+#else /* USE_MMAP */
+			ssize_t wrc = write (gobj.save_fd, pkt, pkt->length);
+			if (wrc == -1)
+				raise (SIGTERM);
+#endif /* USE_MMAP */
+			gobj.b_written += pkt->length;
+			/* ------------------------------------------------- */
+#endif /* SAVE_FILE */
+
+			rxring->head = rxring->cur =
+				nm_ring_next(rxring, rxring->cur);
+
+			if (gobj.pkts.rcvd > 0)
+			{
+				uint16_t prev_frame = cur_frame;
+				cur_frame = pkt->tes_hdr.fseq;
+				gobj.pkts.missed += (u_int32_t) (
+					(uint16_t)(cur_frame - prev_frame) - 1);
+			}
+			else
+			{
+				cur_frame = pkt->tes_hdr.fseq;
+				INFO ("First received frame is #%hu\n", cur_frame);
+			}
+
+			gobj.pkts.rcvd++;
+			if (gobj.pkts.rcvd + 1 == 0)
+			{
+				errno = EOVERFLOW;
+				raise (SIGTERM);
+			}
+
+			if (tespkt_is_tick (pkt))
+			{
+				gobj.pkts.ticks++;
+				/* DEBUG ("Received tick #%d\n", gobj.pkts.ticks); */
+			}
+			if (MAX_TICKS > 0 && gobj.pkts.ticks == MAX_TICKS)
+				raise (SIGTERM); /* done */
+
+#ifdef SAVE_FILE
+			if (gobj.b_written + MAX_TES_FRAME_LEN > MAX_FSIZE)
+				raise (SIGTERM); /* done */
+#endif /* SAVE_FILE */
+		} while ( ! nm_ring_empty (rxring) );
+#endif /* USE_DISPATCH */
 	}
 
 	errno = 0;

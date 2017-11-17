@@ -18,20 +18,15 @@
 #include <net/netmap_user.h>
 
 #define TESPKT_DEBUG
-#include <net/tespkt.h>
-
-#define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
-#define SRC_HW_ADDR "5a:ce:be:b7:b2:91"
-#define ETH_PROTO ETHERTYPE_F_EVENT
+#include "net/tespkt.h"
 
 #ifndef NMRING
 #define NMRING
 #endif
 #define MAX_RINGS 24
-#define PKT_LEN MAX_TES_FRAME_LEN
 #define UPDATE_INTERVAL 1
 #ifndef NMIF
-#define NMIF "vale0:vi0"
+#define NMIF "vale0:vi1"
 #endif
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
@@ -46,11 +41,14 @@ static struct
 		struct timeval last_check;
 	} timers;
 	struct {
-		u_int32_t last_sent;
-		u_int32_t sent;
+		u_int32_t last_rcvd;
+		u_int32_t rcvd;
+		u_int32_t missed;
+		u_int16_t last_id;
 		u_int32_t inslot[MAX_RINGS];
 	} pkts;
 	u_int32_t loop;
+	u_int8_t skipped;
 } gobj;
 
 static void
@@ -106,19 +104,21 @@ print_stats (int sig)
 	{
 		assert (sig == SIGALRM);
 		/* Alarm went off, update stats */
-		u_int32_t new_sent = gobj.pkts.sent - gobj.pkts.last_sent;
+		u_int32_t new_rcvd = gobj.pkts.rcvd - gobj.pkts.last_rcvd;
 		INFO (
-			"total pkts sent: %10u ; "
-			/* "new pkts sent: %10u ; " */
+			"total pkts received: %10u ; "
+			"total pkts missed: %10u ; "
+			/* "new pkts received: %10u ; " */
 			"avg bandwidth: %10.3e pps\n",
-			gobj.pkts.sent,
-			/* new_sent, */
-			(double) new_sent / tdelta
+			gobj.pkts.rcvd,
+			gobj.pkts.missed,
+			/* new_rcvd, */
+			(double) new_rcvd / tdelta
 			);
 
 		memcpy (&gobj.timers.last_check, &tnow,
 			sizeof (struct timeval));
-		gobj.pkts.last_sent = gobj.pkts.sent;
+		gobj.pkts.last_rcvd = gobj.pkts.rcvd;
 
 		/* Set alarm again */
 		alarm (UPDATE_INTERVAL);
@@ -129,14 +129,17 @@ print_stats (int sig)
 		INFO (
 			"\n-----------------------------\n"
 			"looped:            %10u\n"
-			"packets sent:      %10u\n"
+			"packets received:  %10u / %u\n"
+			"packets missed:    %10u\n"
 			"avg pkts per loop: %10u\n"
 			"avg bandwidth:     %10.3e pps\n"
 			"-----------------------------\n",
 			gobj.loop,
-			gobj.pkts.sent,
-			(gobj.loop > 0) ? gobj.pkts.sent / gobj.loop : 0,
-			(double) gobj.pkts.sent / tdelta
+			gobj.pkts.rcvd,
+			gobj.pkts.rcvd + gobj.pkts.missed,
+			gobj.pkts.missed,
+			(gobj.loop > 0) ? gobj.pkts.rcvd / gobj.loop : 0,
+			(double) gobj.pkts.rcvd / tdelta
 			);
 		for (int s = 0; s <= gobj.nmd->last_rx_ring - gobj.nmd->first_rx_ring; s++)
 		{
@@ -161,13 +164,84 @@ cleanup (int sig)
 		rc = EXIT_FAILURE;
 	}
 
-	if (gobj.nmd)
+	if (gobj.nmd != NULL)
 	{
 		print_stats (0);
 		nm_close (gobj.nmd);
 	}
 
 	exit (rc);
+}
+
+static void
+rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
+{
+	tespkt* pkt = (tespkt*)buf;
+	uint16_t ri = gobj.nmd->cur_rx_ring;
+	uint16_t cur_frame = pkt->tes_hdr.fseq;
+	if (gobj.pkts.rcvd > 0)
+	{
+		gobj.pkts.missed += (u_int32_t) (
+			(uint16_t)(cur_frame - gobj.pkts.last_id) - 1);
+	}
+	gobj.pkts.rcvd++;
+	gobj.pkts.last_id = cur_frame;
+	gobj.pkts.inslot[ri]++;
+	assert (gobj.nmd->cur_rx_ring <= gobj.nmd->last_rx_ring);
+#ifdef VERBOSE
+	INFO ("Packet in ring %hu, pending in ring %u\n",
+			gobj.nmd->cur_rx_ring,
+			nm_ring_space (NETMAP_RXRING (
+					gobj.nmd->nifp,
+					gobj.nmd->cur_rx_ring)));
+#endif
+#define LIMIT_RATE
+#ifdef LIMIT_RATE
+	/* limit rate */
+	if (gobj.pkts.rcvd % 100 == 0)
+		poll (NULL, 0, 1);
+#endif
+
+	if (gobj.pkts.rcvd + 1 == 0)
+	{
+		INFO ("Reached max received packets");
+		raise (SIGTERM);
+	}
+}
+
+static int nm_dispatch_fixed (struct nm_desc *d,
+		int cnt, nm_cb_t cb, u_char *arg)
+{
+	int n = d->last_rx_ring - d->first_rx_ring + 1;
+	int c, got = 0, ri = d->cur_rx_ring;
+
+	if (cnt == 0)
+		cnt = -1;
+	/* cnt == -1 means infinite, but rings have a finite amount
+	 * of buffers and the int is large enough that we never wrap,
+	 * so we can omit checking for -1
+	 */
+	for (c=0; c < n && cnt != got; c++, ri++) {
+		/* compute current ring to use */
+		struct netmap_ring *ring;
+
+		if (ri > d->last_rx_ring)
+			ri = d->first_rx_ring;
+		d->cur_rx_ring = ri;
+		ring = NETMAP_RXRING(d->nifp, ri);
+		for ( ; !nm_ring_empty(ring) && cnt != got; got++) {
+			u_int i = ring->cur;
+			u_int idx = ring->slot[i].buf_idx;
+			u_char *buf = (u_char *)NETMAP_BUF(ring, idx);
+
+			// __builtin_prefetch(buf);
+			d->hdr.len = d->hdr.caplen = ring->slot[i].len;
+			d->hdr.ts = ring->ts;
+			cb(arg, &d->hdr, buf);
+			ring->head = ring->cur = nm_ring_next(ring, i);
+		}
+	}
+	return got;
 }
 
 int
@@ -197,7 +271,9 @@ main (void)
 		exit (EXIT_FAILURE);
 	}
 
-	gobj.nmd = nm_open(NMIF NMRING, NULL, 0, NULL);
+	/* Open the interface */
+	gobj.nmd = nm_open(NMIF NMRING, NULL,
+			NETMAP_NO_TX_POLL, NULL);
 	if (gobj.nmd == NULL)
 	{
 		perror ("Could not open interface");
@@ -205,16 +281,6 @@ main (void)
 	}
 	assert (gobj.nmd->last_rx_ring - gobj.nmd->first_rx_ring + 1 <= MAX_RINGS);
 	print_desc_info ();
-
-	/* A dummy packet */
-	tespkt pkt;
-	assert (sizeof (pkt) == PKT_LEN);
-	memset (&pkt, 0, PKT_LEN);
-	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
-	memcpy (&pkt.eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
-	mac_addr = ether_aton (SRC_HW_ADDR);
-	memcpy (&pkt.eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
-	pkt.eth_hdr.ether_type = htons (ETH_PROTO);
 
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
@@ -227,62 +293,34 @@ main (void)
 	/* Poll */
 	struct pollfd pfd;
 	pfd.fd = gobj.nmd->fd;
-	pfd.events = POLLOUT;
-	INFO ("\nStarting poll\n");
+	pfd.events = POLLIN;
+	INFO ("Starting poll\n");
 
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
-/* #define DO_POLL */
+#define DO_POLL
 #ifdef DO_POLL
-		rc = poll (&pfd, 1, 1000);
+		rc = poll (&pfd, 1, -1);
 		if (rc == -1 && errno == EINTR)
-			errno = 0;
+			errno = 0; /* alarm went off */
 		else if (rc == -1)
 			raise (SIGTERM);
 		else if (rc == 0)
 		{
-			DEBUG ("poll timed out\n");
+			DEBUG ("poll timed out\n"); 
 			continue;
 		}
 #else
-		ioctl (gobj.nmd->fd, NIOCTXSYNC);
+		ioctl (gobj.nmd->fd, NIOCRXSYNC);
 #endif
 
-		if (nm_inject (gobj.nmd, &pkt, PKT_LEN))
-		{
-			gobj.pkts.sent++;
-			gobj.pkts.inslot[gobj.nmd->cur_tx_ring]++;
-			pkt.tes_hdr.fseq++;
-#define ADV_RIDX
-#define RAND_RIDX
-#ifdef ADV_RIDX
-#ifndef RAND_RIDX
-			/* advance the ring for next time */
-			if (gobj.nmd->cur_tx_ring == gobj.nmd->first_tx_ring)
-				gobj.nmd->cur_tx_ring = gobj.nmd->last_tx_ring;
-			else
-				gobj.nmd->cur_tx_ring--;
-#else /* RAND_RIDX */
-			/* set it to random */
-			u_int16_t nr = gobj.nmd->last_rx_ring - gobj.nmd->first_rx_ring + 1;
-			int ridx = (int) ((double)rand () * nr / RAND_MAX);
-			/* only if rand returned RAND_MAX */
-			if (ridx == nr)
-				ridx--;
-			assert (ridx >= 0 && ridx < nr);
-			gobj.nmd->cur_tx_ring = ridx;
-#endif /* RAND_RIDX */
-#endif /* ADV_RIDX */
-		}
-#define LIMIT_RATE
-#ifdef LIMIT_RATE
-		/* limit rate */
-		if (gobj.pkts.sent % 500 == 0)
-			poll (NULL, 0, 1);
+#ifdef VERBOSE
+		INFO ("Dispatching\n");
 #endif
+		nm_dispatch_fixed (gobj.nmd, -1, rx_handler, NULL);
 	}
 
 	errno = 0;
-	raise (SIGTERM); /*cleanup*/
+	raise (SIGTERM); /* cleanup */
 	return 0; /*never reached, suppress gcc warning*/
 }

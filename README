@@ -1,50 +1,28 @@
 Layout of the trunk is:
-- include:      header files
-- src/bin:      source binary files
-- src/bin/test: miscellaneous test files
-- src/lib:      source library files
+- include:   header files
+- src/bin:   source files for the main server and client
+- src/lib:   source files for the libraries used by the main server
+- test-apps: source files for miscellaneous test programs
 
-There is a Makefile in both src/bin and src/lib which is used respectively to
-build and install binaries or libraries. It is a GNU Makefile, so on FreeBSD
-use gmake instead of make.
+To compile and install the client (tesc) and server (tesd) do:
 
-From the trunk do:
-
- cd src/lib
- make all
+ make
  make install
- cd ../bin
- make all
- make install
+ make clean
 
-There is also a Makefile in src/bin/test used to compile the test binaries.
-There is no install target for it. Simply do:
- 
- cd src/bin/test
- make <name_of_executable_without_extension>
+The default install prefix is /usr/local, to change it do:
 
-or
+ make PREFIX=<path> install
 
- make all
+Note: it is a GNU makefile, so on some systems (e.g. FreeBSD) you need to use
+gmake.
 
-The Makefiles in src/bin and src/bin/test will link with the necessary
-libraries (and it will make sure include and lib in the trunk are given to
-gcc). Before running a program in bin/ do:
+Both client and server will print usage when given the '-h' option.
 
- export LD_LIBRARY_PATH=/path/to/trunk/lib
-
-To modify CFLAGS and other global parameters passed to gcc (or the compiler
-executable itself), see Makefile in the trunk directory, which is sourced by
-the other Makefiles.
-
-src/bin/tesd.c is the server program, src/bin/tesc.c is the client which
-includes a help (usage) message when run with no args.
+To compile the test apps do 'make test' or alternatively 'make all' to compile
+everything. Test apps are not installed in system location.
 
 See comments at the beginning of src/lib/tesd_tasks.c for the API used in the
 client progarm.
 
-Only tested on Linux >4.8.4 and FreeBSD 11.0
-
-TO DO:
- * Install header files as well.
- * Rewrite Makefile: need a parent Makefile in the trunk that will install everything.
+Only tested on Linux 4.8.4 and above, and FreeBSD 11.0

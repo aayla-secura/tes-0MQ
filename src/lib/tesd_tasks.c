@@ -28,6 +28,9 @@
  * ------------------------------ REP INTERFACE -------------------------------
  * 
  * Messages are sent and read via zsock_send, zsock_recv as "picture" messages.
+ * They are simply multi-frame ZMQ messages with each frame being a string
+ * representation of the value.
+ * 
  * Valid requests have a picture of "s81", replies have a picture of "18888":
  * 
  * Format for valid save requests is:
@@ -42,6 +45,7 @@
  *   Frame 3 (uint8_t): (ignored if Frame 2 == 0)
  *       0: create but do not overwrite or
  *       1: create or overwrite,
+ *
  * As a consequence of how zsock_recv parses arguments, the client may omit
  * frames corresponding to ignored arguments or arguments = 0. Therefore to get
  * a status of a file, only the filename is required.
@@ -206,7 +210,7 @@
 
 #include "tesd_tasks.h"
 #include "common.h"
-#include "aio.h"
+#include <aio.h>
 
 /* From netmap_user.h */
 #define likely(x)   __builtin_expect(!!(x), 1)
