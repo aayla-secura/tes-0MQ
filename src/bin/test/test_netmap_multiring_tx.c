@@ -252,7 +252,7 @@ main (void)
 		{
 			gobj.pkts.sent++;
 			gobj.pkts.inslot[gobj.nmd->cur_tx_ring]++;
-			pkt.teshdr.frame_seq++;
+			pkt.tes_hdr.fseq++;
 #define ADV_RIDX
 #define RAND_RIDX
 #ifdef ADV_RIDX

@@ -178,7 +178,7 @@ rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 {
 	tespkt* pkt = (tespkt*)buf;
 	uint16_t ri = gobj.nmd->cur_rx_ring;
-	uint16_t cur_frame = pkt->teshdr.frame_seq;
+	uint16_t cur_frame = pkt->tes_hdr.fseq;
 	if (gobj.pkts.rcvd > 0)
 	{
 		gobj.pkts.missed += (u_int32_t) (

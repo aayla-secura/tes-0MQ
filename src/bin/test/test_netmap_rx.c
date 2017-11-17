@@ -323,13 +323,13 @@ main (void)
 			if (gobj.pkts.rcvd > 0)
 			{
 				uint16_t prev_frame = cur_frame;
-				cur_frame = pkt->teshdr.frame_seq;
+				cur_frame = pkt->tes_hdr.fseq;
 				gobj.pkts.missed += (u_int32_t) (
 					(uint16_t)(cur_frame - prev_frame) - 1);
 			}
 			else
 			{
-				cur_frame = pkt->teshdr.frame_seq;
+				cur_frame = pkt->tes_hdr.fseq;
 				INFO ("First received frame is #%hu\n", cur_frame);
 			}
 
@@ -340,7 +340,7 @@ main (void)
 				raise (SIGTERM);
 			}
 
-			if (is_tick (pkt))
+			if (tespkt_is_tick (pkt))
 			{
 				gobj.pkts.ticks++;
 				/* DEBUG ("Received tick #%d\n", gobj.pkts.ticks); */
