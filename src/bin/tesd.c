@@ -31,6 +31,8 @@
  * When debugging we use assert throughout to catch bugs. Normally these
  * statements should never be reached regardless of user input. Other errors
  * are handled gracefully with messages to clients and/or syslog or stderr/out.
+ * dbg_assert is used in functions which are called very often (e.g. handlers)
+ * and is a no-op unless ENABLE_DEBUG is defined.
  *
  * There is a separate thread for each "task" (see tesd_tasks.h). Tasks are
  * started with tasks_start. Each task has read-only access to rings (they

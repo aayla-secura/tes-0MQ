@@ -23,9 +23,17 @@
 
 #include "daemon_ng.h"
 
-#define FULL_DBG
-#ifdef FULL_DBG
+#define ENABLE_DEBUG
+#define ENABLE_FULL_DEBUG
+
+#ifdef ENABLE_FULL_DEBUG
+#  ifndef ENABLE_DEBUG
+#    define ENABLE_DEBUG
+#  endif
 #  define TESPKT_DEBUG
+#endif
+
+#ifdef ENABLE_DEBUG
 #  define dbg_assert(...) assert (__VA_ARGS__)
 #else
 #  define dbg_assert(...)
