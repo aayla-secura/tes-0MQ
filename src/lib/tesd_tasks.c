@@ -249,23 +249,25 @@ struct s_task_save_data_t
 	struct s_task_save_stats_t st;
 	struct
 	{
-		size_t waiting;      // copied into buffer since the last aio_write
-		size_t enqueued;     // queued for writing at the last aio_write
 		unsigned char* base; // mmapped, size of TSAVE_BUFSIZE
 		unsigned char* tail; // start address queued for aio_write
 		unsigned char* cur;  // address where next packet will be coppied to
 		unsigned char* ceil; // base + TSAVE_BUFSIZE
+		size_t waiting;      // copied into buffer since the last aio_write
+		size_t enqueued;     // queued for writing at the last aio_write
+#ifdef ENABLE_FULL_DEBUG
+		size_t prev_enqueued;
+		size_t prev_waiting;
+		size_t last_written;
+		uint64_t batches;
+		uint64_t failed_batches;
+		uint64_t num_cleared;
+#endif
 	} bufzone;
 	size_t size; // number of bytes written
 	uint64_t min_ticks;
 	uint64_t min_events;
 #ifdef ENABLE_FULL_DEBUG
-	size_t prev_enqueued;
-	size_t prev_waiting;
-	size_t last_written;
-	uint64_t batches;
-	uint64_t failed_batches;
-	uint64_t num_cleared;
 	unsigned char prev_hdr[TES_HDR_LEN];
 #endif
 	char*    filename;
@@ -1135,7 +1137,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 			sjob->bufzone.waiting, sjob->bufzone.enqueued,
 			(long)(TSAVE_BUFSIZE - sjob->bufzone.waiting
 			- sjob->bufzone.enqueued),
-			sjob->prev_waiting, sjob->prev_enqueued);
+			sjob->bufzone.prev_waiting, sjob->bufzone.prev_enqueued);
 		return TASK_ERROR;
 	}
 #endif
@@ -1194,7 +1196,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 #ifdef ENABLE_FULL_DEBUG
 		s_msgf (0, LOG_ERR, self->id,
 			"Queued %lu bytes, wrote %lu",
-			sjob->bufzone.enqueued, sjob->last_written);
+			sjob->bufzone.enqueued, sjob->bufzone.last_written);
 #else /* ENABLE_FULL_DEBUG */
 		s_msg (0, LOG_ERR, self->id,
 			"Wrote unexpected number of bytes");
@@ -1226,8 +1228,8 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 #ifdef ENABLE_FULL_DEBUG
 		s_msgf (0, LOG_DEBUG, self->id,
 			"Wrote %lu packets in %lu batches (%lu repeated, "
-			"%lu cleared all)", sjob->st.frames,
-			sjob->batches, sjob->failed_batches, sjob->num_cleared);
+			"%lu cleared all)", sjob->st.frames, sjob->bufzone.batches,
+			sjob->bufzone.failed_batches, sjob->bufzone.num_cleared);
 #endif
 		/* TO DO: check rc */
 		s_task_save_write (sjob);
@@ -1315,12 +1317,12 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	assert (sjob->aios.aio_fildes == -1);
 	dbg_assert (sjob->size == 0);
 #ifdef ENABLE_FULL_DEBUG
-	dbg_assert (sjob->prev_enqueued == 0);
-	dbg_assert (sjob->prev_waiting == 0);
-	dbg_assert (sjob->batches == 0);
-	dbg_assert (sjob->failed_batches == 0);
-	dbg_assert (sjob->num_cleared == 0);
-	dbg_assert (sjob->last_written == 0);
+	dbg_assert (sjob->bufzone.prev_enqueued == 0);
+	dbg_assert (sjob->bufzone.prev_waiting == 0);
+	dbg_assert (sjob->bufzone.batches == 0);
+	dbg_assert (sjob->bufzone.failed_batches == 0);
+	dbg_assert (sjob->bufzone.num_cleared == 0);
+	dbg_assert (sjob->bufzone.last_written == 0);
 #endif
 	dbg_assert (sjob->st.ticks == 0);
 	dbg_assert (sjob->st.events == 0);
@@ -1390,7 +1392,7 @@ s_task_save_queue (struct s_task_save_data_t* sjob, bool force)
 	if (wrc == -1 && errno == EAGAIN)
 	{
 #ifdef ENABLE_FULL_DEBUG
-		sjob->failed_batches++;
+		sjob->bufzone.failed_batches++;
 #endif
 		goto queue_as_is; /* requeue previous batch */
 	}
@@ -1401,7 +1403,7 @@ s_task_save_queue (struct s_task_save_data_t* sjob, bool force)
 	{
 		dbg_assert (sjob->bufzone.enqueued > 0);
 #ifdef ENABLE_FULL_DEBUG
-		sjob->last_written = wrc;
+		sjob->bufzone.last_written = wrc;
 #endif
 		return -2;
 	}
@@ -1409,9 +1411,9 @@ s_task_save_queue (struct s_task_save_data_t* sjob, bool force)
 	/* ----------------------------------------------------------------- */
 prepare_next:
 #ifdef ENABLE_FULL_DEBUG
-	sjob->batches++;
-	sjob->prev_waiting = sjob->bufzone.waiting;
-	sjob->prev_enqueued = sjob->bufzone.enqueued;
+	sjob->bufzone.batches++;
+	sjob->bufzone.prev_waiting = sjob->bufzone.waiting;
+	sjob->bufzone.prev_enqueued = sjob->bufzone.enqueued;
 #endif
 
 	/* Increase file size by number of bytes written. */
@@ -1444,7 +1446,7 @@ queue_as_is:
 	if (sjob->bufzone.enqueued == 0)
 	{
 #ifdef ENABLE_FULL_DEBUG
-		sjob->num_cleared++;
+		sjob->bufzone.num_cleared++;
 #endif
 		return 0;
 	}
@@ -1475,12 +1477,12 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 	dbg_assert (sjob->min_ticks == 0);
 	dbg_assert (sjob->min_events == 0);
 #ifdef ENABLE_FULL_DEBUG
-	dbg_assert (sjob->prev_enqueued == 0);
-	dbg_assert (sjob->prev_waiting == 0);
-	dbg_assert (sjob->batches == 0);
-	dbg_assert (sjob->failed_batches == 0);
-	dbg_assert (sjob->num_cleared == 0);
-	dbg_assert (sjob->last_written == 0);
+	dbg_assert (sjob->bufzone.prev_enqueued == 0);
+	dbg_assert (sjob->bufzone.prev_waiting == 0);
+	dbg_assert (sjob->bufzone.batches == 0);
+	dbg_assert (sjob->bufzone.failed_batches == 0);
+	dbg_assert (sjob->bufzone.num_cleared == 0);
+	dbg_assert (sjob->bufzone.last_written == 0);
 #endif
 	dbg_assert (sjob->st.ticks == 0);
 	dbg_assert (sjob->st.events == 0);
@@ -1558,12 +1560,12 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	sjob->min_ticks = 0;
 	sjob->min_events = 0;
 #ifdef ENABLE_FULL_DEBUG
-	sjob->prev_enqueued = 0;
-	sjob->prev_waiting = 0;
-	sjob->batches = 0;
-	sjob->failed_batches = 0;
-	sjob->num_cleared = 0;
-	sjob->last_written = 0;
+	sjob->bufzone.prev_enqueued = 0;
+	sjob->bufzone.prev_waiting = 0;
+	sjob->bufzone.batches = 0;
+	sjob->bufzone.failed_batches = 0;
+	sjob->bufzone.num_cleared = 0;
+	sjob->bufzone.last_written = 0;
 #endif
 	sjob->st.ticks = 0;
 	sjob->st.events = 0;
