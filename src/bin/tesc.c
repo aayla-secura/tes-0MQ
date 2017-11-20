@@ -8,7 +8,7 @@
 #include <sys/mman.h>
 #include <czmq.h>
 
-#define REQ_PIC        "s81"
+#define REQ_PIC       "s881"
 #define REP_PIC      "18888"
 #if 0 /* FIX */
 #define MAX_HISTSIZE 65528
@@ -26,17 +26,19 @@ usage (const char* self)
 		"The format for <socket> is <proto>://<host>:<port>\n\n"
 		"The client operates in one of two modes:\n"
 		"1) Options for saving all frames to a remote file:\n"
-		"    -f <filename>      Remote filename\n"
-		"    -t <ticks>         Save up to that many ticks\n"
-		"    -o                 Overwrite if file exists\n"
-		"    -s                 Request status of filename\n"
+		"    -f <filename>      Remote filename.\n"
+		"    -t <ticks>         Save at least that many ticks.\n"
+		"    -e <ticks>         Save at least that many non-tick\n"
+	       	"                       events. Default is 0.\n"
+		"    -o                 Overwrite if file exists.\n"
+		"    -s                 Request status of filename.\n"
 		"The 'f' option and exactly one of 's' or 't' "
 		"must be specified.\n"
-		"The 'o' cannot be given for status requests\n\n"
+		"The 'o' cannot be given for status requests.\n\n"
 		"2) Options for saving histograms to a local file:\n"
-		"    -f <filename>      Local filename. Will append if"
+		"    -f <filename>      Local filename. Will append if\n"
 		"                       existing.\n"
-		"    -c <count>         Save up to that many histograms\n"
+		"    -c <count>         Save up to that many histograms.\n"
 		"Both 'f' and 'c' options must be given.\n", self
 		);
 	exit (EXIT_SUCCESS);
@@ -162,9 +164,9 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 	return 0;
 }
 
-	static int
+static int
 save_to_remote (const char* server, const char* filename,
-		uint64_t max_ticks, uint8_t ovrwrt)
+		uint64_t min_ticks, uint64_t min_events, uint8_t ovrwrt)
 {
 	/* Open the socket */
 	errno = 0;
@@ -179,12 +181,12 @@ save_to_remote (const char* server, const char* filename,
 	}
 
 	/* Send the request */
-	zsock_send (sock, REQ_PIC, filename, max_ticks, ovrwrt);
+	zsock_send (sock, REQ_PIC, filename, min_ticks, min_events, ovrwrt);
 	puts ("Waiting for reply");
 
 	uint8_t fstat;
-	uint64_t ticks, size, frames, missed;
-	int rc = zsock_recv (sock, REP_PIC, &fstat, &ticks, &size, &frames, &missed); 
+	uint64_t ticks, events, frames, missed;
+	int rc = zsock_recv (sock, REP_PIC, &fstat, &ticks, &events, &frames, &missed); 
 	if (rc == -1)
 	{
 		zsock_destroy (&sock);
@@ -194,18 +196,18 @@ save_to_remote (const char* server, const char* filename,
 	/* Print reply */
 	if (!fstat)
 	{
-		printf ("File %s\n", max_ticks ?
+		printf ("File %s\n", min_ticks ?
 			"exists" : "does not exist");
 	}
 	else
 	{
 		printf ("%s\n"
 			"ticks:         %lu\n"
+			"other events:  %lu\n"
 			"saved frames:  %lu\n"
-			"missed frames: %lu\n"
-			"total size:    %lu\n",
-			max_ticks ? "Wrote" : "File contains",
-			ticks, frames, missed, size);
+			"missed frames: %lu\n",
+			min_ticks ? "Wrote" : "File contains",
+			ticks, events, frames, missed);
 	}
 
 	zsock_destroy (&sock);
@@ -238,13 +240,13 @@ main (int argc, char **argv)
 	char filename[256];
 	memset (filename, 0, sizeof (filename));
 	char* buf = NULL;
-	uint64_t max_ticks = 0, numhist = 0;
+	uint64_t min_ticks = 0, min_events = 0, numhist = 0;
 	uint8_t ovrwrt = 0, status = 0;
 	/* 0 for remotely save all frames, 1 for locally save histograms */
 	int mode = -1;
 
 	int opt;
-	while ( (opt = getopt (argc, argv, "R:f:c:t:osh")) != -1 )
+	while ( (opt = getopt (argc, argv, "R:f:c:t:e:osh")) != -1 )
 	{
 		switch (opt)
 		{
@@ -286,7 +288,32 @@ main (int argc, char **argv)
 					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
-				max_ticks = strtoul (optarg, &buf, 10);
+				min_ticks = strtoul (optarg, &buf, 10);
+				if (strlen (buf))
+				{
+					fprintf (stderr, "Invalid format for "
+						"option %c.\n", opt);
+					exit (EXIT_FAILURE);
+					// usage (argv[0]);
+				}
+				break;
+			case 'e':
+				if (mode == 1)
+				{
+					fprintf (stderr, "Option %c is not "
+						"valid in mode %d.\n", opt, mode + 1);
+					exit (EXIT_FAILURE);
+					// usage (argv[0]);
+				}
+				mode = 0;
+				if (status)
+				{
+					fprintf (stderr, "Option %c is not "
+						"valid for status requests.\n", opt);
+					exit (EXIT_FAILURE);
+					// usage (argv[0]);
+				}
+				min_events = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 				{
 					fprintf (stderr, "Invalid format for "
@@ -326,14 +353,13 @@ main (int argc, char **argv)
 					// usage (argv[0]);
 				}
 				mode = 0;
-				if (max_ticks || ovrwrt)
+				if (min_ticks || min_events || ovrwrt)
 				{
 					fprintf (stderr, "Option %c is not "
 						"valid for status requests.\n", opt);
 					exit (EXIT_FAILURE);
 					// usage (argv[0]);
 				}
-				max_ticks = 0;
 				status = 1;
 				break;
 			case 'h':
@@ -364,7 +390,7 @@ main (int argc, char **argv)
 			"Type %s -h for help\n", argv[0]);
 		exit (EXIT_FAILURE);
 	}
-	if ( mode == 0 && !max_ticks && !status )
+	if ( mode == 0 && !min_ticks && !status )
 	{
 		fprintf (stderr, "Excatly one of 's' or 't' options "
 			"must be specified.\n"
@@ -393,11 +419,12 @@ main (int argc, char **argv)
 			filename);
 		if (!status)
 		{
-			printf (" Will terminate after %lu ticks.", max_ticks);
+			printf (" Will terminate after at least %lu ticks and %lu events.",
+				min_ticks, min_events);
 		}
 		if ( prompt () )
 			exit (EXIT_SUCCESS);
-		int rc = save_to_remote (server, filename, max_ticks, ovrwrt);
+		int rc = save_to_remote (server, filename, min_ticks, min_events, ovrwrt);
 		exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 	}
 	else

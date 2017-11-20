@@ -216,7 +216,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 /* See api.h */
 #define REQ_FAIL        0
 #define REQ_OK          1
-#define REQ_PIC      "s81"
+#define REQ_PIC     "s881"
 #define REP_PIC    "18888"
 
 #define TSAVE_ROOT "/media/data/" // must have a trailing slash
@@ -233,14 +233,14 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 struct s_task_save_stats_t
 {
 	uint64_t ticks;
-	uint64_t size;           // number of written bytes 
+	uint64_t events;         // TO DO: number of events written 
 	uint64_t frames;         // total frames saved
 	uint64_t frames_lost;    // total frames lost (includes dropped)
 	uint64_t errors;         // TO DO: last 8-bytes of the tick header 
 };
 
 /*
- * Data for the currently-saved file. max_ticks and filename are set when
+ * Data for the currently-saved file. min_ticks and filename are set when
  * receiving a request from client.
  */
 struct s_task_save_data_t
@@ -256,7 +256,9 @@ struct s_task_save_data_t
 		unsigned char* cur;  // address where next packet will be coppied to
 		unsigned char* ceil; // base + TSAVE_BUFSIZE
 	} bufzone;
-	uint64_t max_ticks;
+	size_t size; // number of bytes written
+	uint64_t min_ticks;
+	uint64_t min_events;
 #ifdef ENABLE_FULL_DEBUG
 	size_t prev_enqueued;
 	size_t prev_waiting;
@@ -951,7 +953,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	char* filename;
 	int rc = zsock_recv (reader, REQ_PIC, &filename,
-		&sjob->max_ticks, &job_mode);
+		&sjob->min_ticks, &sjob->min_events, &job_mode);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or a null
 	   * frame (z) but message received did not match this signature; this
@@ -968,7 +970,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	int checkonly = (sjob->max_ticks == 0);
+	int checkonly = (sjob->min_ticks == 0);
 	if (checkonly)
 	{
 		s_msgf (0, LOG_INFO, self->id,
@@ -979,7 +981,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		s_msgf (0, LOG_INFO, self->id,
 			"Received request to write %lu ticks to '%s'",
-			sjob->max_ticks, filename);
+			sjob->min_ticks, filename);
 	}
 
 	/* Check if filename is allowed and get the realpath. */
@@ -1081,6 +1083,48 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	dbg_assert (sjob->aios.aio_fildes != -1);
 	dbg_assert (self->active);
 
+	/*
+	 * *****************************************************************
+	 * *********************** Update statistics. **********************
+	 * *****************************************************************
+	 */
+	 /* Size is updated in batches as write operations finish. */
+	 /* TO DO: save err flags */
+	if (sjob->st.frames > 0)
+		sjob->st.frames_lost += missed;
+
+#ifdef ENABLE_FULL_DEBUG
+	if (sjob->st.frames_lost != 0)
+	{
+		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
+			self->prev_fseq, tespkt_fseq (pkt));
+		s_dump_buf (sjob->prev_hdr, TES_HDR_LEN);
+		s_dump_buf ((void*)pkt, TES_HDR_LEN);
+		return TASK_ERROR;
+	}
+	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
+#endif
+
+	int finishing = 0;
+	sjob->st.frames++;
+	if (tespkt_is_evt (pkt))
+	{
+		if (tespkt_is_tick (pkt))
+		{
+			sjob->st.ticks++;
+			if (sjob->st.ticks >= sjob->min_ticks &&
+				sjob->st.events >= sjob->min_events)
+				finishing = 1; /* DONE */
+		}
+		else
+			sjob->st.events++;
+	}
+
+	/*
+	 * *****************************************************************
+	 * ********************** Write payload. ***************************
+	 * *****************************************************************
+	 */
 #ifdef ENABLE_FULL_DEBUG
 	if (sjob->bufzone.enqueued + sjob->bufzone.waiting >
 		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN)
@@ -1108,29 +1152,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		+ sjob->bufzone.enqueued + sjob->bufzone.waiting -
 		((sjob->bufzone.cur < sjob->bufzone.tail) ? TSAVE_BUFSIZE : 0));
 
-	/* TO DO: save err flags */
-	/* Update statistics. Size is updated in batches as write operations
-	 * finish. */
-	if (sjob->st.frames > 0)
-		sjob->st.frames_lost += missed;
-
-#ifdef ENABLE_FULL_DEBUG
-	if (sjob->st.frames_lost != 0)
-	{
-		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
-			self->prev_fseq, tespkt_fseq (pkt));
-		s_dump_buf (sjob->prev_hdr, TES_HDR_LEN);
-		s_dump_buf ((void*)pkt, TES_HDR_LEN);
-		return TASK_ERROR;
-	}
-	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
-#endif
-
-	int finishing = 0;
-	sjob->st.frames++;
-	if (tespkt_is_tick (pkt))
-		sjob->st.ticks++;
-
 	/* Wrap cursor if needed */
 	int reserve = plen - (sjob->bufzone.ceil - sjob->bufzone.cur);
 	if (likely (reserve < 0))
@@ -1148,11 +1169,8 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	}
 	sjob->bufzone.waiting += plen;
 
-	if (sjob->st.ticks == sjob->max_ticks)
-		finishing = 1;
-
 #if 1 /* 0 to skip writing */
-	/* Trye to queue next batch but don't force */
+	/* Try to queue next batch but don't force */
 	int jobrc = s_task_save_queue (sjob, 0);
 	/* If there is no space for a full frame, force write until there is.
 	 * If we are finalizingm wait for all bytes to be written. */
@@ -1184,7 +1202,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		finishing = 1;
 	}
 #else /* skip writing */
-	sjob->st.size += sjob->bufzone.waiting;
+	sjob->size += sjob->bufzone.waiting;
 	sjob->bufzone.waiting = 0;
 	sjob->bufzone.tail = sjob->bufzone.cur;
 #endif /* skip writing */
@@ -1192,6 +1210,11 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	dbg_assert (sjob->bufzone.enqueued + sjob->bufzone.waiting <=
 		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
 
+	/*
+	 * *****************************************************************
+	 * ********************** Check if done. ***************************
+	 * *****************************************************************
+	 */
 	if (finishing)
 	{
 		dbg_assert (jobrc != EINPROGRESS);
@@ -1290,6 +1313,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	assert (sjob != NULL);
 	assert (sjob->filename != NULL);
 	assert (sjob->aios.aio_fildes == -1);
+	dbg_assert (sjob->size == 0);
 #ifdef ENABLE_FULL_DEBUG
 	dbg_assert (sjob->prev_enqueued == 0);
 	dbg_assert (sjob->prev_waiting == 0);
@@ -1299,7 +1323,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	dbg_assert (sjob->last_written == 0);
 #endif
 	dbg_assert (sjob->st.ticks == 0);
-	dbg_assert (sjob->st.size == 0);
+	dbg_assert (sjob->st.events == 0);
 	dbg_assert (sjob->st.frames == 0);
 	dbg_assert (sjob->st.frames_lost == 0);
 	dbg_assert (sjob->st.errors == 0);
@@ -1391,7 +1415,7 @@ prepare_next:
 #endif
 
 	/* Increase file size by number of bytes written. */
-	sjob->st.size += sjob->bufzone.enqueued;
+	sjob->size += sjob->bufzone.enqueued;
 
 	sjob->bufzone.tail += sjob->bufzone.enqueued;
 	if (sjob->bufzone.tail == sjob->bufzone.ceil)
@@ -1425,7 +1449,7 @@ queue_as_is:
 		return 0;
 	}
 
-	sjob->aios.aio_offset = sjob->st.size + TSAVE_STAT_LEN;
+	sjob->aios.aio_offset = sjob->size + TSAVE_STAT_LEN;
 	sjob->aios.aio_buf = sjob->bufzone.tail;
 	sjob->aios.aio_nbytes = sjob->bufzone.enqueued;
 	do
@@ -1447,7 +1471,9 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 	dbg_assert (sjob != NULL);
 	dbg_assert (sjob->filename != NULL);
 	dbg_assert (sjob->aios.aio_fildes != -1);
-	dbg_assert (sjob->max_ticks == 0);
+	dbg_assert (sjob->size == 0);
+	dbg_assert (sjob->min_ticks == 0);
+	dbg_assert (sjob->min_events == 0);
 #ifdef ENABLE_FULL_DEBUG
 	dbg_assert (sjob->prev_enqueued == 0);
 	dbg_assert (sjob->prev_waiting == 0);
@@ -1457,7 +1483,7 @@ s_task_save_read (struct s_task_save_data_t* sjob)
 	dbg_assert (sjob->last_written == 0);
 #endif
 	dbg_assert (sjob->st.ticks == 0);
-	dbg_assert (sjob->st.size == 0);
+	dbg_assert (sjob->st.events == 0);
 	dbg_assert (sjob->st.frames == 0);
 	dbg_assert (sjob->st.frames_lost == 0);
 	dbg_assert (sjob->st.errors == 0);
@@ -1508,7 +1534,7 @@ s_task_save_send  (struct s_task_save_data_t* sjob, zsock_t* frontend)
 
 	return zsock_send (frontend, REP_PIC, REQ_OK, 
 			sjob->st.ticks,
-			sjob->st.size,
+			sjob->st.events,
 			sjob->st.frames,
 			sjob->st.frames_lost);
 }
@@ -1528,7 +1554,9 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	}
 
 	sjob->filename = NULL; /* points to a static string */
-	sjob->max_ticks = 0;
+	sjob->size = 0;
+	sjob->min_ticks = 0;
+	sjob->min_events = 0;
 #ifdef ENABLE_FULL_DEBUG
 	sjob->prev_enqueued = 0;
 	sjob->prev_waiting = 0;
@@ -1538,7 +1566,7 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	sjob->last_written = 0;
 #endif
 	sjob->st.ticks = 0;
-	sjob->st.size = 0;
+	sjob->st.events = 0;
 	sjob->st.frames = 0;
 	sjob->st.frames_lost = 0;
 	sjob->st.errors = 0;

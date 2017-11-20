@@ -21,12 +21,12 @@ Messages are sent and read via `zsock_send` and `zsock_recv` respectively.
 These are simply multi-frame ØMQ messages, with each frame being a string
 representation of the value.
 
-Valid requests have a picture of "s81", replies have a picture of "18888",
+Valid requests have a picture of "s881", replies have a picture of "18888",
 as explained below.
 
 At the moment we only handle one request at a time. Will block until done.
 
-#### Message frames in a valid save request
+#### Message frames in a valid request
 
 1. **Filename**
 
@@ -35,17 +35,29 @@ At the moment we only handle one request at a time. Will block until done.
    
 2. **No. of ticks**
 
-   The server will record all packets (including ethernet header) until that
-   many ticks are seen. The value is read as an unsigned int64.
+   The server will record all packets (including ethernet header) until at
+   least that many ticks are seen.
+
+   The value is read as an **unsigned** int64.
 
    Alternatively, if it is 0, the request is interpreted as a status request
    and the reply that was sent previously for this filename is re-sent.
+
+2. **No. of events**
+
+   The server will record all packets (including ethernet header) until at
+   least that many non-tick events are seen.
+
+   The value is read as an **unsigned** int64.
 
 3. **Write mode**
 
  * "0": create but do not overwrite
 
  * "1": create or overwrite
+
+A job will only terminate at receiving a tick, and only if both the minimum
+number of ticks and the minimum number of non-tick events has been recorded.
 
 As a consequence of how `zsock_recv` parses arguments, the client may omit
 frames corresponding to ignored arguments or arguments which are "0". Therefore
@@ -69,7 +81,7 @@ Ignore rest of frames in case of an error.
    will still indicate OK though.
 
 
-3. **No. of bytes written**
+3. **No. of non-tick events written**
 
 
 4. **No. of frames written**
@@ -80,7 +92,7 @@ Ignore rest of frames in case of an error.
 ## PUB INTERFACE
 
 This socket publishes ZMQ single-frame messages, each message contains one full
-histogram (MCA stream). You can receive these with zmq_recv for example.
+histogram (MCA stream). You can receive these with `zmq_recv` for example.
 
 # INSTALLATION
 ---
