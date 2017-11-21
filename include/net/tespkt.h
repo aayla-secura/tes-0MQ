@@ -44,7 +44,7 @@ static inline char*  tespkt_src_eth_ntoa (tespkt* pkt);
 static inline struct ether_addr* tespkt_dst_eth_aton (tespkt* pkt);
 static inline struct ether_addr* tespkt_src_eth_aton (tespkt* pkt);
 /* Frame length (including ethernet header) */
-static inline uint16_t tespkt_flen   (tespkt* pkt);
+static inline uint16_t tespkt_flen (tespkt* pkt);
 /* Frame and protocol sequences */
 static inline uint16_t tespkt_fseq (tespkt* pkt);
 static inline uint16_t tespkt_pseq (tespkt* pkt);
@@ -70,6 +70,8 @@ static inline int tespkt_is_trace_dp   (tespkt* pkt);
 static inline int tespkt_is_trace_dptr (tespkt* pkt);
 /* Event's size (valid for all events) */
 static inline uint16_t tespkt_evt_size (tespkt* pkt);
+/* Number of events in an event frame */
+static inline uint16_t tespkt_evt_nums (tespkt* pkt);
 /* Size of histogram (valid for MCA header frames) */
 static inline uint16_t tespkt_mca_size (tespkt* pkt);
 /* Number of bins in this frame (valid for all MCA frames) */
@@ -236,7 +238,7 @@ struct tespkt_trace_flags
 
 /* ------------------------------------------------------------------------- */
 
-#define TES_HDR_LEN 24 /* includes the 16 byte ethernet header */
+#define TES_HDR_LEN  24 /* includes the 16 byte ethernet header */
 #define MCA_HDR_LEN  40
 #define TICK_HDR_LEN 24
 #define PEAK_HDR_LEN  8
@@ -535,6 +537,13 @@ static inline uint16_t
 tespkt_evt_size (tespkt* pkt)
 {
 	return ftohs (pkt->tes_hdr.esize);
+}
+
+static inline uint16_t
+tespkt_evt_nums (tespkt* pkt)
+{
+	return ( ( tespkt_flen (pkt) - TES_HDR_LEN )
+			/ ( tespkt_evt_size (pkt) << 3 ) );
 }
 
 static inline uint16_t

@@ -133,8 +133,8 @@
  *   valgrind? A: https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Return a string error in case of a failed request or job.
  * - Check what happens if client drops out before reply is sent (will the socket block)?
- * - Write REQ job statistics in a global database such that it can be looked up by filename, client IP or time frame.
- * - FIX: number of events != number of event frames
+ * - Write REQ job statistics in a global database such that it can be looked
+ *   up by filename, client IP or time frame.
  */
 
 #include "tesd_tasks.h"
@@ -1211,7 +1211,11 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 				finishing = 1; /* DONE */
 		}
 		else
-			sjob->st.events++;
+		{
+			/* FIX: move to preliminary checks, drop packet. */
+			assert (tespkt_evt_size (pkt) > 0);
+			sjob->st.events += tespkt_evt_nums (pkt);
+		}
 	}
 
 	/*
@@ -1574,7 +1578,7 @@ s_task_save_close_stream (struct s_task_save_stream_t* sdat)
 	sdat->bufzone.num_cleared = 0;
 #endif
 
-	/* FIX: truncate file if overwriting */
+	ftruncate (sdat->aios.aio_fildes, sdat->size);
 	close (sdat->aios.aio_fildes);
 	memset (&sdat->aios, 0, sizeof(sdat->aios));
 	sdat->aios.aio_sigevent.sigev_notify = SIGEV_NONE;
