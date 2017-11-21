@@ -22,24 +22,27 @@ static void
 usage (const char* self)
 {
 	fprintf (stdout,
-		"Usage: %s -R <socket> [options]\n\n"
-		"The format for <socket> is <proto>://<host>:<port>\n\n"
+		"Usage: %s -Z <server> [options]\n"
+		"The format for <server> is <proto>://<host>:<port>\n\n"
 		"The client operates in one of two modes:\n"
-		"1) Options for saving all frames to a remote file:\n"
-		"    -f <filename>      Remote filename.\n"
+		"Save streams to a remote file: Selected by the 'R' option.\n"
+		"  Options:\n"
+		"    -R <filename>      Remote filename.\n"
 		"    -t <ticks>         Save at least that many ticks.\n"
+		"                       Default is 1.\n"
 		"    -e <ticks>         Save at least that many non-tick\n"
 	       	"                       events. Default is 0.\n"
 		"    -o                 Overwrite if file exists.\n"
 		"    -s                 Request status of filename.\n"
-		"The 'f' option and exactly one of 's' or 't' "
-		"must be specified.\n"
-		"The 'o' cannot be given for status requests.\n\n"
-		"2) Options for saving histograms to a local file:\n"
-		"    -f <filename>      Local filename. Will append if\n"
+		"The 'o', 't' or 'e' options cannot be given for status\n"
+	        "                       requests.\n\n"
+		"Save histograms to a local file: Selected by the 'L' option.\n"
+		"  Options:\n"
+		"    -L <filename>      Local filename. Will append if\n"
 		"                       existing.\n"
 		"    -c <count>         Save up to that many histograms.\n"
-		"Both 'f' and 'c' options must be given.\n", self
+		"                       Default is 1.\n\n",
+		self
 		);
 	exit (EXIT_SUCCESS);
 }
@@ -240,126 +243,60 @@ main (int argc, char **argv)
 	char filename[256];
 	memset (filename, 0, sizeof (filename));
 	char* buf = NULL;
-	uint64_t min_ticks = 0, min_events = 0, numhist = 0;
+	uint64_t min_ticks = 0, min_events = 0, num_hist = 0;
 	uint8_t ovrwrt = 0, status = 0;
 	/* 0 for remotely save all frames, 1 for locally save histograms */
 	int mode = -1;
 
 	int opt;
-	while ( (opt = getopt (argc, argv, "R:f:c:t:e:osh")) != -1 )
+	while ( (opt = getopt (argc, argv, "Z:L:R:c:t:e:osh")) != -1 )
 	{
 		switch (opt)
 		{
-			case 'R':
+			case 'Z':
 				snprintf (server, sizeof (server),
 						"%s", optarg);
 				break;
+			case 'R':
+			case 'L':
+				snprintf (filename, sizeof (filename),
+						"%s", optarg);
+				mode = ( (opt == 'R') ? 0 : 1 );
+				break;
 			case 'c':
-				if (mode == 0)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid in mode %d.\n", opt, mode + 1);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
-				mode = 1;
-				numhist = strtoul (optarg, &buf, 10);
+				num_hist = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 				{
 					fprintf (stderr, "Invalid format for "
 						"option %c.\n", opt);
-					exit (EXIT_FAILURE);
 					// usage (argv[0]);
+					exit (EXIT_FAILURE);
 				}
 				break;
 			case 't':
-				if (mode == 1)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid in mode %d.\n", opt, mode + 1);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
-				mode = 0;
-				if (status)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid for status requests.\n", opt);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
 				min_ticks = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 				{
 					fprintf (stderr, "Invalid format for "
 						"option %c.\n", opt);
-					exit (EXIT_FAILURE);
 					// usage (argv[0]);
+					exit (EXIT_FAILURE);
 				}
 				break;
 			case 'e':
-				if (mode == 1)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid in mode %d.\n", opt, mode + 1);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
-				mode = 0;
-				if (status)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid for status requests.\n", opt);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
 				min_events = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 				{
 					fprintf (stderr, "Invalid format for "
 						"option %c.\n", opt);
-					exit (EXIT_FAILURE);
 					// usage (argv[0]);
+					exit (EXIT_FAILURE);
 				}
-				break;
-			case 'f':
-				snprintf (filename, sizeof (filename),
-						"%s", optarg);
 				break;
 			case 'o':
-				if (mode == 1)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid in mode %d.\n", opt, mode + 1);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
-				mode = 0;
-				if (status)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid for status requests.\n", opt);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
 				ovrwrt = 1;
 				break;
 			case 's':
-				if (mode == 1)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid in mode %d.\n", opt, mode + 1);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
-				mode = 0;
-				if (min_ticks || min_events || ovrwrt)
-				{
-					fprintf (stderr, "Option %c is not "
-						"valid for status requests.\n", opt);
-					exit (EXIT_FAILURE);
-					// usage (argv[0]);
-				}
 				status = 1;
 				break;
 			case 'h':
@@ -371,7 +308,15 @@ main (int argc, char **argv)
 				assert (0);
 		}
 	}
-	/* Handle missing mandatory options */
+
+	if (argc > optind)
+	{
+		fprintf (stderr, "Extra arguments given.\n"
+			"Type %s -h for help\n", argv[0]);
+		exit (EXIT_FAILURE);
+	}
+
+	/* Handle missing mandatory options. */
 	if (strlen (server) == 0)
 	{
 		fprintf (stderr, "You must specify the remote address.\n"
@@ -384,31 +329,31 @@ main (int argc, char **argv)
 			"Type %s -h for help\n", argv[0]);
 		exit (EXIT_FAILURE);
 	}
-	if (argc > optind)
-	{
-		fprintf (stderr, "Extra arguments given.\n"
-			"Type %s -h for help\n", argv[0]);
-		exit (EXIT_FAILURE);
+	/* if filename was given, mode should have been set */
+	assert (mode != -1);
+
+	/* Handle conflicting options and set defaults. */
+	if (mode == 0)
+	{ /* save frames to remote file */
+		if (num_hist)
+		{
+			fprintf (stderr, "Conflicting options.\n"
+				"Type %s -h for help\n", argv[0]);
+			exit (EXIT_FAILURE);
+		}
+		if (min_ticks == 0)
+			min_ticks = 1;
 	}
-	if ( mode == 0 && !min_ticks && !status )
-	{
-		fprintf (stderr, "Excatly one of 's' or 't' options "
-			"must be specified.\n"
-			"Type %s -h for help\n", argv[0]);
-		exit (EXIT_FAILURE);
-	}
-	if (mode == 1 && numhist == 0)
-	{
-		fprintf (stderr, "You must specify a positive number of histograms. "
-			"Type %s -h for help\n", argv[0]);
-		exit (EXIT_FAILURE);
-	}
-	if (mode == -1)
-	{
-		fprintf (stderr, "You must choose a mode of operation by "
-			"giving at least one of its specific options.\n"
-			"Type %s -h for help\n", argv[0]);
-		exit (EXIT_FAILURE);
+	else
+	{ /* save histograms to local file */
+		if (min_ticks || min_events || status || ovrwrt)
+		{
+			fprintf (stderr, "Conflicting options.\n"
+				"Type %s -h for help\n", argv[0]);
+			exit (EXIT_FAILURE);
+		}
+		if (num_hist == 0)
+			num_hist = 1;
 	}
 
 	/* Prompt and take action */
@@ -430,10 +375,10 @@ main (int argc, char **argv)
 	else
 	{
 		printf ("Will save %lu histograms, each of maximum size %u "
-			"to local file %s.", numhist, MAX_HISTSIZE, filename);
+			"to local file %s.", num_hist, MAX_HISTSIZE, filename);
 		if ( prompt () )
 			exit (EXIT_SUCCESS);
-		int rc = save_hist (server, filename, numhist);
+		int rc = save_hist (server, filename, num_hist);
 		exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 	}
 }
