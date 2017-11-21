@@ -214,11 +214,15 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 
 /* --------------------------- SAVE-TO-FILE TASK --------------------------- */
 
-/* See api.h */
-#define REQ_FAIL        0
-#define REQ_OK          1
-#define REQ_PIC     "s881"
-#define REP_PIC    "18888"
+/* See README */
+#define TSAVE_REQ_OK    0 // accepted
+#define TSAVE_REQ_INV   1 // malformed request
+#define TSAVE_REQ_ABORT 2 // no such job (for status query) or file exist (for no-overwrite)
+#define TSAVE_REQ_EPERM 3 // filename is not allowed
+#define TSAVE_REQ_FAIL  4 // other error opening the file, nothing was written
+#define TSAVE_REQ_ERR   5 // error while writing, less than minimum requested was saved
+#define TSAVE_REQ_PIC  "s881"
+#define TSAVE_REP_PIC "18888"
 
 #define TSAVE_ROOT "/media/data/" // must have a trailing slash
 #define TSAVE_ONLYFILES           // for now we don't generate filenames
@@ -340,7 +344,8 @@ static void  s_task_save_dbg_stream_stats (struct s_task_save_stream_t* sdat,
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 
-#if 0  /* FIX */
+#define TES_MCASIZE_BUG /* FIX: overflow bug, last_bin is too large */
+#ifndef TES_MCASIZE_BUG
 #define THIST_MAXSIZE 65528U // highest 16-bit number that is a multiple of 8 bytes
 #else
 #define THIST_MAXSIZE 65576U // highest 16-bit number that is a multiple of 8 bytes
@@ -358,7 +363,7 @@ struct s_task_hist_data_t
 	uint16_t      nbins;     // total number of bins in histogram
 	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_nbins; // number of received bins so far
-#if 0 /* FIX */
+#ifndef TES_MCASIZE_BUG
 	uint16_t      cur_size;  // number of received bytes so far
 #else
 	uint32_t      cur_size;  // number of received bytes so far
@@ -941,7 +946,19 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		self->dbg_stats.pkts.rcvd++;
 #endif
 
-		/* FIX: check packet */
+		/*
+		 * Check packet and drop invalid ones.
+		 */
+		int rc = tespkt_is_valid (pkt);
+#ifdef TES_MCASIZE_BUG
+		rc &= ~TES_EMCASIZE;
+#endif
+		if (rc)
+		{ /* drop the frame */
+			s_msgf (0, LOG_DEBUG, self->id,
+				"Packet invalid, error is 0x%x", rc);
+			return 0;
+		}
 		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t plen = tespkt_flen (pkt);
 		if (plen > len)
@@ -952,7 +969,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			return 0;
 		}
 		dbg_assert (plen <= MAX_TES_FRAME_LEN);
-		int rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
+		rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
@@ -1004,7 +1021,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	uint8_t job_mode;
 
 	char* filename;
-	int rc = zsock_recv (reader, REQ_PIC, &filename,
+	int rc = zsock_recv (reader, TSAVE_REQ_PIC, &filename,
 		&sjob->min_ticks, &sjob->min_events, &job_mode);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or a null
@@ -1019,7 +1036,8 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		s_msg (0, LOG_INFO, self->id,
 			"Received a malformed request");
-		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_INV,
+				0, 0, 0, 0);
 		return 0;
 	}
 
@@ -1046,13 +1064,20 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	if (sjob->filename == NULL)
 	{
 		if (checkonly)
+		{
 			s_msg (0, LOG_INFO, self->id,
-				"Job not found");
+					"Job not found");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
+					0, 0, 0, 0);
+		}
 		else
+		{
 			s_msg (errno, LOG_INFO, self->id,
-				"Filename is not valid");
+					"Filename is not valid");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_EPERM,
+					0, 0, 0, 0);
+		}
 
-		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
 		return 0;
 	}
 
@@ -1070,7 +1095,8 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		{
 			s_msg (errno, LOG_ERR, self->id,
 				"Could not read stats");
-			zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
+					0, 0, 0, 0);
 			return 0;
 		}
 		rc = s_task_save_stats_send  (sjob, self->frontend);
@@ -1114,9 +1140,15 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			s_msgf (errno, LOG_ERR, self->id,
 				"Could not open file %s",
 				sjob->filename);
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
+					0, 0, 0, 0);
 		}
-		s_msg (0, LOG_INFO, self->id, "Job will not proceed");
-		zsock_send (reader, REP_PIC, REQ_FAIL, 0, 0, 0, 0);
+		else
+		{
+			s_msg (0, LOG_INFO, self->id, "Job will not proceed");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
+					0, 0, 0, 0);
+		}
 		s_task_save_close (sjob);
 		return 0;
 	}
@@ -1658,7 +1690,10 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 	assert (sjob->filename != NULL);
 	dbg_assert (sjob->fd == -1); /* _read and _write should close it */
 
-	int rc = zsock_send (frontend, REP_PIC, REQ_OK, 
+	int rc = zsock_send (frontend, TSAVE_REP_PIC,
+			(sjob->min_ticks > sjob->st.ticks ||
+				 sjob->min_events > sjob->st.events ) ?
+				TSAVE_REQ_ERR : TSAVE_REQ_OK,
 			sjob->st.ticks,
 			sjob->st.events,
 			sjob->st.frames,
@@ -2025,21 +2060,6 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		/* Inspect header */
 		hist->nbins = tespkt_mca_nbins_tot (pkt);
 		hist->size  = tespkt_mca_size (pkt);
-
-		/* TO DO: incorporate this into generic packet check */
-#if 0 /* until 'size' field calculation bug is fixed */
-#ifdef ENABLE_FULL_DEBUG
-		if (hist->size != hist->nbins * BIN_LEN + MCA_HDR_LEN)
-		{
-			s_msgf (0, LOG_WARNING, self->id,
-				"Size field (%d B) does not match "
-				"number of bins (%d)",
-				hist->size, hist->nbins);
-			hist->discard = 1;
-			return 0;
-		}
-#endif
-#endif
 	}
 	dbg_assert ( ! hist->discard );
 
@@ -2063,7 +2083,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 
 	if (hist->cur_nbins == hist->nbins) 
 	{
-#if 0 /* FIX, see above */
+#ifndef TES_MCASIZE_BUG
 		dbg_assert (hist->cur_size == hist->size);
 #endif
 
@@ -2100,7 +2120,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		return 0;
 	}
 
-#if 0 /* FIX */
+#ifndef TES_MCASIZE_BUG
 	dbg_assert (hist->cur_size < hist->size);
 #endif
 	return 0;

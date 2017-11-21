@@ -663,7 +663,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
@@ -689,7 +689,7 @@ main (void)
 			err = tespkt_is_valid (pkt);
 			if (err)
 			{
-				pkt_perror (stdout, err);
+				tespkt_perror (stdout, err);
 				raise (SIGTERM);
 			}
 			dump_pkt (pkt);
@@ -704,7 +704,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
@@ -715,7 +715,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
@@ -726,7 +726,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
@@ -737,7 +737,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
@@ -749,7 +749,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
@@ -760,7 +760,7 @@ main (void)
 		err = tespkt_is_valid (pkt);
 		if (err)
 		{
-			pkt_perror (stdout, err);
+			tespkt_perror (stdout, err);
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);

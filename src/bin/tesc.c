@@ -8,8 +8,14 @@
 #include <sys/mman.h>
 #include <czmq.h>
 
-#define REQ_PIC       "s881"
-#define REP_PIC      "18888"
+#define REQ_OK    0 // accepted
+#define REQ_INV   1 // malformed request
+#define REQ_ABORT 2 // no such job (for status query) or file exist (for no-overwrite)
+#define REQ_EPERM 3 // filename is not allowed
+#define REQ_FAIL  4 // other error opening the file, nothing was written
+#define REQ_ERR   5 // error while writing, less than minimum requested was saved
+#define REQ_PIC  "s881"
+#define REP_PIC "18888"
 #if 0 /* FIX */
 #define MAX_HISTSIZE 65528
 #else
@@ -197,20 +203,36 @@ save_to_remote (const char* server, const char* filename,
 	}
 
 	/* Print reply */
-	if (!fstat)
+	printf ("\n");
+	switch (fstat)
 	{
-		printf ("File %s\n", min_ticks ?
-			"exists" : "does not exist");
-	}
-	else
-	{
-		printf ("%s\n"
-			"ticks:         %lu\n"
-			"other events:  %lu\n"
-			"saved frames:  %lu\n"
-			"missed frames: %lu\n",
-			min_ticks ? "Wrote" : "File contains",
-			ticks, events, frames, missed);
+		case REQ_INV:
+			printf ("Request was not understood\n");
+			break;
+		case REQ_ABORT:
+			printf ("File %s\n", min_ticks ?
+				"exists" : "does not exist");
+			break;
+		case REQ_EPERM:
+			printf ("Filename is not allowed\n");
+			break;
+		case REQ_FAIL:
+			printf ("Unknown error while opening\n\n");
+			break;
+		case REQ_ERR:
+			printf ("Unknown error while writing\n\n");
+			/* fallthrough */
+		case REQ_OK:
+			printf ("%s\n"
+				"ticks:         %lu\n"
+				"other events:  %lu\n"
+				"saved frames:  %lu\n"
+				"missed frames: %lu\n",
+				min_ticks ? "Wrote" : "File contains",
+				ticks, events, frames, missed);
+			break;
+		default:
+			assert (0);
 	}
 
 	zsock_destroy (&sock);

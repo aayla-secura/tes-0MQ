@@ -128,7 +128,7 @@ static void pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream);
 /* Check if packet is valid, returns 0 if all is ok, or one or more OR-ed flags */
 static int  tespkt_is_valid (tespkt* pkt);
 /* Print info about each of the flags present in the return value of tespkt_is_valid */
-static void pkt_perror (FILE* stream, int err);
+static void tespkt_perror (FILE* stream, int err);
 
 #ifdef TESPKT_DEBUG
 static void tespkt_self_test (void);
@@ -889,48 +889,56 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 
 /* TO DO: check for contradicting fields, e.g. MCA's size contradicts last_bin */
 /* Return codes */
-#define FE_ETHTYPE 1 << 0 // ether type 
-#define FE_ETHLEN  1 << 1 // frame length
-#define FE_EVTTYPE 1 << 3 // event type 
-#define FE_EVTSIZE 1 << 4 // event size for fixed size events
+#define TES_EETHTYPE  1 // ether type 
+#define TES_EETHLEN   2 // frame length
+#define TES_EEVTTYPE  4 // event type 
+#define TES_EEVTSIZE  8 // event size for fixed size events
+#define TES_EMCASIZE 16 // mismatch between size and last_bin
 static int
 tespkt_is_valid (tespkt* pkt)
 {
 	int rc = 0;
 	/* Frame length should be a multiple of 8. */
 	if (tespkt_flen (pkt) & 7 || tespkt_flen (pkt) > MAX_TES_FRAME_LEN)
-		rc |= FE_ETHLEN;
+		rc |= TES_EETHLEN;
 
 	if (tespkt_is_evt (pkt))
 	{
 		if (tespkt_is_tick (pkt))
 		{
 			if (tespkt_evt_size (pkt) != 3)
-				rc |= FE_EVTSIZE;
+				rc |= TES_EEVTSIZE;
 		}
 		else if (tespkt_is_trace (pkt) || tespkt_is_peak (pkt) || tespkt_is_area (pkt))
 		{
 			if (tespkt_evt_size (pkt) != 1)
-				rc |= FE_EVTSIZE;
+				rc |= TES_EEVTSIZE;
 		}
 		else if (!tespkt_is_pulse (pkt))
-			rc |= FE_EVTTYPE;
+			rc |= TES_EEVTTYPE;
 	}
-	else if (!tespkt_is_mca (pkt))
-		rc |= FE_ETHTYPE;
+	else if (tespkt_is_mca (pkt))
+	{
+		if (tespkt_mca_size (pkt) !=
+			(tespkt_mca_nbins_tot (pkt) * BIN_LEN) + MCA_HDR_LEN)
+			rc |= TES_EMCASIZE;
+	}
+	else
+		rc |= TES_EETHTYPE;
+
 	return rc;
 }
 
 static void
-pkt_perror (FILE* stream, int err)
+tespkt_perror (FILE* stream, int err)
 {
-	if (err & FE_ETHTYPE)
+	if (err & TES_EETHTYPE)
 		fprintf (stream, "Invalid ether type\n");
-	if (err & FE_ETHLEN)
+	if (err & TES_EETHLEN)
 		fprintf (stream, "Invalid frame length\n");
-	if (err & FE_EVTTYPE)
+	if (err & TES_EEVTTYPE)
 		fprintf (stream, "Invalid event type\n");
-	if (err & FE_EVTSIZE)
+	if (err & TES_EEVTSIZE)
 		fprintf (stream, "Invalid event size\n");
 }
 

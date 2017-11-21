@@ -163,7 +163,7 @@ main (void)
 		}
 		ef = tespkt_fseq ((tespkt*)pkt);
 		pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
-		pkt_perror (stdout, tespkt_is_valid ((tespkt*)pkt));
+		tespkt_perror (stdout, tespkt_is_valid ((tespkt*)pkt));
 		printf ("\n");
 		// dump_pkt (pkt, TES_HDR_LEN);
 	}

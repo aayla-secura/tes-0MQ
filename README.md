@@ -13,8 +13,8 @@ The server accepts client requests on two [ØMQ](http://zeromq.org/) sockets.
 ## REP INTERFACE
 
 This interface accepts requests to save all received frames, until a given
-number of tick frames are seen, to a file (on the server). It can also return
-the status (e.g. number of saved and missed frames) of a previous successful
+minimum number of tick frames and a given minimum number of events are seen, to
+a file (on the server). It can also return the status of a previous successful
 request.
 
 Messages are sent and read via `zsock_send` and `zsock_recv` respectively.
@@ -67,18 +67,24 @@ to get a status of a file, only the filename is required.
 
 1. **Error status**
 
- * "0": request was malformed or there was an error opening the file (in case
-    of write request), or file does not exist (in case of status request)
+ * "0": writing finished successfully (in case of write request) or
+        status of a valid previous job was read (in case of status request)
 
- * "1": request was accepted, job started (in case of write request) or status
-   read (in case of status request)
+ * "1": request was malformed
+ 
+ * "2": file exists (in case of a no-overwrite request) or
+        file does not exist (in case of status request)
 
-Ignore rest of frames in case of an error.
+ * "3": filename did not resolve to an allowed path
+
+ * "4": error while opening the file, nothing was written
+
+ * "5": error while writing to file, some data was saved
 
 2. **No. of ticks written**
 
    May be less than requested in case of an error during write. *Error status*
-   will still indicate OK though.
+   will be "4" in this case.
 
 
 3. **No. of non-tick events written**
