@@ -335,13 +335,14 @@ main (int argc, char **argv)
 	/* Handle conflicting options and set defaults. */
 	if (mode == 0)
 	{ /* save frames to remote file */
-		if (num_hist)
+		if ( num_hist ||
+			( status && (ovrwrt || min_ticks || min_events) ) )
 		{
 			fprintf (stderr, "Conflicting options.\n"
 				"Type %s -h for help\n", argv[0]);
 			exit (EXIT_FAILURE);
 		}
-		if (min_ticks == 0)
+		if ( ! min_ticks && ! status )
 			min_ticks = 1;
 	}
 	else
@@ -352,7 +353,7 @@ main (int argc, char **argv)
 				"Type %s -h for help\n", argv[0]);
 			exit (EXIT_FAILURE);
 		}
-		if (num_hist == 0)
+		if ( ! num_hist )
 			num_hist = 1;
 	}
 
