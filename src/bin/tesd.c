@@ -175,7 +175,7 @@ s_prepare_if (const char* ifname_full)
 	}
 
 	snprintf (ifname, end - start + 1, "%s", start);
-	dbg_assert (strlen (ifname) == end - start);
+	dbg_assert (strlen (ifname) == (size_t)(end - start));
 
 	/* A socket is needed for ioctl. */
 	int sock = socket (AF_INET, SOCK_DGRAM, htons (IPPROTO_IP));

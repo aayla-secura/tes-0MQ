@@ -245,9 +245,9 @@ struct s_task_save_stats_t
 };
 
 /*
- * Data related to a stream file, e.g. ticks or MCA frames.
+ * Data related to a stream or index file, e.g. ticks or MCA frames.
  */
-struct s_task_save_stream_t
+struct s_task_save_aiobuf_t
 {
 	struct aiocb aios;
 	struct
@@ -271,27 +271,50 @@ struct s_task_save_stream_t
 };
 
 /*
+ * The frame index.
+ */
+struct s_task_save_fidx_t
+{
+	uint64_t payload;
+	uint32_t length;
+	uint16_t esize;
+	uint16_t etype;
+};
+
+/*
+ * The tick index.
+ */
+struct s_task_save_tidx_t
+{
+	uint32_t start_frame;
+	uint32_t nframes;
+	uint16_t esize;
+	uint16_t etype;
+};
+
+/*
+ * The MCA and trace indices. (the 'c' is for continuous streams)
+ */
+struct s_task_save_cidx_t
+{
+	uint32_t start_frame;
+	uint32_t nframes;
+};
+
+/*
  * Data for the currently-saved file. min_ticks and filename are set when
  * receiving a request from client.
  */
 struct s_task_save_data_t
 {
 	struct s_task_save_stats_t st;
-	struct s_task_save_stream_t mdat; // MCA payloads
-	struct s_task_save_stream_t tdat; // tick payloads
-	struct s_task_save_stream_t edat; // other event payloads
-	struct
-	{
-	} fidx; // frame index
-	struct
-	{
-	} midx; // MCA index
-	struct
-	{
-	} tidx; // tick index
-	struct
-	{
-	} ridx; // trace index
+	struct s_task_save_aiobuf_t mdat; // MCA payloads
+	struct s_task_save_aiobuf_t tdat; // tick payloads
+	struct s_task_save_aiobuf_t edat; // other event payloads
+	struct s_task_save_aiobuf_t fidx; // frame index
+	struct s_task_save_aiobuf_t midx; // MCA index
+	struct s_task_save_aiobuf_t tidx; // tick index
+	struct s_task_save_aiobuf_t ridx; // trace index
 	uint64_t min_ticks;
 	uint64_t min_events;
 #ifdef ENABLE_FULL_DEBUG
@@ -308,8 +331,8 @@ static s_pkt_fn        s_task_save_pkt_hn;
 /* Task initializer and finalizer */
 static s_data_fn       s_task_save_init;
 static s_data_fn       s_task_save_fin;
-static int   s_task_save_init_stream (struct s_task_save_stream_t* sdat);
-static void  s_task_save_fin_stream (struct s_task_save_stream_t* sdat);
+static int   s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* sdat);
+static void  s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* sdat);
 
 /*
  * s_task_save_open and s_task_save_close deal with stream and index files
@@ -322,9 +345,9 @@ static void  s_task_save_fin_stream (struct s_task_save_stream_t* sdat);
 /* Job initializer and finalizer */
 static int   s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
 static void  s_task_save_close (struct s_task_save_data_t* sjob);
-static int   s_task_save_open_stream (struct s_task_save_stream_t* sdat,
+static int   s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* sdat,
 	const char* filename, mode_t fmode);
-static void  s_task_save_close_stream (struct s_task_save_stream_t* sdat);
+static void  s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* sdat);
 
 /* Statistics for a job. */
 static int   s_task_save_stats_read  (struct s_task_save_data_t* sjob);
@@ -333,12 +356,15 @@ static int   s_task_save_stats_send  (struct s_task_save_data_t* sjob,
 	zsock_t* frontend);
 
 /* Ongoing job helpers */
-static int   s_task_save_queue (struct s_task_save_stream_t* sjob, bool force);
+static int   s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* sdat,
+	const char* buf, uint16_t len, bool finishing, int task_id);
+static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* sdat,
+	bool force);
 static char* s_task_save_canonicalize_path (const char* filename,
-	int checkonly, int task_id);
+	bool checkonly, int task_id);
 
 #ifdef ENABLE_FULL_DEBUG
-static void  s_task_save_dbg_stream_stats (struct s_task_save_stream_t* sdat,
+static void  s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* sdat,
 	const char* stream, int task_id);
 #endif
 
@@ -521,7 +547,7 @@ tasks_get_heads (void)
 	/* Use a static storage for the returned array. */
 	static uint32_t heads[NUM_RINGS];
 
-	int updated = 0; /* set to 1 if at least one active task */
+	bool updated = 0; /* set to 1 if at least one active task */
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		task_t* self = &tasks[t];
@@ -1042,7 +1068,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is it only a status query? */
-	int checkonly = (sjob->min_ticks == 0);
+	bool checkonly = (sjob->min_ticks == 0);
 	if (checkonly)
 	{
 		s_msgf (0, LOG_INFO, self->id,
@@ -1179,40 +1205,8 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 
-	struct s_task_save_stream_t* sdat = NULL;
-	if (tespkt_is_mca (pkt))
-	{
-		sdat = &sjob->mdat;
-		/* sidx = &sjob->midx; */
-	}
-	else
-	{
-		/* if neither even, nor MCA packet should have been dropped by
-		 * s_task_dispatch */
-		dbg_assert (tespkt_is_evt (pkt));
-
-	       	if (tespkt_is_tick (pkt))
-		{
-			sdat = &sjob->tdat;
-			/* sidx = &sjob->tidx; */
-		}
-		else if (tespkt_is_trace (pkt))
-		{
-			sdat = &sjob->edat;
-			/* sidx = &sjob->ridx; */
-		}
-		else if (tespkt_is_evt (pkt))
-		{
-			sdat = &sjob->edat;
-			/* no separate index for non-trace events */
-		}
-	}
-	dbg_assert (sdat != NULL);
-
 	/*
-	 * *****************************************************************
 	 * *********************** Update statistics. **********************
-	 * *****************************************************************
 	 */
 	 /* Size is updated in batches as write operations finish. */
 	 /* TO DO: save err flags */
@@ -1231,7 +1225,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
 #endif
 
-	int finishing = 0;
+	bool finishing = 0;
 	sjob->st.frames++;
 	if (tespkt_is_evt (pkt))
 	{
@@ -1251,106 +1245,59 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	}
 
 	/*
-	 * *****************************************************************
-	 * ********************** Write payload. ***************************
-	 * *****************************************************************
+	 * ************** Write payload and update the index. **************
 	 */
-#ifdef ENABLE_FULL_DEBUG
-	if (sdat->bufzone.enqueued + sdat->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN)
-	{
-		s_msgf (0, LOG_DEBUG, self->id,
-			"Waiting: %lu, in queue: %lu free: %ld, "
-			"previously waiting: %lu, previously enqueued: %lu",
-			sdat->bufzone.waiting, sdat->bufzone.enqueued,
-			(long)(TSAVE_BUFSIZE - sdat->bufzone.waiting
-			- sdat->bufzone.enqueued),
-			sdat->bufzone.prev_waiting, sdat->bufzone.prev_enqueued);
-		return TASK_ERROR;
-	}
-#endif
-	dbg_assert (sdat->bufzone.enqueued + sdat->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
-	dbg_assert (sdat->bufzone.cur >= sdat->bufzone.base);
-	dbg_assert (sdat->bufzone.tail >= sdat->bufzone.base);
-	dbg_assert (sdat->bufzone.cur < sdat->bufzone.ceil);
-	dbg_assert (sdat->bufzone.tail + sdat->bufzone.enqueued <=
-		sdat->bufzone.ceil);
-	dbg_assert (sdat->bufzone.cur < sdat->bufzone.tail ||
-		sdat->bufzone.cur >= sdat->bufzone.tail + sdat->bufzone.enqueued);
-	dbg_assert (sdat->bufzone.cur == sdat->bufzone.tail
-		+ sdat->bufzone.enqueued + sdat->bufzone.waiting -
-		((sdat->bufzone.cur < sdat->bufzone.tail) ? TSAVE_BUFSIZE : 0));
 
-	/* Wrap cursor if needed */
-	int reserve = plen - (sdat->bufzone.ceil - sdat->bufzone.cur);
-	if (likely (reserve < 0))
+	struct s_task_save_aiobuf_t* sdat = NULL;
+
+	if (tespkt_is_mca (pkt))
 	{
-		memcpy (sdat->bufzone.cur, pkt, plen); 
-		sdat->bufzone.cur += plen;
+		sdat = &sjob->mdat;
+		// struct s_task_save_aiobuf_t* sidx = &sjob->midx;
+		// struct s_task_save_cidx_t idx;
+		/* TO DO: populate index including event_type flags and write
+		 * it. index for multi-frame streams should only be written
+		 * once complete */
+		// jobrc = s_task_save_write_aiobuf (
+		//	sidx, idx, sizeof (...), finishing, self->id);
+		// if (jobrc < 0)
+		//         finishing = 1; /* error */
+
 	}
 	else
 	{
-		memcpy (sdat->bufzone.cur, pkt, plen - reserve); 
-		if (reserve > 0)
-			memcpy (sdat->bufzone.base,
-				(char*)pkt + plen - reserve, reserve); 
-		sdat->bufzone.cur = sdat->bufzone.base + reserve;
-	}
-	sdat->bufzone.waiting += plen;
+		/* If neither event, nor MCA packet should have been dropped by
+		 * s_task_dispatch. */
+		dbg_assert (tespkt_is_evt (pkt));
 
-#if 1 /* 0 to skip writing */
-	/* Try to queue next batch but don't force */
-	int jobrc = s_task_save_queue (sdat, 0);
-	/* If there is no space for a full frame, force write until there is.
-	 * If we are finalizingm wait for all bytes to be written. */
-	while ( ( sdat->bufzone.enqueued + sdat->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN || finishing )
-		&& jobrc == EINPROGRESS )
-	{
-		jobrc = s_task_save_queue (sdat, 1);
+	       	if (tespkt_is_tick (pkt))
+		{
+			sdat = &sjob->tdat;
+			// struct s_task_save_aiobuf_t* sidx = &sjob->tidx;
+			// struct s_task_save_tidx_t idx;
+		}
+		else if (tespkt_is_trace (pkt))
+		{
+			sdat = &sjob->edat;
+			// struct s_task_save_aiobuf_t* sidx = &sjob->ridx;
+			// struct s_task_save_cidx_t idx;
+		}
+		else if (tespkt_is_evt (pkt))
+		{
+			sdat = &sjob->edat;
+			// struct s_task_save_aiobuf_t* sidx = &sjob->fidx;
+			// struct s_task_save_fidx_t idx;
+		}
 	}
+	dbg_assert (sdat != NULL);
 
-	if (jobrc == -1)
-	{
-		/* TO DO: how to handle errors */
-		s_msg (errno, LOG_ERR, self->id,
-			"Could not write to file");
-		finishing = 1;
-	}
-	else if (jobrc == -2)
-	{
-		/* TO DO: how to handle errors */
-#ifdef ENABLE_FULL_DEBUG
-		s_msgf (0, LOG_ERR, self->id,
-			"Queued %lu bytes, wrote %lu",
-			sdat->bufzone.enqueued,
-			sdat->bufzone.last_written);
-#else /* ENABLE_FULL_DEBUG */
-		s_msg (0, LOG_ERR, self->id,
-			"Wrote unexpected number of bytes");
-#endif /* ENABLE_FULL_DEBUG */
-		finishing = 1;
-	}
-#else /* skip writing */
-	sdat->size += sdat->bufzone.waiting;
-	sdat->bufzone.waiting = 0;
-	sdat->bufzone.tail = sdat->bufzone.cur;
-#endif /* skip writing */
-
-	dbg_assert (sdat->bufzone.enqueued + sdat->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
+	int jobrc = s_task_save_write_aiobuf (
+			sdat, (char*)pkt, plen, finishing, self->id);
+	if (jobrc < 0)
+		finishing = 1; /* error */
 
 	/*
-	 * *****************************************************************
-	 * ******************** TO DO: Update the index. **************************
-	 * *****************************************************************
-	 */
-
-	/*
-	 * *****************************************************************
 	 * ********************** Check if done. ***************************
-	 * *****************************************************************
 	 */
 	if (finishing)
 	{
@@ -1360,9 +1307,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
-		s_task_save_dbg_stream_stats (&sjob->mdat, "MCA", self->id);
-		s_task_save_dbg_stream_stats (&sjob->tdat, "Tick", self->id);
-		s_task_save_dbg_stream_stats (&sjob->edat, "Event", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->mdat, "MCA", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->tdat, "Tick", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->edat, "Event", self->id);
 #endif
 		/* Close stream and index files. */
 		s_task_save_close (sjob);
@@ -1406,9 +1353,9 @@ s_task_save_init (task_t* self)
 	static struct s_task_save_data_t sjob;
 	sjob.fd = -1;
 
-	int rc = s_task_save_init_stream (&sjob.mdat);
-	rc |= s_task_save_init_stream (&sjob.tdat);
-	rc |= s_task_save_init_stream (&sjob.edat);
+	int rc = s_task_save_init_aiobuf (&sjob.mdat);
+	rc |= s_task_save_init_aiobuf (&sjob.tdat);
+	rc |= s_task_save_init_aiobuf (&sjob.edat);
 	if (rc)
 	{
 		s_msgf (errno, LOG_ERR, self->id,
@@ -1445,9 +1392,9 @@ s_task_save_fin (task_t* self)
 		rc |= s_task_save_stats_send  (sjob, self->frontend);
 	}
 
-	s_task_save_fin_stream (&sjob->mdat);
-	s_task_save_fin_stream (&sjob->tdat);
-	s_task_save_fin_stream (&sjob->edat);
+	s_task_save_fin_aiobuf (&sjob->mdat);
+	s_task_save_fin_aiobuf (&sjob->tdat);
+	s_task_save_fin_aiobuf (&sjob->edat);
 
 	/* TO DO: Finalize the index files. */
 
@@ -1456,11 +1403,11 @@ s_task_save_fin (task_t* self)
 }
 
 /*
- * mmap data for a stream file.
+ * mmap data for a stream or index file.
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_save_init_stream (struct s_task_save_stream_t* sdat)
+s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* sdat)
 {
 	assert (sdat != NULL);
 
@@ -1480,10 +1427,10 @@ s_task_save_init_stream (struct s_task_save_stream_t* sdat)
 }
 
 /*
- * munmap data for a stream file.
+ * munmap data for a stream or index file.
  */
 static void
-s_task_save_fin_stream (struct s_task_save_stream_t* sdat)
+s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* sdat)
 {
 	assert (sdat != NULL);
 
@@ -1521,13 +1468,13 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 
 	strcpy (ext, ".mdat");
 	dbg_assert (strlen (buf) == strlen (sjob->filename) + 5);
-	rc  = s_task_save_open_stream (&sjob->mdat, buf, fmode);
+	rc  = s_task_save_open_aiobuf (&sjob->mdat, buf, fmode);
 	strcpy (ext, ".tdat");
 	dbg_assert (strlen (buf) == strlen (sjob->filename) + 5);
-	rc |= s_task_save_open_stream (&sjob->tdat, buf, fmode);
+	rc |= s_task_save_open_aiobuf (&sjob->tdat, buf, fmode);
 	strcpy (ext, ".edat");
 	dbg_assert (strlen (buf) == strlen (sjob->filename) + 5);
-	rc |= s_task_save_open_stream (&sjob->edat, buf, fmode);
+	rc |= s_task_save_open_aiobuf (&sjob->edat, buf, fmode);
 
 	if (rc)
 		return -1;
@@ -1547,19 +1494,19 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	assert (sjob->filename != NULL);
 
 	/* Close the data files. */
-	s_task_save_close_stream (&sjob->mdat);
-	s_task_save_close_stream (&sjob->tdat);
-	s_task_save_close_stream (&sjob->edat);
+	s_task_save_close_aiobuf (&sjob->mdat);
+	s_task_save_close_aiobuf (&sjob->tdat);
+	s_task_save_close_aiobuf (&sjob->edat);
 
 	/* TO DO: Cloe the index files. */
 }
 
 /*
- * Open a stream file.
+ * Open a stream or index file.
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_save_open_stream (struct s_task_save_stream_t* sdat,
+s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* sdat,
 	const char* filename, mode_t fmode)
 {
 	assert (sdat != NULL);
@@ -1588,11 +1535,11 @@ s_task_save_open_stream (struct s_task_save_stream_t* sdat,
 }
 
 /*
- * Close a stream file. Reset cursor and tail of bufzone.
+ * Close a stream or index file. Reset cursor and tail of bufzone.
  * Zero the aiocb struct.
  */
 static void
-s_task_save_close_stream (struct s_task_save_stream_t* sdat)
+s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* sdat)
 {
 	assert (sdat != NULL);
 
@@ -1713,6 +1660,94 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 }
 
 /*
+ * Checks for completed aio_write jobs and queues the next, updating the
+ * bufzone.
+ * If finishing is true, will block until it's done.
+ * Returns 0 on success or if nothing was queued.
+ * Otherwise returns same as s_task_save_queue_aiobuf.
+ */
+static int
+s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* sdat,
+	const char* buf, uint16_t len, bool finishing, int task_id)
+{
+	dbg_assert (sdat != NULL);
+	dbg_assert (sdat->aios.aio_fildes != -1);
+
+	dbg_assert (sdat->bufzone.enqueued + sdat->bufzone.waiting <=
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
+	dbg_assert (sdat->bufzone.cur >= sdat->bufzone.base);
+	dbg_assert (sdat->bufzone.tail >= sdat->bufzone.base);
+	dbg_assert (sdat->bufzone.cur < sdat->bufzone.ceil);
+	dbg_assert (sdat->bufzone.tail + sdat->bufzone.enqueued <=
+		sdat->bufzone.ceil);
+	dbg_assert (sdat->bufzone.cur < sdat->bufzone.tail ||
+		sdat->bufzone.cur >=
+			sdat->bufzone.tail + sdat->bufzone.enqueued);
+	dbg_assert (sdat->bufzone.cur == sdat->bufzone.tail
+		+ sdat->bufzone.enqueued + sdat->bufzone.waiting -
+		((sdat->bufzone.cur < sdat->bufzone.tail) ?
+			 TSAVE_BUFSIZE : 0));
+
+	/* Wrap cursor if needed */
+	int reserve = len - (sdat->bufzone.ceil - sdat->bufzone.cur);
+	if (likely (reserve < 0))
+	{
+		memcpy (sdat->bufzone.cur, buf, len); 
+		sdat->bufzone.cur += len;
+	}
+	else
+	{
+		memcpy (sdat->bufzone.cur, buf, len - reserve); 
+		if (reserve > 0)
+			memcpy (sdat->bufzone.base,
+				buf + len - reserve, reserve); 
+		sdat->bufzone.cur = sdat->bufzone.base + reserve;
+	}
+	sdat->bufzone.waiting += len;
+
+#if 1 /* 0 to skip writing */
+	/* Try to queue next batch but don't force */
+	int jobrc = s_task_save_queue_aiobuf (sdat, 0);
+	/* If there is no space for a full frame, force write until there is.
+	 * If we are finalizingm wait for all bytes to be written. */
+	while ( ( sdat->bufzone.enqueued + sdat->bufzone.waiting >
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN || finishing )
+		&& jobrc == EINPROGRESS )
+	{
+		jobrc = s_task_save_queue_aiobuf (sdat, 1);
+	}
+	if (jobrc == -1)
+	{
+		/* TO DO: how to handle errors */
+		s_msg (errno, LOG_ERR, task_id, "Could not write to file");
+	}
+	else if (jobrc == -2)
+	{
+		/* TO DO: how to handle errors */
+#ifdef ENABLE_FULL_DEBUG
+		s_msgf (0, LOG_ERR, task_id,
+			"Queued %lu bytes, wrote %lu",
+			sdat->bufzone.enqueued,
+			sdat->bufzone.last_written);
+#else /* ENABLE_FULL_DEBUG */
+		s_msg (0, LOG_ERR, task_id,
+			"Wrote unexpected number of bytes");
+#endif /* ENABLE_FULL_DEBUG */
+	}
+
+#else /* skip writing */
+	int jobrc = 0;
+	sdat->size += sdat->bufzone.waiting;
+	sdat->bufzone.waiting = 0;
+	sdat->bufzone.tail = sdat->bufzone.cur;
+#endif /* skip writing */
+
+	dbg_assert (sdat->bufzone.enqueued + sdat->bufzone.waiting <=
+		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
+	return jobrc;
+}
+
+/*
  * Queue the next batch for aio_write-ing.
  * If force is true, will suspend if file is not ready for writing.
  * Always calls aio_return for previous job. Calls aio_return if waiting for
@@ -1726,10 +1761,9 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
  * unexpected.
  */
 static int
-s_task_save_queue (struct s_task_save_stream_t* sdat, bool force)
+s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* sdat, bool force)
 {
 	dbg_assert (sdat != NULL);
-	dbg_assert (sdat->aios.aio_fildes != -1);
 
 	/* If there was no previous job, no need to do checks. */
 	if (sdat->bufzone.enqueued == 0)
@@ -1845,7 +1879,7 @@ queue_as_is:
  * of TSAVE_ROOT or ends with a slash) errno should be 0.
  */
 static char*
-s_task_save_canonicalize_path (const char* filename, int checkonly, int task_id)
+s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id)
 {
 	assert (filename != NULL);
 	errno = 0;
@@ -1978,7 +2012,7 @@ s_task_save_canonicalize_path (const char* filename, int checkonly, int task_id)
 
 #ifdef ENABLE_FULL_DEBUG
 static void
-s_task_save_dbg_stream_stats (struct s_task_save_stream_t* sdat,
+s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* sdat,
 		const char* stream, int task_id)
 {
 	s_msgf (0, LOG_DEBUG, task_id,
@@ -2101,7 +2135,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 				"Cannot send the histogram");
 			return TASK_ERROR;
 		}
-		if (rc != hist->cur_size)
+		if (rc != (int)hist->cur_size)
 		{
 			s_msgf (errno, LOG_ERR, self->id,
 				"Histogram is %lu bytes long, sent %u",
