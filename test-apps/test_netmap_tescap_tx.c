@@ -1,4 +1,4 @@
-#include <pcap/pcap.h>
+#define TESPKT_DEBUG
 #include "net/tespkt.h"
 #include <stdio.h>
 #include <string.h>
@@ -10,8 +10,18 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define NM_IFNAME "vale:tes{1"
-#define PCAPFILE  "noise drive.pcapng"
+#ifndef NUM_LOOPS
+#  define NUM_LOOPS 1 /* negative for infinite */
+#endif
+#ifndef SKIP
+#  define SKIP 40 /* how many bytes at BOF to skip */
+#endif
+#ifndef NM_IFNAME
+#  define NM_IFNAME "vale0:vi1"
+#endif
+#ifndef CAPFILE
+#  define CAPFILE   "/media/data/1000_tick_cap"
+#endif
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 
@@ -75,62 +85,85 @@ main (void)
 		return -1;
 	}
 
-	/* Open the pcap file */
-	char err[PCAP_ERRBUF_SIZE + 1];
-	pcap_t* pc = pcap_open_offline (PCAPFILE, err);
-	if (pc == NULL)
+	/* Open the file */
+	int capfd = open (CAPFILE, O_RDONLY);
+	if (capfd == -1)
 	{
-		fprintf (stderr, "Cannot open pcap file: %s", err);
+		perror ("Cannot open file");
 		return -1;
 	}
-	struct pcap_pkthdr h;
 
 	struct pollfd pfd;
 	pfd.fd = nmd->fd;
 	pfd.events = POLLOUT;
 
-	uint64_t p = 0;
-	int sf = -1;
-	uint16_t ef;
-	uint64_t missed = 0;
 	int looped = 0;
+	unsigned int p = 0;
 
-	while (!interrupted && looped < 1)
+	while (!interrupted && looped != NUM_LOOPS)
 	{
-		const unsigned char* pkt = pcap_next (pc, &h);
-		if (pkt == NULL)
+		if (p == 0)
 		{
-			if (looped == 0)
+			/* seek to BOF + SKIP */
+			rc = lseek (capfd, SKIP, SEEK_SET);
+			if (rc == -1)
 			{
-				printf ("\n----------\n"
-					"Total number of packets: %lu\n"
-					"Missed packets:          %lu\n"
-					"Start frame:             %d\n"
-					"End frame:               %hu\n",
-					p, missed, sf, ef);
+				perror ("Could not seek to BOF");
+				break;
 			}
-			/* Reopen the file */
-			pcap_close (pc);
-			pcap_t* pc = pcap_open_offline (PCAPFILE, err);
-			if (pc == NULL)
+			else if (rc != SKIP)
 			{
-				fprintf (stderr, "Cannot open pcap file: %s", err);
-				return -1;
+				fprintf (stderr, "Could not seek to BOF\n");
+				break;
 			}
-			looped++;
-			p = 0;
-			continue;
 		}
 		p++;
 
-		/* Send the packet */
-		uint16_t len = tespkt_flen ((tespkt*)pkt);
-		if (len != h.len && len >= 60)
-			printf ("Packet #%5lu: frame len says %5hu, "
-				"caplen = %5hu, len = %5hu\n",
-				p, len, h.caplen, h.len);
-		if (len > MAX_TES_FRAME_LEN)
-			len = MAX_TES_FRAME_LEN;
+		tespkt pkt;
+		memset (&pkt, 0, sizeof (pkt));
+		/* read the header */
+		rc = read (capfd, &pkt, TES_HDR_LEN);
+		if (rc == -1)
+		{
+			perror ("Could not read in header");
+			break;
+		}
+		else if (rc == 0)
+		{ /* reached EOF */
+			printf ("Reached EOF, read %u packets\n", p);
+
+			p = 0;
+			looped++;
+			continue;
+		}
+		else if (rc != TES_HDR_LEN)
+		{
+			fprintf (stderr,
+				"Read unexpected number of bytes "
+				"from header: %d, packet no. %u\n", rc, p);
+			break;
+		}
+
+		/* Read the payload */
+		uint16_t len = tespkt_flen (&pkt);
+		assert (len <= MAX_TES_FRAME_LEN);
+		assert (len > TES_HDR_LEN);
+		rc = read (capfd, (char*)&pkt + TES_HDR_LEN,
+				len - TES_HDR_LEN);
+		if (rc == -1)
+		{
+			perror ("Could not read in payload");
+			break;
+		}
+		else if (rc != len - TES_HDR_LEN)
+		{
+			fprintf (stderr,
+				"Read unexpected number of bytes "
+				"from payload: %d, packet no. %u\n", rc, p);
+			break;
+		}
+
+		/* Inject the packet */
 		rc = poll (&pfd, 1, -1);
 		if (rc == -1)
 		{
@@ -138,33 +171,15 @@ main (void)
 				perror ("poll");
 			break;
 		}
-		// rc = nm_inject (nmd, pkt, len);
-		// if (!rc)
-		// {
-		//         fprintf (stderr, "Cannot inject packet\n");
-		//         break;
-		// }
 
-		if (looped)
-			continue;
-
-		/* Statistics */
-		if (sf == -1)
+		rc = nm_inject (nmd, &pkt, len);
+		if (!rc)
 		{
-			sf = (int)tespkt_fseq ((tespkt*)pkt);
+		        fprintf (stderr, "Cannot inject packet\n");
+		        break;
 		}
-		else
-		{
-			missed += (uint64_t) (
-				(uint16_t)(tespkt_fseq ((tespkt*)pkt) - ef) - 1 );
-		}
-		ef = tespkt_fseq ((tespkt*)pkt);
-		pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
-		tespkt_perror (stdout, tespkt_is_valid ((tespkt*)pkt));
-		printf ("\n");
-		// dump_pkt (pkt, TES_HDR_LEN);
 	}
 
-	pcap_close (pc);
+	close (capfd);
 	return 0;
 }

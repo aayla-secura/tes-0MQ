@@ -48,7 +48,7 @@ $(LIB_DEST) $(BIN_DEST):
 test: $(TEST_PROGS:%=$(BIN_DEST)/%) \
 	| $(BIN_DEST)
 
-$(BIN_DEST)/%: $(TEST_SRC)/%.c
+$(BIN_DEST)/%: $(TEST_SRC)/%.c $(HEADERS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(foreach lib, \
 		$(findstring daemon_ng,$*) \
 		$(findstring pthread,$*) \

@@ -23,6 +23,10 @@
 #  define ftohl bswap32
 #endif
 
+/* on FreeBSD sys/types is not included by net/ethernet, but is needed */
+#ifndef linux
+#  include <sys/types.h>
+#endif
 #include <net/ethernet.h>
 #ifdef linux
 /* ntoa, aton; on FreeBSD these are provided by net/ethernet */
@@ -32,7 +36,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
-#include <assert.h>
 
 /* ------------------------------------------------------------------------- */
 
@@ -947,6 +950,8 @@ tespkt_perror (FILE* stream, int err)
 /* ------------------------------------------------------------------------- */
 
 #ifdef TESPKT_DEBUG
+#include <string.h>
+#include <assert.h>
 
 #define MCA_FL_MASK       0x000fffff
 #define EVT_FL_MASK       0xffff

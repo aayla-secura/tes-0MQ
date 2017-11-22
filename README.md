@@ -84,7 +84,7 @@ to get a status of a file, only the filename is required.
 2. **No. of ticks written**
 
    May be less than requested in case of an error during write. *Error status*
-   will be "4" in this case.
+   will be "5" in this case.
 
 
 3. **No. of non-tick events written**
