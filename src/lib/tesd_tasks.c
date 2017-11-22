@@ -37,7 +37,6 @@
  *         uint16_t    prev_fseq;      // previous frame sequence
  *         uint16_t    prev_pseq_mca;  // previous MCA protocol sequence
  *         uint16_t    prev_pseq_tr;   // previous trace protocol sequence
- *         uint16_t    prev_pseq_pls;  // previous pulse protocol sequence
  *         bool        error;          // client_ and pkt_handler should set this
  *         bool        busy;           // reading from rings
  *         bool        active;         // client_handler or data_init should
@@ -47,9 +46,12 @@
  *
  * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
  * from the coordinator. Upon SIG_STOP s_sig_hn exits, upon SIG_WAKEUP it calls
- * calls the task's specific packet handler for each packet in each ring (TO DO). 
+ * calls the task's specific packet handler for each packet in each ring (TO
+ * DO). 
  * It keeps track of the previous frame and protocol sequences (the task's
  * packet handler can make use of those as well, e.g. to track lost frames).
+ * For convenience the number of missed frames (difference between previous and
+ * current frame sequences mod 2^16) is passed to the pkt_handler.
  * s_sig_hn also takes care of updating the task's head.
  *
  * If the task defines a public interface address, s_task_shim will open the
@@ -169,7 +171,6 @@ struct _task_t
 	uint16_t    prev_fseq;
 	uint16_t    prev_pseq_mca;
 	uint16_t    prev_pseq_tr;
-	uint16_t    prev_pseq_pls;
 	bool        error;
 	bool        busy;
 	bool        active;
@@ -315,13 +316,16 @@ struct s_task_save_data_t
 	struct s_task_save_aiobuf_t midx; // MCA index
 	struct s_task_save_aiobuf_t tidx; // tick index
 	struct s_task_save_aiobuf_t ridx; // trace index
+	size_t cur_trace_size;     // size of an ongoing trace
+	size_t cur_trace_cur_size; // currently seen size of a trace
 	uint64_t min_ticks;
 	uint64_t min_events;
 #ifdef ENABLE_FULL_DEBUG
 	unsigned char prev_hdr[TES_HDR_LEN];
 #endif
-	char*    filename; // filename statistics are written to
-	int      fd;       // fd for the above file
+	char*    filename;  // filename statistics are written to
+	int      fd;        // fd for the above file
+	bool     recording; // wait for a tick before starting capture
 };
 
 /* Handlers */
@@ -374,7 +378,7 @@ static void  s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* sdat,
 #ifndef TES_MCASIZE_BUG
 #define THIST_MAXSIZE 65528U // highest 16-bit number that is a multiple of 8 bytes
 #else
-#define THIST_MAXSIZE 65576U // highest 16-bit number that is a multiple of 8 bytes
+#define THIST_MAXSIZE 65576U
 #endif
 
 /*
@@ -753,7 +757,6 @@ s_task_shim (zsock_t* pipe, void* self_)
 	dbg_assert (self->prev_fseq == 0);
 	dbg_assert (self->prev_pseq_mca == 0);
 	dbg_assert (self->prev_pseq_tr == 0);
-	dbg_assert (self->prev_pseq_pls == 0);
 	dbg_assert (self->error == 0);
 	dbg_assert (self->busy == 0);
 	dbg_assert (self->active == 0);
@@ -995,6 +998,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			return 0;
 		}
 		dbg_assert (plen <= MAX_TES_FRAME_LEN);
+
 		rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
@@ -1003,10 +1007,9 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		self->prev_fseq = cur_fseq;
 		if (tespkt_is_mca (pkt))
 			self->prev_pseq_mca = tespkt_pseq (pkt);
-		else if (tespkt_is_trace (pkt))
+		else if (tespkt_is_trace (pkt) &&
+				! tespkt_is_trace_dp (pkt))
 			self->prev_pseq_tr = tespkt_pseq (pkt);
-		else
-			self->prev_pseq_pls = tespkt_pseq (pkt);
 
 		self->heads[ring_id] = tes_ifring_following (
 				rxring, self->heads[ring_id]);
@@ -1042,8 +1045,11 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert ( ! self->error );
 	dbg_assert ( ! self->busy );
 	dbg_assert ( ! self->active );
+
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
+	dbg_assert ( ! sjob->recording );
+
 	uint8_t job_mode;
 
 	char* filename;
@@ -1205,8 +1211,15 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 
+	if (tespkt_is_tick (pkt))
+		sjob->recording = 1;
+	if ( ! sjob->recording )
+		return 0;
+
 	/*
+	 * *****************************************************************
 	 * *********************** Update statistics. **********************
+	 * *****************************************************************
 	 */
 	 /* Size is updated in batches as write operations finish. */
 	 /* TO DO: save err flags */
@@ -1214,6 +1227,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		sjob->st.frames_lost += missed;
 
 #ifdef ENABLE_FULL_DEBUG
+#if 0
 	if (sjob->st.frames_lost != 0)
 	{
 		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
@@ -1222,30 +1236,100 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		s_dump_buf ((void*)pkt, TES_HDR_LEN);
 		return TASK_ERROR;
 	}
+#endif
 	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
 #endif
 
 	bool finishing = 0;
 	sjob->st.frames++;
-	if (tespkt_is_evt (pkt))
+
+	/*
+	 * Discard any traces that were ongoing when capture began, i.e. look
+	 * for the first header trace frame and then start adding to
+	 * cur_trace_cur_size.
+	 * cur_tracesize and cur_trace_cur_size are reset when the last byte of
+	 * a trace is seen, not when a new header arrives.
+	 */
+	if (sjob->cur_trace_size > 0)
+	{
+		dbg_assert (sjob->cur_trace_cur_size > 0);
+		dbg_assert (sjob->cur_trace_cur_size < sjob->cur_trace_size);
+	}
+	else
+		dbg_assert (sjob->cur_trace_cur_size == 0);
+
+	if ( sjob->cur_trace_size > 0 &&
+		(tespkt_is_header (pkt) ||
+			tespkt_is_trace_dp (pkt) ||
+			! tespkt_is_trace (pkt)) )
+	{ /* previous trace was not complete */
+		s_msg (0, LOG_DEBUG, self->id, "Incomplete trace");
+		sjob->cur_trace_size = 0;
+		sjob->cur_trace_cur_size = 0;
+	}
+
+	if (sjob->cur_trace_size > 0)
+	{ /* continuing trace, add to size, check if done */
+		uint16_t pseq = tespkt_pseq (pkt);
+		uint16_t pseq_gap = pseq - self->prev_pseq_tr - 1;
+		sjob->cur_trace_cur_size += tespkt_flen (pkt) - TES_HDR_LEN;
+
+		if (pseq_gap)
+		{
+			s_msg (0, LOG_DEBUG, self->id, "Missed trace frames");
+			sjob->cur_trace_size = 0;
+			sjob->cur_trace_cur_size = 0;
+		}
+		else if (sjob->cur_trace_cur_size > sjob->cur_trace_size)
+		{
+			s_msg (0, LOG_DEBUG, self->id, "Extra trace frames");
+			sjob->cur_trace_size = 0;
+			sjob->cur_trace_cur_size = 0;
+		}
+		else if (sjob->cur_trace_cur_size == sjob->cur_trace_size)
+		{ /* done, record the event */
+			sjob->st.events++;
+			sjob->cur_trace_size = 0;
+			sjob->cur_trace_cur_size = 0;
+		}
+	}
+	else if (tespkt_is_evt (pkt))
 	{
 		if (tespkt_is_tick (pkt))
-		{
+		{ /* tick */
 			sjob->st.ticks++;
-			if (sjob->st.ticks >= sjob->min_ticks &&
+			/* Ticks should be > min_ticks cause we count the
+			 * starting one too. */
+			if (sjob->st.ticks > sjob->min_ticks &&
 				sjob->st.events >= sjob->min_events)
+			{
 				finishing = 1; /* DONE */
+			}
+		}
+		else if (tespkt_is_trace (pkt) && ! tespkt_is_trace_dp (pkt))
+		{
+			if (tespkt_is_header (pkt))
+			{ /* start a new trace */
+				sjob->cur_trace_size = tespkt_trace_size (pkt);
+				sjob->cur_trace_cur_size = tespkt_flen (pkt) - TES_HDR_LEN;
+				if (sjob->cur_trace_cur_size > sjob->cur_trace_size)
+				{ /* done, record the event */
+					s_msg (0, LOG_DEBUG, self->id, "Invalid trace size");
+					sjob->cur_trace_size = 0;
+					sjob->cur_trace_cur_size = 0;
+				}
+			}
 		}
 		else
-		{
-			/* FIX: move to preliminary checks, drop packet. */
-			assert (tespkt_evt_size (pkt) > 0);
+		{ /* other event */
 			sjob->st.events += tespkt_evt_nums (pkt);
 		}
 	}
 
 	/*
+	 * *****************************************************************
 	 * ************** Write payload and update the index. **************
+	 * *****************************************************************
 	 */
 
 	struct s_task_save_aiobuf_t* sdat = NULL;
@@ -1297,7 +1381,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		finishing = 1; /* error */
 
 	/*
+	 * *****************************************************************
 	 * ********************** Check if done. ***************************
+	 * *****************************************************************
 	 */
 	if (finishing)
 	{
@@ -1886,8 +1972,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	size_t len = strlen (filename);
 	if (len == 0)
 	{
-		s_msg (0, LOG_DEBUG, task_id,
-			"Filename is empty");
+		s_msg (0, LOG_DEBUG, task_id, "Filename is empty");
 		return NULL;
 	}
 
