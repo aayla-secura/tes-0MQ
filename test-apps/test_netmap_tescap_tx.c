@@ -19,9 +19,6 @@
 #ifndef NM_IFNAME
 #  define NM_IFNAME "vale0:vi1"
 #endif
-#ifndef CAPFILE
-#  define CAPFILE   "/media/data/1000_tick_cap"
-#endif
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 
@@ -58,9 +55,11 @@ int_hn (int sig)
 }
 
 int
-main (void)
+main (int argc, char** argv)
 {
 	int rc;
+	if (argc != 2)
+		return -1;
 
 	/* Signal handlers */
 	struct sigaction sigact;
@@ -86,7 +85,7 @@ main (void)
 	}
 
 	/* Open the file */
-	int capfd = open (CAPFILE, O_RDONLY);
+	int capfd = open (argv[1], O_RDONLY);
 	if (capfd == -1)
 	{
 		perror ("Cannot open file");
@@ -99,6 +98,10 @@ main (void)
 
 	int looped = 0;
 	unsigned int p = 0;
+	unsigned int mcas = 0, ticks = 0, peaks = 0, areas = 0, pulses = 0,
+		     traces = 0, trace_sgls = 0, trace_avgs = 0, trace_dps = 0,
+		     trace_dp_trs = 0;
+	uint16_t mca_n = 0, trace_n = 0;
 
 	while (!interrupted && looped != NUM_LOOPS)
 	{
@@ -117,11 +120,11 @@ main (void)
 				break;
 			}
 		}
-		p++;
 
 		tespkt pkt;
 		memset (&pkt, 0, sizeof (pkt));
-		/* read the header */
+
+		/* Read the header */
 		rc = read (capfd, &pkt, TES_HDR_LEN);
 		if (rc == -1)
 		{
@@ -130,7 +133,30 @@ main (void)
 		}
 		else if (rc == 0)
 		{ /* reached EOF */
-			printf ("Reached EOF, read %u packets\n", p);
+			printf ("\nReached EOF\n");
+			if (looped == 0)
+				printf ("packets: %u\n"
+					"mcas:    %u\n"
+					"ticks:   %u\n"
+					"peaks:   %u\n"
+					"areas:   %u\n"
+					"pulses:  %u\n"
+					"traces:  %u\n"
+					"  sgl:   %u\n"
+					"  avg:   %u\n"
+					"  dp:    %u\n"
+					"  dptr:  %u\n",
+					p,
+					mcas,
+					ticks,
+					peaks,
+					areas,
+					pulses,
+					traces,
+					trace_sgls,
+					trace_avgs,
+					trace_dps,
+					trace_dp_trs);
 
 			p = 0;
 			looped++;
@@ -140,9 +166,10 @@ main (void)
 		{
 			fprintf (stderr,
 				"Read unexpected number of bytes "
-				"from header: %d, packet no. %u\n", rc, p);
+				"from header: %d, packet no. %u\n", rc, p + 1);
 			break;
 		}
+		p++;
 
 		/* Read the payload */
 		uint16_t len = tespkt_flen (&pkt);
@@ -178,8 +205,72 @@ main (void)
 		        fprintf (stderr, "Cannot inject packet\n");
 		        break;
 		}
+
+		if (looped > 0)
+			continue;
+
+		/* Statistics, only first time through the loop */
+		const char* ptype = NULL;
+		uint16_t* prev_n = NULL;
+		if (tespkt_is_mca (&pkt))
+		{
+			mcas++;
+			ptype = "MCA";
+			prev_n = &mca_n;
+		}
+		else if (tespkt_is_tick (&pkt))
+			ticks++;
+		else if (tespkt_is_peak (&pkt))
+			peaks++;
+		else if (tespkt_is_area (&pkt))
+			areas++;
+		else if (tespkt_is_pulse (&pkt))
+			pulses++;
+		else if (tespkt_is_trace (&pkt))
+		{
+			traces++;
+			if (tespkt_is_trace_dp (&pkt))
+			{
+				trace_dps++;
+			}
+			else
+			{
+				prev_n = &trace_n;
+				if (tespkt_is_trace_sgl (&pkt))
+				{
+					trace_sgls++;
+					ptype = "Trace single";
+				}
+				else if (tespkt_is_trace_avg (&pkt))
+				{
+					trace_avgs++;
+					ptype = "Trace avg";
+				}
+				else if (tespkt_is_trace_dptr (&pkt))
+				{
+					trace_dp_trs++;
+					ptype = "Trace DP trace";
+				}
+			}
+		}
+
+		if (prev_n != NULL)
+		{ /* packet is part of a multi-frame, i.e. trace or MCA */
+			if (tespkt_is_header (&pkt))
+			{
+				assert (ptype != NULL);
+				off_t pos = lseek (capfd, 0, SEEK_CUR);
+				printf ("Packet no. %u (ends at offset 0x%lx): "
+						"new event stream for type %s, "
+						"previous count was %hu\n",
+						p, pos, ptype, *prev_n);
+				*prev_n = 0;
+			}
+			(*prev_n)++;
+		}
 	}
 
 	close (capfd);
+	nm_close (nmd);
 	return 0;
 }
