@@ -264,7 +264,7 @@ struct tespkt_trace_flags
 
 /*
  * Redefine the event types for little-endian hosts, instead of using
- * ntohl/s, since we never return those as 16-bit integers (only used in
+ * ftohl/s, since we never return those as 16-bit integers (only used in
  * tespkt_is_* helpers).
  */
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -907,14 +907,26 @@ tespkt_is_valid (tespkt* pkt)
 
 	if (tespkt_is_evt (pkt))
 	{
+		/* Size should not be 0. */
+		if (tespkt_evt_size (pkt) == 0)
+				rc |= TES_EEVTSIZE;
+
+		/* Check event type as well as size for types with a fixed
+		 * size. */
 		if (tespkt_is_tick (pkt))
 		{
 			if (tespkt_evt_size (pkt) != 3)
 				rc |= TES_EEVTSIZE;
 		}
-		else if (tespkt_is_trace (pkt) || tespkt_is_peak (pkt) || tespkt_is_area (pkt))
+		else if (tespkt_is_peak (pkt) || tespkt_is_area (pkt))
 		{
 			if (tespkt_evt_size (pkt) != 1)
+				rc |= TES_EEVTSIZE;
+		}
+		else if (tespkt_is_trace (pkt))
+		{
+			if ( ( ! tespkt_is_trace_dp (pkt) )
+					&& tespkt_evt_size (pkt) != 1 )
 				rc |= TES_EEVTSIZE;
 		}
 		else if (!tespkt_is_pulse (pkt))
