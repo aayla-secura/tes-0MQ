@@ -126,3 +126,10 @@ Both client and server will print usage when given the '-h' option.
 
 To compile the test apps do `make test` or alternatively `make all` to compile
 everything. Test apps are not installed in the `PREFIX` location.
+
+# TO DO
+---
+
+* Write REQ job statistics to a global database such that it can be looked up
+  by filename, client IP or time frame.
+* Web UI
