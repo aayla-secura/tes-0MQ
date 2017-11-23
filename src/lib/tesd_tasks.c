@@ -134,7 +134,8 @@
  * - Why does writing to file fail with "unhandled syscall" when running under
  *   valgrind? A: https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Return a string error in case of a failed request or job.
- * - Check what happens if client drops out before reply is sent (will the socket block)?
+ * - Check what happens if client drops out before reply is sent (will the
+ *   socket block)?
  * - Write REQ job statistics in a global database such that it can be looked
  *   up by filename, client IP or time frame.
  */
@@ -2220,7 +2221,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 				"Cannot send the histogram");
 			return TASK_ERROR;
 		}
-		if (rc != (int)hist->cur_size)
+		if ((unsigned int)rc != hist->cur_size)
 		{
 			s_msgf (errno, LOG_ERR, self->id,
 				"Histogram is %lu bytes long, sent %u",
