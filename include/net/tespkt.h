@@ -263,9 +263,9 @@ struct tespkt_trace_flags
 #define ETHERTYPE_F_MCA      0x88B6
 
 /*
- * Redefine the event types for little-endian hosts, instead of using
- * ftohl/s, since we never return those as 16-bit integers (only used in
- * tespkt_is_* helpers).
+ * Event types are sent as separate bytes, i.e. always appear big-endian.
+ * Redefine them for little-endian hosts, instead of using ntohl/s, since we
+ * never return those as 16-bit integers (only used in tespkt_is_* helpers).
  */
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 #  define EVT_TYPE_MASK     0x0e03 /* all relevant bits of etype */
@@ -890,43 +890,61 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 	fprintf (estream, "Unknown trace type\n");
 }
 
-/* TO DO: check for contradicting fields, e.g. MCA's size contradicts last_bin */
 /* Return codes */
-#define TES_EETHTYPE  1 // ether type 
-#define TES_EETHLEN   2 // frame length
-#define TES_EEVTTYPE  4 // event type 
-#define TES_EEVTSIZE  8 // event size for fixed size events
-#define TES_EMCASIZE 16 // mismatch between size and last_bin
+#define TES_EETHTYPE    1 // ether type 
+#define TES_EETHLEN     2 // frame length
+#define TES_EEVTTYPE    4 // event type 
+#define TES_EEVTSIZE    8 // event size for fixed size events
+#define TES_ETRSIZE    16 // event size for fixed size events
+#define TES_EMCASIZE   32 // mismatch: size vs last bin
+#define TES_EMCABINS   64 // mismatch: most frequent vs last bin
+#define TES_EMCACHKSM 128 // mismatch: lowest value * no. bins vs sum total
 static int
 tespkt_is_valid (tespkt* pkt)
 {
 	int rc = 0;
-	/* Frame length should be a multiple of 8. */
-	if (tespkt_flen (pkt) & 7 || tespkt_flen (pkt) > MAX_TES_FRAME_LEN)
+
+	uint16_t flen = tespkt_flen (pkt);
+
+	/* Frame length should be a multiple of 8 */
+	if (flen & 7 || flen > MAX_TES_FRAME_LEN)
+		rc |= TES_EETHLEN;
+	/* and it should be more than the header length. */
+	if (flen <= TES_HDR_LEN)
 		rc |= TES_EETHLEN;
 
 	if (tespkt_is_evt (pkt))
 	{
-		/* Size should not be 0. */
-		if (tespkt_evt_size (pkt) == 0)
-				rc |= TES_EEVTSIZE;
+		uint16_t esize = tespkt_evt_size (pkt);
+
+		/* Event size should not be 0. */
+		if (esize == 0)
+			rc |= TES_EEVTSIZE;
+
+		/* Payload length should be a multiple of event size * 8. */
+		if ( (flen - TES_HDR_LEN) % (esize << 3) != 0 )
+			rc |= TES_EETHLEN;
 
 		/* Check event type as well as size for types with a fixed
 		 * size. */
 		if (tespkt_is_tick (pkt))
 		{
-			if (tespkt_evt_size (pkt) != 3)
+			if (esize != 3)
 				rc |= TES_EEVTSIZE;
 		}
 		else if (tespkt_is_peak (pkt) || tespkt_is_area (pkt))
 		{
-			if (tespkt_evt_size (pkt) != 1)
+			if (esize != 1)
 				rc |= TES_EEVTSIZE;
 		}
 		else if (tespkt_is_trace (pkt))
 		{
+			/* Trace size should not be 0. */
+			if (tespkt_trace_size (pkt) == 0)
+				rc |= TES_ETRSIZE;
+
 			if ( ( ! tespkt_is_trace_dp (pkt) )
-					&& tespkt_evt_size (pkt) != 1 )
+					&& esize != 1 )
 				rc |= TES_EEVTSIZE;
 		}
 		else if (!tespkt_is_pulse (pkt))
@@ -934,9 +952,22 @@ tespkt_is_valid (tespkt* pkt)
 	}
 	else if (tespkt_is_mca (pkt))
 	{
+		uint16_t nbins_tot = tespkt_mca_nbins_tot (pkt);
+		/* MCA size should correspond to last bin. */
 		if (tespkt_mca_size (pkt) !=
-			(tespkt_mca_nbins_tot (pkt) * BIN_LEN) + MCA_HDR_LEN)
+			(nbins_tot * BIN_LEN) + MCA_HDR_LEN)
 			rc |= TES_EMCASIZE;
+
+		/* Most frequent bin cannot be greater than last bin. */
+		if (tespkt_mca_mfreq (pkt) >= nbins_tot)
+			rc |= TES_EMCABINS;
+
+		/* Lowest value * no. bins cannot be greater than sum total. */
+		if ( (tespkt_mca_lvalue (pkt) * nbins_tot) >
+				tespkt_mca_total (pkt))
+			rc |= TES_EMCACHKSM;
+
+		/* TO DO: can the timestamps overflow, i.e. can stop time < start time? */
 	}
 	else
 		rc |= TES_EETHTYPE;
@@ -955,6 +986,14 @@ tespkt_perror (FILE* stream, int err)
 		fprintf (stream, "Invalid event type\n");
 	if (err & TES_EEVTSIZE)
 		fprintf (stream, "Invalid event size\n");
+	if (err & TES_ETRSIZE)
+		fprintf (stream, "Invalid trace size\n");
+	if (err & TES_EMCASIZE)
+		fprintf (stream, "Invalid histogram size\n");
+	if (err & TES_EMCABINS)
+		fprintf (stream, "Invalid bin number in histogram\n");
+	if (err & TES_EMCACHKSM)
+		fprintf (stream, "Invalid sum total for histogram\n");
 }
 
 /* ------------------------------------------------------------------------- */
