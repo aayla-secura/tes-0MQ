@@ -18,7 +18,7 @@ CFLAGS  += -I$(CPATH) -fPIC -Wall -Wextra \
 LDFLAGS += -L$(LIB_DEST)
 LDLIBS  := -lzmq -lczmq
 
-all: main test
+all: test main
 
 ##################################################
 
@@ -48,6 +48,7 @@ $(LIB_DEST) $(BIN_DEST):
 test: $(TEST_PROGS:%=$(BIN_DEST)/%) \
 	| $(BIN_DEST)
 
+# name of program should include any needed libraries
 $(BIN_DEST)/%: $(TEST_SRC)/%.c $(HEADERS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $< $(foreach lib, \
 		$(findstring daemon_ng,$*) \
