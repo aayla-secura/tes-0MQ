@@ -477,7 +477,6 @@ cleanup:
 	tasks_destroy ();
 	zloop_destroy (&loop);
 	tes_if_close (data.ifd);
-	s_msg (0, LOG_DEBUG, 0, "Done");
 	return rc;
 }
 
@@ -558,13 +557,14 @@ main (int argc, char **argv)
 		/* Start syslog. */
 		openlog ("TES server", 0, LOG_DAEMON);
 
-		s_msgf (0, LOG_INFO, 0,
+		s_msgf (0, LOG_DEBUG, 0,
 			"Wrote pid to file '%s'", pidfile);
 	}
 
 	rc = s_coordinator_body (ifname_full, stat_period);
 
 	/* Should we remove the pidfile? */
+	s_msg (0, LOG_INFO, 0, "Shutting down");
 
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
