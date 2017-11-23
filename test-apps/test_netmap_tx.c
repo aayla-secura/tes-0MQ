@@ -292,7 +292,7 @@ new_peak_pkt (struct tespkt_event_flags* flags)
 	set_evt_size (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PA = PKT_TYPE_PEAK;
+	et->PKT = PKT_TYPE_PEAK;
 
 	struct tespkt_peak_hdr* ph = (struct tespkt_peak_hdr*) &pkt->body;
 	ph->height = (u_int16_t) random ();
@@ -315,7 +315,7 @@ new_area_pkt (struct tespkt_event_flags* flags)
 	set_evt_size (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PA = PKT_TYPE_AREA;
+	et->PKT = PKT_TYPE_AREA;
 
 	struct tespkt_area_hdr* ah =
 		(struct tespkt_area_hdr*) &pkt->body;
@@ -338,7 +338,7 @@ new_pulse_pkt (int num_peaks, struct tespkt_event_flags* flags)
 	set_evt_size (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PA = PKT_TYPE_PULSE;
+	et->PKT = PKT_TYPE_PULSE;
 
 	struct tespkt_pulse_hdr* ph = (struct tespkt_pulse_hdr*) &pkt->body;
 	ph->size = (u_int16_t) random ();
@@ -369,7 +369,7 @@ new_trace_sgl_pkt (int num_peaks,
 	set_evt_size (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PA = PKT_TYPE_TRACE;
+	et->PKT = PKT_TYPE_TRACE;
 	et->TR = TRACE_TYPE_SGL;
 
 	struct tespkt_trace_full_hdr* th =
@@ -417,7 +417,7 @@ new_trace_dp_pkt (int num_peaks,
 	set_evt_size (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PA = PKT_TYPE_TRACE;
+	et->PKT = PKT_TYPE_TRACE;
 	et->TR = TRACE_TYPE_DP;
 
 	struct tespkt_trace_full_hdr* th =

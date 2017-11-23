@@ -125,14 +125,14 @@ static inline uint16_t tespkt_peak_ht    (tespkt* pkt);
 static inline uint16_t tespkt_peak_riset (tespkt* pkt);
 /* Area's area (valid for area events) */
 static inline uint32_t tespkt_area_area  (tespkt* pkt);
-/* FIX: Pulse's size, area, length, time offset (valid for pulse events) */
+/* Pulse's size, area, length, time offset (valid for pulse events) */
 static inline uint16_t tespkt_pulse_size (tespkt* pkt);
 static inline uint32_t tespkt_pulse_area (tespkt* pkt);
 static inline uint16_t tespkt_pulse_len  (tespkt* pkt);
 static inline uint16_t tespkt_pulse_toff (tespkt* pkt);
-/* FIX: Trace's size (valid for all trace events except average) */
+/* Trace's size (valid for all trace events except average) */
 static inline uint16_t tespkt_trace_size (tespkt* pkt);
-/* FIX: Trace's area, length, time offset (valid for all trace events) */
+/* Trace's area, length, time offset (valid for all trace events) */
 static inline uint32_t tespkt_trace_area (tespkt* pkt);
 static inline uint16_t tespkt_trace_len  (tespkt* pkt);
 static inline uint16_t tespkt_trace_toff (tespkt* pkt);
@@ -155,21 +155,27 @@ static void tespkt_self_test (void);
 struct tespkt_event_type
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-	uint8_t TR :  2;
-	uint8_t    :  6; /* reserved */
+	uint8_t TR  :  2;
+	uint8_t     :  6; /* reserved */
 
-	uint8_t    :  1; /* reserved */
-	uint8_t  T :  1;
-	uint8_t PA :  2;
-	uint8_t    :  4; /* reserved */
+	uint8_t     :  1; /* reserved */
+	uint8_t T   :  1;
+	uint8_t PKT :  2;
+	uint8_t SEQ :  1; /* set by us */
+	uint8_t BAD :  1; /* set by us */
+	uint8_t MCA :  1; /* set by us */
+	uint8_t HOM :  1; /* set by us */
 #else
-	uint8_t    :  6; /* reserved */
-	uint8_t TR :  2;
+	uint8_t     :  6; /* reserved */
+	uint8_t TR  :  2;
 
-	uint8_t    :  4; /* reserved */
-	uint8_t PA :  2;
-	uint8_t  T :  1;
-	uint8_t    :  1; /* reserved */
+	uint8_t HOM :  1; /* set by us */
+	uint8_t MCA :  1; /* set by us */
+	uint8_t BAD :  1; /* set by us */
+	uint8_t SEQ :  1; /* set by us */
+	uint8_t PKT :  2;
+	uint8_t T   :  1;
+	uint8_t     :  1; /* reserved */
 #endif
 };
 
@@ -442,7 +448,7 @@ static inline int
 tespkt_is_peak (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_PEAK &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_PEAK &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -450,7 +456,7 @@ static inline int
 tespkt_is_area (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_AREA &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_AREA &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -458,7 +464,7 @@ static inline int
 tespkt_is_pulse (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_PULSE &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_PULSE &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -466,7 +472,7 @@ static inline int
 tespkt_is_trace (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -474,7 +480,7 @@ static inline int
 tespkt_is_trace_sgl (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
 		 pkt->tes_hdr.etype.T == TRACE_TYPE_SGL );
 }
@@ -483,7 +489,7 @@ static inline int
 tespkt_is_trace_avg (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
 		 pkt->tes_hdr.etype.T == TRACE_TYPE_AVG );
 }
@@ -492,7 +498,7 @@ static inline int
 tespkt_is_trace_dp (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
 		 pkt->tes_hdr.etype.T == TRACE_TYPE_DP );
 }
@@ -501,7 +507,7 @@ static inline int
 tespkt_is_trace_dptr (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
 		 pkt->tes_hdr.etype.T == TRACE_TYPE_DPTR );
 }
@@ -966,10 +972,17 @@ tespkt_is_valid (tespkt* pkt)
 		}
 		else if (tespkt_is_trace (pkt))
 		{
-			/* Trace size should not be 0. */
-			if (tespkt_is_header (pkt) &&
-				tespkt_trace_size (pkt) == 0)
-				rc |= TES_ETRSIZE;
+			if (tespkt_is_header (pkt))
+			{
+				uint16_t trsize = tespkt_trace_size (pkt);
+				/* Trace size should not be 0 */
+				if (trsize == 0)
+					rc |= TES_ETRSIZE;
+				/* and it should not be smaller than the
+				 * payload length */
+				if (tespkt_flen (pkt) - TES_HDR_LEN > trsize)
+					rc |= TES_ETRSIZE;
+			}
 
 			if ( ( ! tespkt_is_trace_dp (pkt) )
 					&& esize != 1 )
@@ -980,23 +993,32 @@ tespkt_is_valid (tespkt* pkt)
 	}
 	else if (tespkt_is_mca (pkt))
 	{
-		uint16_t nbins_tot = tespkt_mca_nbins_tot (pkt);
-		/* MCA size should correspond to last bin. */
-		if ( tespkt_is_header (pkt) &&
-			(tespkt_mca_size (pkt) !=
-			(nbins_tot * BIN_LEN) + MCA_HDR_LEN) )
-			rc |= TES_EMCASIZE;
+		if (tespkt_is_header (pkt))
+		{
+			uint16_t nbins_tot = tespkt_mca_nbins_tot (pkt);
+			uint16_t histsize = tespkt_mca_size (pkt);
+			/* MCA size should correspond to last bin. */
+			if (histsize != (nbins_tot * BIN_LEN) + MCA_HDR_LEN)
+				rc |= TES_EMCASIZE;
+			/* and it should not be smaller than the
+			 * payload length */
+			if (tespkt_flen (pkt) - TES_HDR_LEN > histsize)
+				rc |= TES_EMCASIZE;
 
-		/* Most frequent bin cannot be greater than last bin. */
-		if (tespkt_mca_mfreq (pkt) >= nbins_tot)
-			rc |= TES_EMCABINS;
+			/* Most frequent bin cannot be greater than last
+			 * bin. */
+			if (tespkt_mca_mfreq (pkt) >= nbins_tot)
+				rc |= TES_EMCABINS;
 
-		/* Lowest value * no. bins cannot be greater than sum total. */
-		if ( (tespkt_mca_lvalue (pkt) * nbins_tot) >
-				tespkt_mca_total (pkt))
-			rc |= TES_EMCACHKSM;
+			/* Lowest value * no. bins cannot be greater than
+			 * sum total. */
+			if ( (tespkt_mca_lvalue (pkt) * nbins_tot) >
+					tespkt_mca_total (pkt))
+				rc |= TES_EMCACHKSM;
 
-		/* TO DO: can the timestamps overflow, i.e. can stop time < start time? */
+			/* TO DO: can the timestamps overflow, i.e. can
+			 * stop time < start time? */
+		}
 	}
 	else
 		rc |= TES_EETHTYPE;
@@ -1108,7 +1130,7 @@ tespkt_self_test (void)
 	struct tespkt_event_type et;
 	memset (&et, 0, EVT_TYPE_LEN);
 	et.T = 1;
-	et.PA = 3;
+	et.PKT = 3;
 	assert ( structtous (&et) == EVT_PKT_TYPE_MASK );
 	et.TR = 3;
 	assert ( structtous (&et) == EVT_TYPE_MASK );
