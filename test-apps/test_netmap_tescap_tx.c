@@ -19,8 +19,12 @@
 #ifndef NM_IFNAME
 #  define NM_IFNAME "vale0:vi1"
 #endif
-#define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
-#define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
+#define DUMP_ROW_LEN  8 /* how many bytes per row when dumping pkt */
+#define DUMP_OFF_LEN  5 /* how many digits to use for the offset */
+
+#ifndef VERBOSE
+#  define QUIET
+#endif
 
 int interrupted;
 
@@ -43,9 +47,9 @@ dump_pkt (const unsigned char* pkt, uint32_t len)
 			sprintf (buf + DUMP_OFF_LEN + 2 + b + 3*DUMP_ROW_LEN,
 				"%c", isprint (pkt[b+r]) ? pkt[b+r] : '.');
 
-		printf ("%s\n", buf);
+		fprintf (stderr, "%s\n", buf);
 	}
-	printf ("\n");
+	fprintf (stderr, "\n");
 }
 
 static void
@@ -97,11 +101,12 @@ main (int argc, char** argv)
 	pfd.events = POLLOUT;
 
 	int looped = 0;
-	unsigned int p = 0;
-	unsigned int mcas = 0, ticks = 0, peaks = 0, areas = 0, pulses = 0,
+	uint64_t p = 0;
+	uint64_t mcas = 0, ticks = 0, peaks = 0, areas = 0, pulses = 0,
 		     traces = 0, trace_sgls = 0, trace_avgs = 0, trace_dps = 0,
 		     trace_dp_trs = 0;
-	uint16_t mca_n = 0, trace_n = 0;
+	uint64_t missed = 0, invalid = 0;
+	uint16_t prev_fseq, mca_n = 0, trace_n = 0;
 
 	while (!interrupted && looped != NUM_LOOPS)
 	{
@@ -135,18 +140,22 @@ main (int argc, char** argv)
 		{ /* reached EOF */
 			printf ("\nReached EOF\n");
 			if (looped == 0)
-				printf ("packets: %u\n"
-					"mcas:    %u\n"
-					"ticks:   %u\n"
-					"peaks:   %u\n"
-					"areas:   %u\n"
-					"pulses:  %u\n"
-					"traces:  %u\n"
-					"  sgl:   %u\n"
-					"  avg:   %u\n"
-					"  dp:    %u\n"
-					"  dptr:  %u\n",
+				printf ("packets: %lu\n"
+					"missed:  %lu\n"
+					"invalid: %lu\n"
+					"mcas:    %lu\n"
+					"ticks:   %lu\n"
+					"peaks:   %lu\n"
+					"areas:   %lu\n"
+					"pulses:  %lu\n"
+					"traces:  %lu\n"
+					"  sgl:   %lu\n"
+					"  avg:   %lu\n"
+					"  dp:    %lu\n"
+					"  dptr:  %lu\n",
 					p,
+					missed,
+					invalid,
 					mcas,
 					ticks,
 					peaks,
@@ -166,7 +175,7 @@ main (int argc, char** argv)
 		{
 			fprintf (stderr,
 				"Read unexpected number of bytes "
-				"from header: %d, packet no. %u\n", rc, p + 1);
+				"from header: %d, packet no. %lu\n", rc, p + 1);
 			break;
 		}
 		p++;
@@ -186,7 +195,7 @@ main (int argc, char** argv)
 		{
 			fprintf (stderr,
 				"Read unexpected number of bytes "
-				"from payload: %d, packet no. %u\n", rc, p);
+				"from payload: %d, packet no. %lu\n", rc, p);
 			break;
 		}
 
@@ -199,6 +208,8 @@ main (int argc, char** argv)
 			break;
 		}
 
+		if (p % 50 == 0)
+			poll (NULL, 0, 1);
 		rc = nm_inject (nmd, &pkt, len);
 		if (!rc)
 		{
@@ -210,6 +221,22 @@ main (int argc, char** argv)
 			continue;
 
 		/* Statistics, only first time through the loop */
+		uint16_t cur_fseq = tespkt_fseq (&pkt);
+		if (p > 1)
+			missed += (uint16_t)(cur_fseq - prev_fseq - 1);
+		prev_fseq = cur_fseq;
+
+		rc = tespkt_is_valid (&pkt);
+		if (rc)
+		{
+#ifndef QUIET
+			fprintf (stderr, "Packet no. %d: ", p);
+			tespkt_perror (stderr, rc);
+			dump_pkt ((void*)&pkt, TES_HDR_LEN + 8);
+#endif
+			invalid++;
+		}
+
 		const char* ptype = NULL;
 		uint16_t* prev_n = NULL;
 		if (tespkt_is_mca (&pkt))
@@ -259,11 +286,13 @@ main (int argc, char** argv)
 			if (tespkt_is_header (&pkt))
 			{
 				assert (ptype != NULL);
+#ifndef QUIET
 				off_t pos = lseek (capfd, 0, SEEK_CUR);
-				printf ("Packet no. %u (ends at offset 0x%lx): "
+				printf ("Packet no. %lu (ends at offset 0x%lx): "
 						"new event stream for type %s, "
 						"previous count was %hu\n",
 						p, pos, ptype, *prev_n);
+#endif
 				*prev_n = 0;
 			}
 			(*prev_n)++;
