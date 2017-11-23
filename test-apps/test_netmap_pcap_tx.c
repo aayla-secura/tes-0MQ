@@ -11,7 +11,6 @@
 #include <net/netmap_user.h>
 
 #define NM_IFNAME "vale:tes{1"
-#define PCAPFILE  "noise drive.pcapng"
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 
@@ -48,9 +47,11 @@ int_hn (int sig)
 }
 
 int
-main (void)
+main (int argc, char** argv)
 {
 	int rc;
+	if (argc != 2)
+		return -1;
 
 	/* Signal handlers */
 	struct sigaction sigact;
@@ -77,7 +78,7 @@ main (void)
 
 	/* Open the pcap file */
 	char err[PCAP_ERRBUF_SIZE + 1];
-	pcap_t* pc = pcap_open_offline (PCAPFILE, err);
+	pcap_t* pc = pcap_open_offline (argv[1], err);
 	if (pc == NULL)
 	{
 		fprintf (stderr, "Cannot open pcap file: %s", err);
@@ -111,7 +112,7 @@ main (void)
 			}
 			/* Reopen the file */
 			pcap_close (pc);
-			pcap_t* pc = pcap_open_offline (PCAPFILE, err);
+			pcap_t* pc = pcap_open_offline (argv[1], err);
 			if (pc == NULL)
 			{
 				fprintf (stderr, "Cannot open pcap file: %s", err);

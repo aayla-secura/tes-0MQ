@@ -277,7 +277,7 @@ main (void)
 #define LIMIT_RATE
 #ifdef LIMIT_RATE
 		/* limit rate */
-		if (gobj.pkts.sent % 500 == 0)
+		if (gobj.pkts.sent % 50 == 0)
 			poll (NULL, 0, 1);
 #endif
 	}

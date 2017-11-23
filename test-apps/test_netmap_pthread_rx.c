@@ -380,7 +380,7 @@ main_body (void* arg)
 			if (tespkt_is_tick (pkt))
 			{
 				gstats.pkts.ticks++;
-				DEBUG ("Received tick #%d\n", gstats.pkts.ticks);
+				// DEBUG ("Received tick #%d\n", gstats.pkts.ticks);
 			}
 			if (MAX_TICKS > 0 && gstats.pkts.ticks == MAX_TICKS)
 				pthread_exit (NULL); /* done */

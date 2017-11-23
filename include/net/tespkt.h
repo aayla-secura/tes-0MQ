@@ -1,6 +1,14 @@
 #ifndef __NET_TESPKT_H_INCLUDED__
 #define __NET_TESPKT_H_INCLUDED__
 
+/*
+ * One can either use struct tespkt directly and access its fields (note
+ * that byte order needs to be taken into account then), or use the helper
+ * functions below which take a pointer to it and change the byte order
+ * where necessary. For convenience a type tespkt is aliased to struct
+ * tespkt
+ */
+
 #ifdef linux
 #  include <byteswap.h>
 #  define bswap16 bswap_16
@@ -56,7 +64,7 @@ static inline int tespkt_is_header (tespkt* pkt);
 /* True or false if frame is any MCA or any event frame (the two are
  * complementary) */
 static inline int tespkt_is_mca   (tespkt* pkt);
-static inline int tespkt_is_evt   (tespkt* pkt);
+static inline int tespkt_is_event   (tespkt* pkt);
 /* True or false if frame is a tick, peak, area or pulse event */
 static inline int tespkt_is_tick  (tespkt* pkt);
 static inline int tespkt_is_peak  (tespkt* pkt);
@@ -72,9 +80,9 @@ static inline int tespkt_is_trace_avg  (tespkt* pkt);
 static inline int tespkt_is_trace_dp   (tespkt* pkt);
 static inline int tespkt_is_trace_dptr (tespkt* pkt);
 /* Event's size (valid for all events) */
-static inline uint16_t tespkt_evt_size (tespkt* pkt);
+static inline uint16_t tespkt_event_size (tespkt* pkt);
 /* Number of events in an event frame */
-static inline uint16_t tespkt_evt_nums (tespkt* pkt);
+static inline uint16_t tespkt_event_nums (tespkt* pkt);
 /* Size of histogram (valid for MCA header frames) */
 static inline uint16_t tespkt_mca_size (tespkt* pkt);
 /* Number of bins in this frame (valid for all MCA frames) */
@@ -88,7 +96,7 @@ static inline uint16_t tespkt_mca_mfreq  (tespkt* pkt);
 static inline uint64_t tespkt_mca_total  (tespkt* pkt);
 static inline uint64_t tespkt_mca_startt (tespkt* pkt);
 static inline uint64_t tespkt_mca_stopt  (tespkt* pkt);
-/* Get bin number <bin> (starting at 0) of the current frame */
+/* Bin number <bin> (starting at 0) of the current frame */
 static inline uint32_t tespkt_mca_bin (tespkt* pkt, uint16_t bin);
 /* MCA flags as a struct with separate fields for each register (valid for all
  * MCA frames) */
@@ -100,8 +108,10 @@ static inline struct tespkt_tick_flags*  tespkt_tick_fl (tespkt* pkt);
 /* Trace flags as a struct with separate fields for each register  (valid for
  * trace events) */
 static inline struct tespkt_trace_flags* tespkt_trace_fl (tespkt* pkt);
+/* Event type */
+static inline struct tespkt_event_type*   tespkt_etype  (tespkt* pkt);
 /* Event's time (valid for all events) */
-static inline uint16_t tespkt_evt_toff (tespkt* pkt);
+static inline uint16_t tespkt_event_toff (tespkt* pkt);
 /* Tick's period, timestamp, error registers and events lost (valid for tick
  * events) */
 static inline uint32_t tespkt_tick_period (tespkt* pkt);
@@ -140,9 +150,29 @@ static void tespkt_self_test (void);
 #endif
 
 /*
- * You can copy a flag integer into one of these structures to read off the
- * separate registers. Flags are always sent as big-endian.
+ * Flags and event type are always sent as big-endian.
  */
+struct tespkt_event_type
+{
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+	uint8_t TR :  2;
+	uint8_t    :  6; /* reserved */
+
+	uint8_t    :  1; /* reserved */
+	uint8_t  T :  1;
+	uint8_t PA :  2;
+	uint8_t    :  4; /* reserved */
+#else
+	uint8_t    :  6; /* reserved */
+	uint8_t TR :  2;
+
+	uint8_t    :  4; /* reserved */
+	uint8_t PA :  2;
+	uint8_t  T :  1;
+	uint8_t    :  1; /* reserved */
+#endif
+};
+
 struct tespkt_mca_flags
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -243,57 +273,32 @@ struct tespkt_trace_flags
 
 /* ------------------------------------------------------------------------- */
 
-#define TES_HDR_LEN  24 /* includes the 16 byte ethernet header */
-#define MCA_HDR_LEN  40
-#define TICK_HDR_LEN 24
-#define PEAK_HDR_LEN  8
-#define PEAK_LEN      8
-#define AREA_HDR_LEN  8
-#define PLS_LEN       8
-#define PLS_HDR_LEN  16 // 8 + PLS_LEN
-#define TR_HDR_LEN    8
-#define TR_FULL_HDR_LEN 16 // TR_HDR_LEN + PLS_LEN
-#define DP_LEN        8
-#define SMPL_LEN      2
-#define BIN_LEN       4
-#define MCA_FL_LEN    4
-#define EVT_FL_LEN    2
-#define TR_FL_LEN     2
-#define MAX_TES_FRAME_LEN  1496
+#define ETHERTYPE_F_EVENT 0x88B5
+#define ETHERTYPE_F_MCA   0x88B6
 
-#define ETHERTYPE_F_EVENT    0x88B5
-#define ETHERTYPE_F_MCA      0x88B6
+#define PKT_TYPE_PEAK   0
+#define PKT_TYPE_AREA   1
+#define PKT_TYPE_PULSE  2
+#define PKT_TYPE_TRACE  3
+#define TRACE_TYPE_SGL  0
+#define TRACE_TYPE_AVG  1
+#define TRACE_TYPE_DP   2
+#define TRACE_TYPE_DPTR 3
 
-/*
- * Event types are sent as separate bytes, i.e. always appear big-endian.
- * Redefine them for little-endian hosts, instead of using ntohl/s, since we
- * never return those as 16-bit integers (only used in tespkt_is_* helpers).
- */
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#  define EVT_TYPE_MASK     0x0e03 /* all relevant bits of etype */
-#  define EVT_PKT_TYPE_MASK 0x0e00 /* the packet type and tick bits */
-#  define EVT_TICK_TYPE     0x0200
-#  define EVT_PEAK_TYPE     0x0000
-#  define EVT_AREA_TYPE     0x0400
-#  define EVT_PLS_TYPE      0x0800
-#  define EVT_TR_TYPE       0x0c00
-#  define EVT_TR_SGL_TYPE   0x0c00
-#  define EVT_TR_AVG_TYPE   0x0c01
-#  define EVT_TR_DP_TYPE    0x0c02
-#  define EVT_TR_DPTR_TYPE  0x0c03
-#else
-#  define EVT_TYPE_MASK     0x030e /* all relevant bits of etype */
-#  define EVT_PKT_TYPE_MASK 0x000e /* the packet type and tick bits */
-#  define EVT_TICK_TYPE     0x0002
-#  define EVT_PEAK_TYPE     0x0000
-#  define EVT_AREA_TYPE     0x0004
-#  define EVT_PLS_TYPE      0x0008
-#  define EVT_TR_TYPE       0x000c
-#  define EVT_TR_SGL_TYPE   0x000c
-#  define EVT_TR_AVG_TYPE   0x010c
-#  define EVT_TR_DP_TYPE    0x020c
-#  define EVT_TR_DPTR_TYPE  0x030c
-#endif
+#define TES_HDR_LEN         24 /* includes the 16 byte ethernet header */
+#define MCA_HDR_LEN         40
+#define TICK_HDR_LEN        24
+#define PEAK_HDR_LEN         8
+#define PEAK_LEN             8
+#define AREA_HDR_LEN         8
+#define PULSE_LEN            8
+#define PULSE_HDR_LEN       16 // 8 + PULSE_LEN
+#define TRACE_HDR_LEN        8
+#define TRACE_FULL_HDR_LEN  16 // TRACE_HDR_LEN + PULSE_LEN
+#define DP_LEN               8
+#define SMPL_LEN             2
+#define BIN_LEN              4
+#define MAX_TES_FRAME_LEN 1496
 
 struct tespkt_mca_hdr
 {
@@ -302,24 +307,24 @@ struct tespkt_mca_hdr
 	uint32_t lowest_value;
 	uint16_t : 16; /* reserved */
 	uint16_t most_frequent;
-	uint32_t flags;
+	struct tespkt_mca_flags flags;
 	uint64_t total;
 	uint64_t start_time;
 	uint64_t stop_time;
 };
 
 /* Used to access flags and time in an event-type agnostic way */
-struct tespkt_evt_hdr
+struct tespkt_event_hdr
 {
 	uint32_t : 32;
-	uint16_t flags;
+	struct tespkt_event_flags flags;
 	uint16_t toff;
 };
 
 struct tespkt_tick_hdr
 {
 	uint32_t period;
-	uint16_t flags;
+	struct tespkt_tick_flags flags;
 	uint16_t toff; /* time since last event */
 	uint64_t ts;   /* timestamp */
 	uint8_t  ovrfl;
@@ -333,7 +338,7 @@ struct tespkt_peak_hdr
 {
 	uint16_t height;
 	uint16_t rise_time;
-	uint16_t flags;
+	struct tespkt_event_flags flags;
 	uint16_t toff;
 };
 
@@ -348,7 +353,7 @@ struct tespkt_peak
 struct tespkt_area_hdr
 {
 	uint32_t area;
-	uint16_t flags;
+	struct tespkt_event_flags flags;
 	uint16_t toff;
 };
 
@@ -363,7 +368,7 @@ struct tespkt_pulse_hdr
 {
 	uint16_t size;
 	uint16_t : 16; /* reserved */
-	uint16_t flags;
+	struct tespkt_event_flags flags;
 	uint16_t toff;
 	struct   tespkt_pulse pulse;
 };
@@ -371,8 +376,8 @@ struct tespkt_pulse_hdr
 struct tespkt_trace_hdr
 {
 	uint16_t size;
-	uint16_t tr_flags;
-	uint16_t flags;
+	struct tespkt_trace_flags tr_flags;
+	struct tespkt_event_flags flags;
 	uint16_t toff;
 };
 
@@ -400,7 +405,7 @@ struct tespkt
 		uint16_t fseq;
 		uint16_t pseq;
 		uint16_t esize; /* undefined for MCA frames */
-		uint16_t etype; /* undefined for MCA frames */
+		struct tespkt_event_type etype; /* undefined for MCA frames */
 	} tes_hdr;
 	char body[MAX_TES_FRAME_LEN - TES_HDR_LEN];
 };
@@ -421,7 +426,7 @@ tespkt_is_mca (tespkt* pkt)
 }
 
 static inline int
-tespkt_is_evt (tespkt* pkt)
+tespkt_is_event (tespkt* pkt)
 {
 	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_EVENT) );
 }
@@ -429,71 +434,76 @@ tespkt_is_evt (tespkt* pkt)
 static inline int
 tespkt_is_tick (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) && pkt->tes_hdr.etype & EVT_TICK_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.T == 1 );
 }
 
 static inline int
 tespkt_is_peak (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
-			== EVT_PEAK_TYPE );
-}
-
-static inline int
-tespkt_is_pulse (tespkt* pkt)
-{
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
-			== EVT_PLS_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_PEAK &&
+		 pkt->tes_hdr.etype.T == 0 );
 }
 
 static inline int
 tespkt_is_area (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
-			== EVT_AREA_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_AREA &&
+		 pkt->tes_hdr.etype.T == 0 );
+}
+
+static inline int
+tespkt_is_pulse (tespkt* pkt)
+{
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_PULSE &&
+		 pkt->tes_hdr.etype.T == 0 );
 }
 
 static inline int
 tespkt_is_trace (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_PKT_TYPE_MASK)
-			== EVT_TR_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.T == 0 );
 }
 
 static inline int
 tespkt_is_trace_sgl (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
-			== EVT_TR_SGL_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.T == 0 &&
+		 pkt->tes_hdr.etype.T == TRACE_TYPE_SGL );
 }
 
 static inline int
 tespkt_is_trace_avg (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
-			== EVT_TR_AVG_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.T == 0 &&
+		 pkt->tes_hdr.etype.T == TRACE_TYPE_AVG );
 }
 
 static inline int
 tespkt_is_trace_dp (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
-			== EVT_TR_DP_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.T == 0 &&
+		 pkt->tes_hdr.etype.T == TRACE_TYPE_DP );
 }
 
 static inline int
 tespkt_is_trace_dptr (tespkt* pkt)
 {
-	return ( tespkt_is_evt (pkt) &&
-		(pkt->tes_hdr.etype & EVT_TYPE_MASK)
-			== EVT_TR_DPTR_TYPE );
+	return ( tespkt_is_event (pkt) &&
+		 pkt->tes_hdr.etype.PA == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.T == 0 &&
+		 pkt->tes_hdr.etype.T == TRACE_TYPE_DPTR );
 }
 
 static inline char*
@@ -539,16 +549,16 @@ tespkt_pseq (tespkt* pkt)
 }
 
 static inline uint16_t
-tespkt_evt_size (tespkt* pkt)
+tespkt_event_size (tespkt* pkt)
 {
 	return ftohs (pkt->tes_hdr.esize);
 }
 
 static inline uint16_t
-tespkt_evt_nums (tespkt* pkt)
+tespkt_event_nums (tespkt* pkt)
 {
 	return ( ( tespkt_flen (pkt) - TES_HDR_LEN )
-			/ ( tespkt_evt_size (pkt) << 3 ) );
+			/ ( tespkt_event_size (pkt) << 3 ) );
 }
 
 static inline uint16_t
@@ -616,34 +626,40 @@ static inline struct tespkt_mca_flags*
 tespkt_mca_fl (tespkt* pkt)
 {
 	struct tespkt_mca_hdr* mh = (struct tespkt_mca_hdr*)(void*) &pkt->body; 
-	return (struct tespkt_mca_flags*) &mh->flags;
+	return &mh->flags;
 }
 
 static inline struct tespkt_event_flags*
 tespkt_evt_fl (tespkt* pkt)
 {
-	struct tespkt_evt_hdr* eh = (struct tespkt_evt_hdr*)(void*) &pkt->body;
-	return (struct tespkt_event_flags*) &eh->flags;
+	struct tespkt_event_hdr* eh = (struct tespkt_event_hdr*)(void*) &pkt->body;
+	return &eh->flags;
 }
 
 static inline struct tespkt_tick_flags*
 tespkt_tick_fl (tespkt* pkt)
 {
-	struct tespkt_evt_hdr* eh = (struct tespkt_evt_hdr*)(void*) &pkt->body;
-	return (struct tespkt_tick_flags*) &eh->flags;
+	struct tespkt_tick_hdr* eh = (struct tespkt_tick_hdr*)(void*) &pkt->body;
+	return &eh->flags;
 }
 
 static inline struct tespkt_trace_flags*
 tespkt_trace_fl (tespkt* pkt)
 {
 	struct tespkt_trace_hdr* th = (struct tespkt_trace_hdr*)(void*) &pkt->body;
-	return (struct tespkt_trace_flags*) &th->tr_flags;
+	return &th->tr_flags;
+}
+
+static inline struct tespkt_event_type*
+tespkt_etype  (tespkt* pkt)
+{
+	return &pkt->tes_hdr.etype;
 }
 
 static inline uint16_t
-tespkt_evt_toff (tespkt* pkt)
+tespkt_event_toff (tespkt* pkt)
 {
-	return ftohs (((struct tespkt_evt_hdr*)(void*) &pkt->body)->toff);
+	return ftohs (((struct tespkt_event_hdr*)(void*) &pkt->body)->toff);
 }
 
 static inline uint32_t
@@ -782,7 +798,7 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 		fprintf (ostream, "Stop time:           %lu\n",  tespkt_mca_stopt (pkt));
 		return;
 	}
-	if (!tespkt_is_evt (pkt))
+	if (!tespkt_is_event (pkt))
 	{
 		fprintf (estream, "Unknown stream type\n");
 		return;
@@ -790,8 +806,8 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 
 	/* ----- Event */
 	fprintf (ostream, "Stream type:         Event\n");
-	fprintf (ostream, "Event size:          %hu\n", tespkt_evt_size (pkt));
-	fprintf (ostream, "Time offset:         %hu\n", tespkt_evt_toff (pkt));
+	fprintf (ostream, "Event size:          %hu\n", tespkt_event_size (pkt));
+	fprintf (ostream, "Time offset:         %hu\n", tespkt_event_toff (pkt));
 	/* ---------- Tick event */
 	if (tespkt_is_tick (pkt))
 	{
@@ -879,14 +895,12 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 	if (tespkt_is_trace_dp (pkt))
 	{
 		fprintf (ostream, "Trace type:          Dot product\n");
-		// fprintf (ostream, "Dot product:         \n", );
 		return;
 	}
 	/* -------------------- Dot product + trace */
 	if (tespkt_is_trace_dptr (pkt))
 	{
 		fprintf (ostream, "Trace type:          Dot product with trace\n");
-		// fprintf (ostream, "Dot product:         \n", );
 		return;
 	}
 	fprintf (estream, "Unknown trace type\n");
@@ -910,7 +924,7 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 #define TES_EMCASIZE_S  "Invalid histogram size"
 #define TES_EMCABINS_S  "Invalid bin number in histogram"
 #define TES_EMCACHKSM_S "Invalid sum total for histogram"
-#define TES_EMAXLEN 64  // maximum length of error string
+#define TES_EMAXLEN     64 // maximum length of error string
 
 static int
 tespkt_is_valid (tespkt* pkt)
@@ -926,9 +940,9 @@ tespkt_is_valid (tespkt* pkt)
 	if (flen <= TES_HDR_LEN)
 		rc |= TES_EETHLEN;
 
-	if (tespkt_is_evt (pkt))
+	if (tespkt_is_event (pkt))
 	{
-		uint16_t esize = tespkt_evt_size (pkt);
+		uint16_t esize = tespkt_event_size (pkt);
 
 		/* Event size should not be 0. */
 		if (esize == 0)
@@ -968,8 +982,9 @@ tespkt_is_valid (tespkt* pkt)
 	{
 		uint16_t nbins_tot = tespkt_mca_nbins_tot (pkt);
 		/* MCA size should correspond to last bin. */
-		if (tespkt_mca_size (pkt) !=
-			(nbins_tot * BIN_LEN) + MCA_HDR_LEN)
+		if ( tespkt_is_header (pkt) &&
+			(tespkt_mca_size (pkt) !=
+			(nbins_tot * BIN_LEN) + MCA_HDR_LEN) )
 			rc |= TES_EMCASIZE;
 
 		/* Most frequent bin cannot be greater than last bin. */
@@ -1039,14 +1054,35 @@ tespkt_serror (char* buf, int err)
 #include <string.h>
 #include <assert.h>
 
-#define MCA_FL_MASK       0x000fffff
-#define EVT_FL_MASK       0xffff
-#define TICK_FL_MASK      0x0703
-#define TR_FL_MASK        0x7fff
+#define EVT_TYPE_LEN  2
+#define MCA_FL_LEN    4
+#define EVT_FL_LEN    2
+#define TICK_FL_LEN   2
+#define TRACE_FL_LEN  2
 
-/* Flags are always sent as big-endian. */
-#define flagtoul(fl_ptr) ntohl ( *( (uint32_t*) (void*) fl_ptr ) )
-#define flagtous(fl_ptr) ntohs ( *( (uint16_t*) (void*) fl_ptr ) )
+#define MCA_FL_MASK   0x000fffff
+#define EVT_FL_MASK   0xffff
+#define TICK_FL_MASK  0x0703
+#define TRACE_FL_MASK 0x7fff
+
+/*
+ * Event types are sent as separate bytes, i.e. always appear big-endian.
+ */
+#define EVT_TYPE_MASK       0x030e /* all relevant bits of etype */
+#define EVT_PKT_TYPE_MASK   0x000e /* the packet type and tick bits */
+#define EVT_TYPE_TICK       0x0002
+#define EVT_TYPE_PEAK       0x0000
+#define EVT_TYPE_AREA       0x0004
+#define EVT_TYPE_PULSE      0x0008
+#define EVT_TYPE_TRACE      0x000c
+#define EVT_TYPE_TRACE_SGL  0x000c
+#define EVT_TYPE_TRACE_AVG  0x010c
+#define EVT_TYPE_TRACE_DP   0x020c
+#define EVT_TYPE_TRACE_DPTR 0x030c
+
+/* Flags and event type are always sent as big-endian. */
+#define structtoul(s_ptr) ntohl ( *( (uint32_t*) (void*) s_ptr ) )
+#define structtous(s_ptr) ntohs ( *( (uint16_t*) (void*) s_ptr ) )
 
 static void
 tespkt_self_test (void)
@@ -1058,15 +1094,24 @@ tespkt_self_test (void)
 	assert (sizeof (struct tespkt_peak_hdr) == PEAK_HDR_LEN);
 	assert (sizeof (struct tespkt_peak) == PEAK_LEN);
 	assert (sizeof (struct tespkt_area_hdr) == AREA_HDR_LEN);
-	assert (sizeof (struct tespkt_pulse) == PLS_LEN);
-	assert (sizeof (struct tespkt_pulse_hdr) == PLS_HDR_LEN);
-	assert (sizeof (struct tespkt_trace_hdr) == TR_HDR_LEN);
-	assert (sizeof (struct tespkt_trace_full_hdr) == TR_FULL_HDR_LEN);
+	assert (sizeof (struct tespkt_pulse) == PULSE_LEN);
+	assert (sizeof (struct tespkt_pulse_hdr) == PULSE_HDR_LEN);
+	assert (sizeof (struct tespkt_trace_hdr) == TRACE_HDR_LEN);
+	assert (sizeof (struct tespkt_trace_full_hdr) == TRACE_FULL_HDR_LEN);
 	assert (sizeof (struct tespkt_dot_prod) == DP_LEN);
+	assert (sizeof (struct tespkt_event_type) == EVT_TYPE_LEN);
 	assert (sizeof (struct tespkt_mca_flags) == MCA_FL_LEN);
 	assert (sizeof (struct tespkt_event_flags) == EVT_FL_LEN);
-	assert (sizeof (struct tespkt_tick_flags) == EVT_FL_LEN);
-	assert (sizeof (struct tespkt_trace_flags) == TR_FL_LEN);
+	assert (sizeof (struct tespkt_tick_flags) == TICK_FL_LEN);
+	assert (sizeof (struct tespkt_trace_flags) == TRACE_FL_LEN);
+
+	struct tespkt_event_type et;
+	memset (&et, 0, EVT_TYPE_LEN);
+	et.T = 1;
+	et.PA = 3;
+	assert ( structtous (&et) == EVT_PKT_TYPE_MASK );
+	et.TR = 3;
+	assert ( structtous (&et) == EVT_TYPE_MASK );
 
 	struct tespkt_mca_flags mf;
 	memset (&mf, 0, MCA_FL_LEN);
@@ -1075,7 +1120,7 @@ tespkt_self_test (void)
 	mf.T = 0x0f;
 	mf.N = 0x1f;
 	mf.C = 0x07;
-	assert ( flagtoul (&mf) == MCA_FL_MASK );
+	assert ( structtoul (&mf) == MCA_FL_MASK );
 
 	struct tespkt_event_flags ef;
 	memset (&ef, 0, EVT_FL_LEN);
@@ -1087,26 +1132,26 @@ tespkt_self_test (void)
 	ef.PT = 0x03;
 	ef.T  = 0x01;
 	ef.N  = 0x01;
-	assert ( flagtous (&ef) == EVT_FL_MASK );
+	assert ( structtous (&ef) == EVT_FL_MASK );
 
 	struct tespkt_tick_flags tf;
-	memset (&tf, 0, EVT_FL_LEN);
+	memset (&tf, 0, TICK_FL_LEN);
 	tf.MF = 0x01;
 	tf.EL = 0x01;
 	tf.TL = 0x01;
 	tf.T  = 0x01;
 	tf.N  = 0x01;
-	assert ( flagtous (&tf) == TICK_FL_MASK );
+	assert ( structtous (&tf) == TICK_FL_MASK );
 
 	struct tespkt_trace_flags trf;
-	memset (&trf, 0, TR_FL_LEN);
+	memset (&trf, 0, TRACE_FL_LEN);
 	trf.MH  = 0x01;
 	trf.MP  = 0x01;
 	trf.STR = 0x1f;
 	trf.TT  = 0x03;
 	trf.TS  = 0x03;
 	trf.OFF = 0x0f;
-	assert ( flagtous (&trf) == TR_FL_MASK );
+	assert ( structtous (&trf) == TRACE_FL_MASK );
 }
 
 #endif /* TESPKT_DEBUG */

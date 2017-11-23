@@ -61,6 +61,8 @@ int_hn (int sig)
 int
 main (int argc, char** argv)
 {
+	tespkt_self_test ();
+
 	int rc;
 	if (argc != 2)
 		return -1;

@@ -274,13 +274,14 @@ struct s_task_save_aiobuf_t
 
 /*
  * The frame index.
+ * Flags mca, bad and seq are set in event type.
  */
 struct s_task_save_fidx_t
 {
-	uint64_t payload;
-	uint32_t length;
-	uint16_t esize;
-	uint16_t etype;
+	uint64_t payload; // frame's offset into the file
+	uint32_t length;  // payload's length
+	uint16_t esize;   // original event size
+	uint16_t etype;   // original event type + bits set by us
 };
 
 /*
@@ -1294,7 +1295,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 			sjob->cur_trace_cur_size = 0;
 		}
 	}
-	else if (tespkt_is_evt (pkt))
+	else if (tespkt_is_event (pkt))
 	{
 		if (tespkt_is_tick (pkt))
 		{ /* tick */
@@ -1323,7 +1324,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 		}
 		else
 		{ /* other event */
-			sjob->st.events += tespkt_evt_nums (pkt);
+			sjob->st.events += tespkt_event_nums (pkt);
 		}
 	}
 
@@ -1353,7 +1354,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	{
 		/* If neither event, nor MCA packet should have been dropped by
 		 * s_task_dispatch. */
-		dbg_assert (tespkt_is_evt (pkt));
+		dbg_assert (tespkt_is_event (pkt));
 
 	       	if (tespkt_is_tick (pkt))
 		{
@@ -1367,7 +1368,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 			// struct s_task_save_aiobuf_t* sidx = &sjob->ridx;
 			// struct s_task_save_cidx_t idx;
 		}
-		else if (tespkt_is_evt (pkt))
+		else if (tespkt_is_event (pkt))
 		{
 			sdat = &sjob->edat;
 			// struct s_task_save_aiobuf_t* sidx = &sjob->fidx;
@@ -1376,6 +1377,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	}
 	dbg_assert (sdat != NULL);
 
+	/* FIX: do not write header */
 	int jobrc = s_task_save_write_aiobuf (
 			sdat, (char*)pkt, plen, finishing, self->id);
 	if (jobrc < 0)
@@ -1742,6 +1744,7 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 	sjob->filename = NULL; /* points to a static string */
 	sjob->min_ticks = 0;
 	sjob->min_events = 0;
+	sjob->recording = 0;
 
 	return rc;
 }
