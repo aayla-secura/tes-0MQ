@@ -132,6 +132,8 @@ static void pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream);
 static int  tespkt_is_valid (tespkt* pkt);
 /* Print info about each of the flags present in the return value of tespkt_is_valid */
 static void tespkt_perror (FILE* stream, int err);
+/* As above, but print to a char* buffer, rather than a FILE* one */
+static void tespkt_serror (char* stream, int err);
 
 #ifdef TESPKT_DEBUG
 static void tespkt_self_test (void);
@@ -899,6 +901,17 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 #define TES_EMCASIZE   32 // mismatch: size vs last bin
 #define TES_EMCABINS   64 // mismatch: most frequent vs last bin
 #define TES_EMCACHKSM 128 // mismatch: lowest value * no. bins vs sum total
+
+#define TES_EETHTYPE_S  "Invalid ether type"
+#define TES_EETHLEN_S   "Invalid frame length"
+#define TES_EEVTTYPE_S  "Invalid event type"
+#define TES_EEVTSIZE_S  "Invalid event size"
+#define TES_ETRSIZE_S   "Invalid trace size"
+#define TES_EMCASIZE_S  "Invalid histogram size"
+#define TES_EMCABINS_S  "Invalid bin number in histogram"
+#define TES_EMCACHKSM_S "Invalid sum total for histogram"
+#define TES_EMAXLEN 64  // maximum length of error string
+
 static int
 tespkt_is_valid (tespkt* pkt)
 {
@@ -940,7 +953,8 @@ tespkt_is_valid (tespkt* pkt)
 		else if (tespkt_is_trace (pkt))
 		{
 			/* Trace size should not be 0. */
-			if (tespkt_trace_size (pkt) == 0)
+			if (tespkt_is_header (pkt) &&
+				tespkt_trace_size (pkt) == 0)
 				rc |= TES_ETRSIZE;
 
 			if ( ( ! tespkt_is_trace_dp (pkt) )
@@ -979,21 +993,42 @@ static void
 tespkt_perror (FILE* stream, int err)
 {
 	if (err & TES_EETHTYPE)
-		fprintf (stream, "Invalid ether type\n");
+		fprintf (stream, "%s\n", TES_EETHTYPE_S);
 	if (err & TES_EETHLEN)
-		fprintf (stream, "Invalid frame length\n");
+		fprintf (stream, "%s\n", TES_EETHLEN_S);
 	if (err & TES_EEVTTYPE)
-		fprintf (stream, "Invalid event type\n");
+		fprintf (stream, "%s\n", TES_EEVTTYPE_S);
 	if (err & TES_EEVTSIZE)
-		fprintf (stream, "Invalid event size\n");
+		fprintf (stream, "%s\n", TES_EEVTSIZE_S);
 	if (err & TES_ETRSIZE)
-		fprintf (stream, "Invalid trace size\n");
+		fprintf (stream, "%s\n", TES_ETRSIZE_S);
 	if (err & TES_EMCASIZE)
-		fprintf (stream, "Invalid histogram size\n");
+		fprintf (stream, "%s\n", TES_EMCASIZE_S);
 	if (err & TES_EMCABINS)
-		fprintf (stream, "Invalid bin number in histogram\n");
+		fprintf (stream, "%s\n", TES_EMCABINS_S);
 	if (err & TES_EMCACHKSM)
-		fprintf (stream, "Invalid sum total for histogram\n");
+		fprintf (stream, "%s\n", TES_EMCACHKSM_S);
+}
+
+static void
+tespkt_serror (char* buf, int err)
+{
+	if (err & TES_EETHTYPE)
+		snprintf (buf, TES_EMAXLEN, TES_EETHTYPE_S);
+	if (err & TES_EETHLEN)
+		snprintf (buf, TES_EMAXLEN, TES_EETHLEN_S);
+	if (err & TES_EEVTTYPE)
+		snprintf (buf, TES_EMAXLEN, TES_EEVTTYPE_S);
+	if (err & TES_EEVTSIZE)
+		snprintf (buf, TES_EMAXLEN, TES_EEVTSIZE_S);
+	if (err & TES_ETRSIZE)
+		snprintf (buf, TES_EMAXLEN, TES_ETRSIZE_S);
+	if (err & TES_EMCASIZE)
+		snprintf (buf, TES_EMAXLEN, TES_EMCASIZE_S);
+	if (err & TES_EMCABINS)
+		snprintf (buf, TES_EMAXLEN, TES_EMCABINS_S);
+	if (err & TES_EMCACHKSM)
+		snprintf (buf, TES_EMAXLEN, TES_EMCACHKSM_S);
 }
 
 /* ------------------------------------------------------------------------- */
