@@ -142,8 +142,9 @@ static void pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream);
 static int  tespkt_is_valid (tespkt* pkt);
 /* Print info about each of the flags present in the return value of tespkt_is_valid */
 static void tespkt_perror (FILE* stream, int err);
-/* As above, but print to a char* buffer, rather than a FILE* one */
-static void tespkt_serror (char* stream, int err);
+/* As above, but print first error found to a char* buffer, rather than a FILE*
+ * one. Returns the error minus the bit corresponding to the printed error */
+static int  tespkt_serror (char* stream, int err);
 
 #ifdef TESPKT_DEBUG
 static void tespkt_self_test (void);
@@ -1034,23 +1035,44 @@ tespkt_perror (FILE* stream, int err)
 		fprintf (stream, "%s\n", TES_EMCABINS_S);
 }
 
-static void
+static int
 tespkt_serror (char* buf, int err)
 {
 	if (err & TES_EETHTYPE)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_EETHTYPE_S);
-	if (err & TES_EETHLEN)
+		return (err & ~TES_EETHTYPE);
+	}
+	else if (err & TES_EETHLEN)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_EETHLEN_S);
-	if (err & TES_EEVTTYPE)
+		return (err & ~TES_EETHLEN);
+	}
+	else if (err & TES_EEVTTYPE)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_EEVTTYPE_S);
-	if (err & TES_EEVTSIZE)
+		return (err & ~TES_EEVTTYPE);
+	}
+	else if (err & TES_EEVTSIZE)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_EEVTSIZE_S);
-	if (err & TES_ETRSIZE)
+		return (err & ~TES_EEVTSIZE);
+	}
+	else if (err & TES_ETRSIZE)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_ETRSIZE_S);
-	if (err & TES_EMCASIZE)
+		return (err & ~TES_ETRSIZE);
+	}
+	else if (err & TES_EMCASIZE)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_EMCASIZE_S);
-	if (err & TES_EMCABINS)
+		return (err & ~TES_EMCASIZE);
+	}
+	else if (err & TES_EMCABINS)
+	{
 		snprintf (buf, TES_EMAXLEN, TES_EMCABINS_S);
+		return (err & ~TES_EMCABINS);
+	}
 }
 
 /* ------------------------------------------------------------------------- */
