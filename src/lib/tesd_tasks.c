@@ -301,10 +301,10 @@ struct s_task_save_fidx_t
  */
 struct s_task_save_tidx_t
 {
-	uint64_t start;   // offset (into edat) of first (following the tick)
-			  // non-tick event frame
-	uint32_t nframes; // no. of event frames until NEXT tick
-	uint16_t esize;   // original event size
+	uint64_t start_frame; // start frame number of first non-tick event
+			      // after this tick
+	uint32_t nframes;     // no. of event frames until NEXT tick
+	uint16_t esize;       // original event size
 	struct tespkt_event_type etype; // original event type + bits set by us
 };
 
@@ -313,8 +313,8 @@ struct s_task_save_tidx_t
  */
 struct s_task_save_sidx_t
 {
-	uint64_t start;   // first byte of histogram/trace into dat file
-	uint64_t end;     // last byte of histogram/trace into dat file
+	uint64_t start; // first byte of histogram/trace into dat file
+	uint64_t end;   // last byte of histogram/trace into dat file
 };
 
 /*
@@ -1245,6 +1245,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			! tespkt_is_trace_dp (pkt) );
 
 	/* ******** Update the tick index and choose the data file. ******** */
+	struct s_task_save_aiobuf_t* aiofidx = &sjob->aio.fidx;
 	struct s_task_save_aiobuf_t* aiodat = NULL;
 	bool finishing = 0;
 	int jobrc;
@@ -1272,9 +1273,8 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		tidx->nframes++;
 		if (tidx->nframes == 0)
 		{ /* first non-tick event frame after a tick */
-			tidx->start = sjob->aio.edat.size +
-				sjob->aio.edat.bufzone.waiting +
-				sjob->aio.edat.bufzone.enqueued;
+			/* frames is incremented below, so no need to subtract 1 */
+			tidx->start_frame = sjob->st.frames;
 			tidx->esize = esize;
 
 			/* copy only fields that are defined */
@@ -1299,9 +1299,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	 * of a new stream.
 	 */
 
-	sjob->st.frames++;
 	if (sjob->st.frames > 0)
 		sjob->st.frames_lost += missed;
+	sjob->st.frames++;
 
 #ifdef ENABLE_FULL_DEBUG
 #if 0
@@ -1357,8 +1357,14 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		}
 		else if (sjob->cur_stream.cur_size == sjob->cur_stream.size)
 		{ /* done, record the event */
+			struct s_task_save_aiobuf_t* aiosidx = NULL;
 			if (is_trace)
+			{
+				aiosidx = &sjob->aio.ridx;
 				sjob->st.events++;
+			}
+			else
+				aiosidx = &sjob->aio.midx;
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
 
@@ -1366,7 +1372,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				aiodat->bufzone.waiting +
 				aiodat->bufzone.enqueued + paylen;
 
-			jobrc = s_task_save_write_aiobuf (&sjob->aio.midx,
+			jobrc = s_task_save_write_aiobuf (aiosidx,
 					(char*)&sjob->cur_stream.idx,
 					TSAVE_SIDX_LEN, 0, self->id);
 			if (jobrc < 0)
@@ -1432,8 +1438,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		sjob->st.events += tespkt_event_nums (pkt);
 	}
 
-	/* ***************** Write frame index and payload. **************** */
-
+	/* *********************** Write frame index. ********************** */
 	struct s_task_save_fidx_t fidx;
 	fidx.start = aiodat->size +
 		aiodat->bufzone.waiting +
@@ -1451,13 +1456,21 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		fidx.etype.PKT = etype->PKT;
 		fidx.etype.TR = etype->TR;
 	}
-	jobrc = s_task_save_write_aiobuf (&sjob->aio.fidx, (char*)&fidx,
+	jobrc = s_task_save_write_aiobuf (aiofidx, (char*)&fidx,
 			TSAVE_FIDX_LEN, 0, self->id);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
-	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
-			paylen, 0, self->id);
+	dbg_assert ( sjob->st.frames * TSAVE_FIDX_LEN ==
+			aiofidx->size +
+			aiofidx->bufzone.waiting +
+			aiofidx->bufzone.enqueued );
+
+	/* ********************** Write frame payload. ********************* */
+	// jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
+	//                 paylen, 0, self->id);
+	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt,
+			flen, 0, self->id);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
@@ -1809,7 +1822,8 @@ s_task_save_stats_write (struct s_task_save_data_t* sjob)
 	assert (sjob->filename != NULL);
 	dbg_assert (sjob->fd == -1);
 
-	sjob->fd = open (sjob->filename, O_WRONLY | O_CREAT);
+	sjob->fd = open (sjob->filename, O_WRONLY | O_CREAT,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (sjob->fd == -1)
 		return -1;
 
