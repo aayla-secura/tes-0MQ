@@ -1467,10 +1467,14 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			aiofidx->bufzone.enqueued );
 
 	/* ********************** Write frame payload. ********************* */
-	// jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
-	//                 paylen, 0, self->id);
+// #define TSAVE_SAVE_HEADERS
+#ifdef TSAVE_SAVE_HEADERS
 	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt,
 			flen, 0, self->id);
+#else
+	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
+	                 paylen, 0, self->id);
+#endif
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
