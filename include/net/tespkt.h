@@ -920,7 +920,6 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 #define TES_ETRSIZE    16 // event size for fixed size events
 #define TES_EMCASIZE   32 // mismatch: size vs last bin
 #define TES_EMCABINS   64 // mismatch: most frequent vs last bin
-#define TES_EMCACHKSM 128 // mismatch: lowest value * no. bins vs sum total
 
 #define TES_EETHTYPE_S  "Invalid ether type"
 #define TES_EETHLEN_S   "Invalid frame length"
@@ -929,7 +928,6 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 #define TES_ETRSIZE_S   "Invalid trace size"
 #define TES_EMCASIZE_S  "Invalid histogram size"
 #define TES_EMCABINS_S  "Invalid bin number in histogram"
-#define TES_EMCACHKSM_S "Invalid sum total for histogram"
 #define TES_EMAXLEN     64 // maximum length of error string
 
 static int
@@ -1009,15 +1007,6 @@ tespkt_is_valid (tespkt* pkt)
 			 * bin. */
 			if (tespkt_mca_mfreq (pkt) >= nbins_tot)
 				rc |= TES_EMCABINS;
-
-			/* Lowest value * no. bins cannot be greater than
-			 * sum total. */
-			if ( (tespkt_mca_lvalue (pkt) * nbins_tot) >
-					tespkt_mca_total (pkt))
-				rc |= TES_EMCACHKSM;
-
-			/* TO DO: can the timestamps overflow, i.e. can
-			 * stop time < start time? */
 		}
 	}
 	else
@@ -1043,8 +1032,6 @@ tespkt_perror (FILE* stream, int err)
 		fprintf (stream, "%s\n", TES_EMCASIZE_S);
 	if (err & TES_EMCABINS)
 		fprintf (stream, "%s\n", TES_EMCABINS_S);
-	if (err & TES_EMCACHKSM)
-		fprintf (stream, "%s\n", TES_EMCACHKSM_S);
 }
 
 static void
@@ -1064,8 +1051,6 @@ tespkt_serror (char* buf, int err)
 		snprintf (buf, TES_EMAXLEN, TES_EMCASIZE_S);
 	if (err & TES_EMCABINS)
 		snprintf (buf, TES_EMAXLEN, TES_EMCABINS_S);
-	if (err & TES_EMCACHKSM)
-		snprintf (buf, TES_EMAXLEN, TES_EMCACHKSM_S);
 }
 
 /* ------------------------------------------------------------------------- */
