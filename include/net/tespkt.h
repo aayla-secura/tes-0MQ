@@ -80,7 +80,7 @@ static inline int tespkt_is_trace_avg  (tespkt* pkt);
 static inline int tespkt_is_trace_dp   (tespkt* pkt);
 static inline int tespkt_is_trace_dptr (tespkt* pkt);
 /* Event's size (valid for all events) */
-static inline uint16_t tespkt_event_size (tespkt* pkt);
+static inline uint16_t tespkt_esize (tespkt* pkt);
 /* Number of events in an event frame */
 static inline uint16_t tespkt_event_nums (tespkt* pkt);
 /* Size of histogram (valid for MCA header frames) */
@@ -555,7 +555,7 @@ tespkt_pseq (tespkt* pkt)
 }
 
 static inline uint16_t
-tespkt_event_size (tespkt* pkt)
+tespkt_esize (tespkt* pkt)
 {
 	return ftohs (pkt->tes_hdr.esize);
 }
@@ -564,7 +564,7 @@ static inline uint16_t
 tespkt_event_nums (tespkt* pkt)
 {
 	return ( ( tespkt_flen (pkt) - TES_HDR_LEN )
-			/ ( tespkt_event_size (pkt) << 3 ) );
+			/ ( tespkt_esize (pkt) << 3 ) );
 }
 
 static inline uint16_t
@@ -812,7 +812,7 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 
 	/* ----- Event */
 	fprintf (ostream, "Stream type:         Event\n");
-	fprintf (ostream, "Event size:          %hu\n", tespkt_event_size (pkt));
+	fprintf (ostream, "Event size:          %hu\n", tespkt_esize (pkt));
 	fprintf (ostream, "Time offset:         %hu\n", tespkt_event_toff (pkt));
 	/* ---------- Tick event */
 	if (tespkt_is_tick (pkt))
@@ -948,7 +948,7 @@ tespkt_is_valid (tespkt* pkt)
 
 	if (tespkt_is_event (pkt))
 	{
-		uint16_t esize = tespkt_event_size (pkt);
+		uint16_t esize = tespkt_esize (pkt);
 
 		/* Event size should not be 0. */
 		if (esize == 0)

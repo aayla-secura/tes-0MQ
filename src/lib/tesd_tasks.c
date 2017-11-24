@@ -138,6 +138,7 @@
  *   socket block)?
  * - Write REQ job statistics in a global database such that it can be looked
  *   up by filename, client IP or time frame.
+ * - FIX: task can ask to receive bad frames
  */
 
 #include "tesd_tasks.h"
@@ -147,6 +148,14 @@
 /* From netmap_user.h */
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
+
+#if __BYTE_ORDER == TES_BYTE_ORDER
+#  define htofs
+#  define htofl
+#else
+#  define htofs bswap16
+#  define htofl bswap32
+#endif
 
 /* ---------------------------------- API ---------------------------------- */
 
@@ -281,10 +290,10 @@ struct s_task_save_aiobuf_t
  */
 struct s_task_save_fidx_t
 {
-	uint64_t payload; // frame's offset into the file
+	uint64_t start;   // frame's offset into its corresponding dat file
 	uint32_t length;  // payload's length
 	uint16_t esize;   // original event size
-	uint16_t etype;   // original event type + bits set by us
+	struct tespkt_event_type etype; // original event type + bits set by us
 };
 
 /*
@@ -292,20 +301,20 @@ struct s_task_save_fidx_t
  */
 struct s_task_save_tidx_t
 {
-	uint32_t start_frame; // frame sequence of first frame after previous
-			      // tick, relative to first frame after first tick
-	uint32_t nframes;     // no. of frames since last tick
-	uint16_t esize;       // original event size
-	uint16_t etype;       // original event type + bits set by us
+	uint64_t start;   // offset (into edat) of first (following the tick)
+			  // non-tick event frame
+	uint32_t nframes; // no. of event frames until NEXT tick
+	uint16_t esize;   // original event size
+	struct tespkt_event_type etype; // original event type + bits set by us
 };
 
 /*
- * The MCA and trace indices. (the 'c' is for continuous streams)
+ * The MCA and trace indices. (the 's' is for 'stream')
  */
-struct s_task_save_cidx_t
+struct s_task_save_sidx_t
 {
-	uint32_t start_frame; // frame sequence of first frame in the trace/histogram
-	uint32_t nframes;     // no. of frames in the trace/histogram
+	uint64_t start;   // first byte of histogram/trace into dat file
+	uint64_t end;     // last byte of histogram/trace into dat file
 };
 
 /*
@@ -328,10 +337,11 @@ struct s_task_save_data_t
 
 	struct
 	{
-		struct s_task_save_cidx_t idx;
+		struct s_task_save_sidx_t idx;
 		size_t size;
 		size_t cur_size;
 		bool is_event; // i.e. is_trace, otherwise it's MCA
+		bool discard;  // stream had errors, ignore rest
 	} cur_stream;          // ongoing trace of histogram
 
 	struct
@@ -341,7 +351,6 @@ struct s_task_save_data_t
 
 	uint64_t min_ticks;
 	uint64_t min_events;
-	// uint16_t start_fseq; // frame sequence of first frame in the capture
 #ifdef ENABLE_FULL_DEBUG
 	unsigned char prev_hdr[TES_HDR_LEN];
 #endif
@@ -1001,17 +1010,17 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			return 0;
 		}
 		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
-		uint16_t plen = tespkt_flen (pkt);
-		if (plen > len)
+		uint16_t flen = tespkt_flen (pkt);
+		if (flen > len)
 		{ /* drop the frame */
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet too long (header says %hu, "
-				"ring slot is %hu)", plen, len);
+				"ring slot is %hu)", flen, len);
 			return 0;
 		}
-		dbg_assert (plen <= MAX_TES_FRAME_LEN);
+		dbg_assert (flen <= MAX_TES_FRAME_LEN);
 
-		rc = self->pkt_handler (loop, pkt, plen, fseq_gap, self);
+		rc = self->pkt_handler (loop, pkt, flen, fseq_gap, self);
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
@@ -1204,31 +1213,79 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 }
 
 /*
- * Saves packets to a file. plen is the frame length. Will drop frames that say
+ * Saves packets to a file. flen is the frame length. Will drop frames that say
  * packet is longer than this. Will not write more than what the frame header
  * says.
  */
 static int
-s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
+s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, task_t* self)
 {
+	/* FIX: flush all buffers when finishing */
 	dbg_assert (self != NULL);
 
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 
-	if ( ! sjob->recording && tespkt_is_tick (pkt))
+	bool is_tick = tespkt_is_tick (pkt);
+	if ( ! sjob->recording && is_tick )
 	{
 		sjob->recording = 1;
-		// sjob->start_fseq = tespkt_fseq (pkt);
 	}
 	if ( ! sjob->recording )
 		return 0;
 
+	uint16_t esize = tespkt_esize (pkt);
+	esize = htofs (esize); /* in FPGA byte-order */
+	const struct tespkt_event_type* etype = tespkt_etype (pkt);
+	uint16_t paylen = flen - TES_HDR_LEN;
+
+	bool is_header = tespkt_is_header (pkt);
+	bool is_mca = tespkt_is_mca (pkt);
+	bool is_trace = ( tespkt_is_trace (pkt) &&
+			! tespkt_is_trace_dp (pkt) );
+
+	/* ******** Update the tick index and choose the data file. ******** */
+	struct s_task_save_aiobuf_t* aiodat = NULL;
+
+	if (is_mca)
+		aiodat = &sjob->aio.mdat;
+	else if (is_tick)
+	{
+		aiodat = &sjob->aio.tdat;
+
+		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
+		/* FIX: write tick index */
+		tidx->nframes = 0;
+		/* no need to zero the rest */
+	}
+	else
+	{
+		aiodat = &sjob->aio.edat;
+
+		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
+		tidx->nframes++;
+		if (tidx->nframes == 0)
+		{ /* first non-tick event frame after a tick */
+			tidx->start = sjob->aio.edat.size +
+				sjob->aio.edat.bufzone.waiting +
+				sjob->aio.edat.bufzone.enqueued;
+			tidx->esize = esize;
+
+			/* copy only fields that are defined */
+			tidx->etype.PKT = etype->PKT;
+			tidx->etype.TR = etype->TR;
+			tidx->etype.HOM = 0;
+		}
+		/* compare only fields that are defined */
+		else if ( tidx->etype.PKT != etype->PKT ||
+			  tidx->etype.TR != etype->TR ||
+			  tidx->esize != esize )
+			tidx->etype.HOM = 1;
+	}
+
 	/*
-	 * *****************************************************************
-	 * ****************** Update statistics and index. *****************
-	 * *****************************************************************
+	 * *************** Update statistics and stream index. *************
 	 * Check if there is an ongoing stream (trace or MCA). If so, update
 	 * index if necessary. If this is the last frame of a stream, queue
 	 * the index for writing and reset cur_stream's size and cur_size.
@@ -1236,7 +1293,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	 * frames) occurs. idx and is_event are set when receiving the header
 	 * of a new stream.
 	 */
-	bool finishing = 0;
 
 	sjob->st.frames++;
 	if (sjob->st.frames > 0)
@@ -1264,10 +1320,8 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 	else
 		dbg_assert (sjob->cur_stream.cur_size == 0);
 
-	bool is_header = tespkt_is_header (pkt);
-	bool is_mca = tespkt_is_mca (pkt);
-	bool is_trace = ( tespkt_is_trace (pkt) &&
-			! tespkt_is_trace_dp (pkt) );
+	bool finishing = 0;
+
 	bool is_ctd_trace = ( is_trace && sjob->cur_stream.size > 0 &&
 			sjob->cur_stream.is_event && ! is_header );
 	bool is_ctd_mca = ( is_mca && sjob->cur_stream.size > 0 &&
@@ -1279,16 +1333,16 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 
 	if (is_ctd_mca || is_ctd_trace)
 	{ /* ongoing multi-frame stream, check validity, add to size, check if done */
-		/* FIX: check other things for validity of a trace or hist? */
 		if (missed > 0)
 		{
 			s_msgf (0, LOG_DEBUG, self->id, "Missed %s frames",
 				is_mca ? "histogram" : "trace");
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
+			sjob->cur_stream.discard = 1;
 		}
 
-		sjob->cur_stream.cur_size += tespkt_flen (pkt) - TES_HDR_LEN;
+		sjob->cur_stream.cur_size += paylen;
 
 		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
 		{
@@ -1296,6 +1350,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 				is_mca ? "histogram" : "trace");
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
+			sjob->cur_stream.discard = 1;
 		}
 		else if (sjob->cur_stream.cur_size == sjob->cur_stream.size)
 		{ /* done, record the event */
@@ -1303,12 +1358,15 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 				sjob->st.events++;
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
-			/* FIX: write index */
+
+			sjob->cur_stream.idx.end = aiodat->size +
+				aiodat->bufzone.waiting +
+				aiodat->bufzone.enqueued + paylen;
+			/* FIX: write MCA/trace index */
 		}
 	}
 	else if (starts_mca || starts_trace)
 	{ /* start a new stream */
-		/* FIX: set idx's first frame */
 		if (is_trace)
 		{
 			sjob->cur_stream.size = tespkt_trace_size (pkt);
@@ -1319,9 +1377,13 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 			sjob->cur_stream.size = tespkt_mca_size (pkt);
 			sjob->cur_stream.is_event = 0;
 		}
-		sjob->cur_stream.cur_size =
-			tespkt_flen (pkt) - TES_HDR_LEN;
+		sjob->cur_stream.discard = 0;
+		sjob->cur_stream.cur_size = paylen;
 		/* tespkt_is_valid checks that payload size <= trace size */
+
+		sjob->cur_stream.idx.start = aiodat->size +
+			aiodat->bufzone.waiting +
+			aiodat->bufzone.enqueued;
 	}
 	else if (is_mca || is_trace)
 	{ /* unexpected part of a multi-frame stream */
@@ -1336,62 +1398,60 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
 					"trace" : "histogram");
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
+			sjob->cur_stream.discard = 1;
 		}
 		else
 		{
 			dbg_assert ( ! is_header );
-			s_msgf (0, LOG_DEBUG, self->id,
-				"Received a %s frame "
-				"while a no stream was ongoing",
-				is_mca ? "histogram" : "trace");
+			if ( ! sjob->cur_stream.discard )
+				s_msgf (0, LOG_DEBUG, self->id,
+					"Received a %s frame "
+					"while a no stream was ongoing",
+					is_mca ? "histogram" : "trace");
 		}
 	}
-	else if (tespkt_is_tick (pkt))
+	else if (is_tick)
 	{ /* tick */
 		sjob->st.ticks++;
 		/* Ticks should be > min_ticks cause we count the
 		 * starting one too. */
 		if (sjob->st.ticks > sjob->min_ticks &&
 				sjob->st.events >= sjob->min_events)
-		{
 			finishing = 1; /* DONE */
-			/* FIX: write index */
-		}
-		/* FIX: subtract starting frame index from captured ones */
-		/* FIX: update tick index */
 	}
 	else
 	{ /* short event */
 		sjob->st.events += tespkt_event_nums (pkt);
-		/* FIX: write index */
 	}
 
-	/*
-	 * *****************************************************************
-	 * ************************* Write payload. ************************
-	 * *****************************************************************
-	 */
+	/* ***************** Write frame index and payload. **************** */
 
-	struct s_task_save_aiobuf_t* aiodat = NULL;
+	struct s_task_save_fidx_t fidx;
+	fidx.start = aiodat->size +
+		aiodat->bufzone.waiting +
+		aiodat->bufzone.enqueued;
+	fidx.length = paylen;
+	fidx.esize = esize;
+	if (missed > 0)
+		fidx.etype.SEQ = 1;
 
 	if (is_mca)
-		aiodat = &sjob->aio.mdat;
-	else if (tespkt_is_tick (pkt))
-		aiodat = &sjob->aio.tdat;
+		fidx.etype.MCA = 1;
 	else
-		aiodat = &sjob->aio.edat;
+	{
+		fidx.etype.T = etype->T;
+		fidx.etype.PKT = etype->PKT;
+		fidx.etype.TR = etype->TR;
+	}
+	/* FIX: write frame index */
 
 	int jobrc = s_task_save_write_aiobuf (
 			aiodat, (char*)pkt + TES_HDR_LEN,
-			plen, finishing, self->id);
+			paylen, finishing, self->id);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
-	/*
-	 * *****************************************************************
-	 * ********************** Check if done. ***************************
-	 * *****************************************************************
-	 */
+	/* ********************** Check if done. *************************** */
 	if (finishing)
 	{
 		dbg_assert (jobrc != EINPROGRESS);
@@ -1443,7 +1503,7 @@ s_task_save_init (task_t* self)
 	assert (sizeof (struct s_task_save_stats_t) == TSAVE_STAT_LEN);
 	// assert (sizeof (struct s_task_save_fidx_t) == TSAVE_FIDX_LEN);
 	// assert (sizeof (struct s_task_save_tidx_t) == TSAVE_TIDX_LEN);
-	// assert (sizeof (struct s_task_save_cidx_t) == TSAVE_CIDX_LEN);
+	// assert (sizeof (struct s_task_save_sidx_t) == TSAVE_CIDX_LEN);
 	assert (self != NULL);
 
 	static struct s_task_save_data_t sjob;
@@ -1459,7 +1519,7 @@ s_task_save_init (task_t* self)
 		return -1;
 	}
 
-	/* TO DO: Init the index files. */
+	/* FIX: Init the index files. */
 
 	self->data = &sjob;
 	return 0;
@@ -1491,7 +1551,7 @@ s_task_save_fin (task_t* self)
 	s_task_save_fin_aiobuf (&sjob->aio.tdat);
 	s_task_save_fin_aiobuf (&sjob->aio.edat);
 
-	/* TO DO: Finalize the index files. */
+	/* FIX: Finalize the index files. */
 
 	self->data = NULL;
 	return (rc ? -1 : 0);
@@ -1556,7 +1616,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 
 	dbg_assert (sjob->cur_stream.size == 0);
 	dbg_assert (sjob->cur_stream.cur_size == 0);
-	/* TO DO: check rest of values */
+	dbg_assert (sjob->cur_tick.idx.nframes == 0);
 
 	/* Open the data files. */
 	if (strlen (sjob->filename) + 6 > PATH_MAX)
@@ -1584,7 +1644,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	if (rc != 0)
 		return -1;
 
-	/* TO DO: Open the index files. */
+	/* FIX: Open the index files. */
 
 	return 0;
 }
@@ -1603,7 +1663,7 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	s_task_save_close_aiobuf (&sjob->aio.tdat);
 	s_task_save_close_aiobuf (&sjob->aio.edat);
 
-	/* TO DO: Cloe the index files. */
+	/* FIX: Close the index files. */
 }
 
 /*
@@ -1746,6 +1806,7 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 
 	memset (&sjob->st, 0, TSAVE_STAT_LEN);
 	memset (&sjob->cur_stream, 0, sizeof (sjob->cur_stream));
+	memset (&sjob->cur_tick, 0, sizeof (sjob->cur_tick));
 
 	sjob->filename = NULL; /* points to a static string */
 	sjob->recording = 0;
@@ -2126,7 +2187,7 @@ s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiodat,
  * frames are received (i.e. the size field appears to small).
  */
 static int
-s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t plen,
+s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, task_t* self)
 {
 	dbg_assert (self != NULL);
