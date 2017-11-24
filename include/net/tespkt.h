@@ -1073,6 +1073,8 @@ tespkt_serror (char* buf, int err)
 		snprintf (buf, TES_EMAXLEN, TES_EMCABINS_S);
 		return (err & ~TES_EMCABINS);
 	}
+	assert (0); /* we forgot to handle an error */
+	return 0; /* suppress gcc warning */
 }
 
 /* ------------------------------------------------------------------------- */

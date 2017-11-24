@@ -160,7 +160,7 @@
 /* ---------------------------------- API ---------------------------------- */
 
 typedef int (s_data_fn)(task_t*);
-typedef int (s_pkt_fn)(zloop_t*, tespkt*, uint16_t, uint16_t, task_t*);
+typedef int (s_pkt_fn)(zloop_t*, tespkt*, uint16_t, uint16_t, int, task_t*);
 
 /* See DEV NOTES */
 struct _task_t
@@ -999,15 +999,14 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		/*
 		 * Check packet and drop invalid ones.
 		 */
-		int rc = tespkt_is_valid (pkt);
+		int err = tespkt_is_valid (pkt);
 #ifdef TES_MCASIZE_BUG
-		rc &= ~TES_EMCASIZE;
+		err &= ~TES_EMCASIZE;
 #endif
-		if (rc != 0)
+		if (err != 0)
 		{ /* drop the frame */
 			s_msgf (0, LOG_DEBUG, self->id,
-				"Packet invalid, error is 0x%x", rc);
-			continue;
+				"Packet invalid, error is 0x%x", err);
 		}
 		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t flen = tespkt_flen (pkt);
@@ -1016,11 +1015,12 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
-			continue;
+			err |= TES_EETHLEN;
+			flen = len;
 		}
 		dbg_assert (flen <= MAX_TES_FRAME_LEN);
 
-		rc = self->pkt_handler (loop, pkt, flen, fseq_gap, self);
+		int rc = self->pkt_handler (loop, pkt, flen, fseq_gap, err, self);
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
@@ -1219,9 +1219,12 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
  */
 static int
 s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
-		uint16_t missed, task_t* self)
+		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
+	/* TO DO: check err */
+	if (err)
+		return 0;
 
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
@@ -2247,9 +2250,12 @@ s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiodat,
  */
 static int
 s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
-		uint16_t missed, task_t* self)
+		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
+
+	if (err)
+		return 0; /* we don't handle bad frames */
 
 	if ( ! tespkt_is_mca (pkt) )
 		return 0;
