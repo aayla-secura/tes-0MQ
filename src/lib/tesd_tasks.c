@@ -1007,7 +1007,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		{ /* drop the frame */
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet invalid, error is 0x%x", rc);
-			return 0;
+			continue;
 		}
 		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t flen = tespkt_flen (pkt);
@@ -1016,7 +1016,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
-			return 0;
+			continue;
 		}
 		dbg_assert (flen <= MAX_TES_FRAME_LEN);
 
