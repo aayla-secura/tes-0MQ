@@ -13,6 +13,9 @@
 #ifndef NUM_LOOPS
 #  define NUM_LOOPS 1 /* negative for infinite */
 #endif
+#ifndef WAIT_EVERY
+#  define WAIT_EVERY 50 /* will poll for 1ms every that many packets */
+#endif
 #ifndef SKIP
 #  define SKIP 40 /* how many bytes at BOF to skip */
 #endif
@@ -210,7 +213,7 @@ main (int argc, char** argv)
 			break;
 		}
 
-		if (p % 50 == 0)
+		if (p % WAIT_EVERY == 0)
 			poll (NULL, 0, 1);
 		rc = nm_inject (nmd, &pkt, len);
 		if (!rc)
