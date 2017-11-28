@@ -138,7 +138,10 @@
  *   socket block)?
  * - Write REQ job statistics in a global database such that it can be looked
  *   up by filename, client IP or time frame.
- * - Task should be able to request to receive bad frames.
+ * - FIX: missed frames as determined by task's prev_fseq should be ignored the
+ *   first time after activation.
+ * - FIX: first time after activation, ring should be chosen without regard to
+ *   task's prev_fseq.
  */
 
 #include "tesd_tasks.h"
@@ -194,7 +197,7 @@ struct _task_t
 		uint64_t rings_dispatched;
 		struct
 		{
-			uint64_t rcvd;
+			uint64_t rcvd_in[NUM_RINGS];
 			uint64_t missed;
 		} pkts;
 	} dbg_stats;
@@ -243,8 +246,10 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define TSAVE_STAT_LEN 56        // job statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
- * queue batches with aio_write. */
-#define TSAVE_BUFSIZE  15728640UL // 15 MB 
+ * queue batches with aio_write. Size is adjusted based on bufzone.num_cleared
+ * and bufzone.num_blocked. */
+// #define TSAVE_BUFSIZE  15728640UL // 15 MB
+#define TSAVE_BUFSIZE 131072 // 128 kB
 
 /*
  * Statistics sent as a reply and saved to the file. 
@@ -281,6 +286,7 @@ struct s_task_save_aiobuf_t
 		uint64_t batches;
 		uint64_t failed_batches;
 		uint64_t num_cleared;
+		uint64_t num_blocked;
 #endif
 	} bufzone;
 	size_t size; // number of bytes written
@@ -368,8 +374,8 @@ static s_pkt_fn        s_task_save_pkt_hn;
 /* Task initializer and finalizer */
 static s_data_fn       s_task_save_init;
 static s_data_fn       s_task_save_fin;
-static int   s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiodat);
-static void  s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiodat);
+static int   s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
+static void  s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
 
 /*
  * s_task_save_open and s_task_save_close deal with stream and index files
@@ -382,9 +388,9 @@ static void  s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiodat);
 /* Job initializer and finalizer */
 static int   s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
 static void  s_task_save_close (struct s_task_save_data_t* sjob);
-static int   s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiodat,
+static int   s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* filename, mode_t fmode);
-static void  s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiodat);
+static void  s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
 
 /* Statistics for a job. */
 static int   s_task_save_stats_read  (struct s_task_save_data_t* sjob);
@@ -393,15 +399,15 @@ static int   s_task_save_stats_send  (struct s_task_save_data_t* sjob,
 	zsock_t* frontend);
 
 /* Ongoing job helpers */
-static int   s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiodat,
+static int   s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len, int task_id);
-static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiodat,
+static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	bool force);
 static char* s_task_save_canonicalize_path (const char* filename,
 	bool checkonly, int task_id);
 
 #ifdef ENABLE_FULL_DEBUG
-static void  s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiodat,
+static void  s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiobuf,
 	const char* stream, int task_id);
 #endif
 
@@ -663,8 +669,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 #ifdef ENABLE_FULL_DEBUG
 	self->dbg_stats.wakeups++;
 	/* FIX: We should never have received a WAKEUP if we are not active,
-	 * but I saw this once after encountering write errors while running
-	 * under valgrind. */
+	 * but sometimes we do, why??? */
 	if ( ! self->active )
 	{
 		self->dbg_stats.wakeups_inactive++;
@@ -883,14 +888,17 @@ cleanup:
 	s_msgf (0, LOG_DEBUG, self->id,
 		"Woken up %lu times, %lu when not active, "
 		"%lu when no new packets, dispatched "
-		"%lu rings, %lu packets received, %lu missed",
+		"%lu rings, %lu packets missed",
 		self->dbg_stats.wakeups,
 		self->dbg_stats.wakeups_inactive,
 		self->dbg_stats.wakeups_false,
 		self->dbg_stats.rings_dispatched,
-		self->dbg_stats.pkts.rcvd,
 		self->dbg_stats.pkts.missed
 		);
+	for (int r = 0; r < NUM_RINGS; r++)
+		s_msgf (0, LOG_DEBUG, self->id,
+			"Ring %d received: %lu", r, 
+			self->dbg_stats.pkts.rcvd_in[r]);
 #endif
 }
 
@@ -997,7 +1005,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			rxring, self->heads[ring_id]);
 		dbg_assert (pkt != NULL);
 #ifdef ENABLE_FULL_DEBUG
-		self->dbg_stats.pkts.rcvd++;
+		self->dbg_stats.pkts.rcvd_in[ring_id]++;
 #endif
 
 		/*
@@ -1512,9 +1520,13 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
-		s_task_save_dbg_aiobuf_stats (&sjob->aio.mdat, "MCA", self->id);
-		s_task_save_dbg_aiobuf_stats (&sjob->aio.tdat, "Tick", self->id);
-		s_task_save_dbg_aiobuf_stats (&sjob->aio.edat, "Event", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.mdat, "MCA data", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.tdat, "Tick data", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.edat, "Event data", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.fidx, "Frame index", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.tidx, "Tick index", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.midx, "MCA index", self->id);
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.ridx, "Trace index", self->id);
 #endif
 		/* Close stream and index files. */
 		s_task_save_close (sjob);
@@ -1618,21 +1630,21 @@ s_task_save_fin (task_t* self)
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiodat)
+s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 {
-	assert (aiodat != NULL);
+	assert (aiobuf != NULL);
 
-	aiodat->aios.aio_sigevent.sigev_notify = SIGEV_NONE;
-	aiodat->aios.aio_fildes = -1;
+	aiobuf->aios.aio_sigevent.sigev_notify = SIGEV_NONE;
+	aiobuf->aios.aio_fildes = -1;
 
 	void* buf = mmap (NULL, TSAVE_BUFSIZE, PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buf == (void*)-1)
 		return -1;
 
-	aiodat->bufzone.base = aiodat->bufzone.tail =
-		aiodat->bufzone.cur = (unsigned char*) buf;
-	aiodat->bufzone.ceil = aiodat->bufzone.base + TSAVE_BUFSIZE;
+	aiobuf->bufzone.base = aiobuf->bufzone.tail =
+		aiobuf->bufzone.cur = (unsigned char*) buf;
+	aiobuf->bufzone.ceil = aiobuf->bufzone.base + TSAVE_BUFSIZE;
 
 	return 0;
 }
@@ -1641,15 +1653,15 @@ s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiodat)
  * munmap data for a stream or index file.
  */
 static void
-s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiodat)
+s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 {
-	assert (aiodat != NULL);
+	assert (aiobuf != NULL);
 
 	/* Unmap bufzone */
-	if (aiodat->bufzone.base != NULL)
+	if (aiobuf->bufzone.base != NULL)
 	{
-		munmap (aiodat->bufzone.base, TSAVE_BUFSIZE);
-		aiodat->bufzone.base = NULL;
+		munmap (aiobuf->bufzone.base, TSAVE_BUFSIZE);
+		aiobuf->bufzone.base = NULL;
 	}
 }
 
@@ -1734,29 +1746,30 @@ s_task_save_close (struct s_task_save_data_t* sjob)
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiodat,
+s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* filename, mode_t fmode)
 {
-	assert (aiodat != NULL);
+	assert (aiobuf != NULL);
 
-	dbg_assert (aiodat->aios.aio_fildes == -1);
-	dbg_assert (aiodat->size == 0);
-	dbg_assert (aiodat->bufzone.cur == aiodat->bufzone.tail);
-	dbg_assert (aiodat->bufzone.cur == aiodat->bufzone.base);
-	dbg_assert (aiodat->bufzone.waiting == 0);
-	dbg_assert (aiodat->bufzone.enqueued == 0);
+	dbg_assert (aiobuf->aios.aio_fildes == -1);
+	dbg_assert (aiobuf->size == 0);
+	dbg_assert (aiobuf->bufzone.cur == aiobuf->bufzone.tail);
+	dbg_assert (aiobuf->bufzone.cur == aiobuf->bufzone.base);
+	dbg_assert (aiobuf->bufzone.waiting == 0);
+	dbg_assert (aiobuf->bufzone.enqueued == 0);
 #ifdef ENABLE_FULL_DEBUG
-	dbg_assert (aiodat->bufzone.prev_enqueued == 0);
-	dbg_assert (aiodat->bufzone.prev_waiting == 0);
-	dbg_assert (aiodat->bufzone.last_written == 0);
-	dbg_assert (aiodat->bufzone.batches == 0);
-	dbg_assert (aiodat->bufzone.failed_batches == 0);
-	dbg_assert (aiodat->bufzone.num_cleared == 0);
+	dbg_assert (aiobuf->bufzone.prev_enqueued == 0);
+	dbg_assert (aiobuf->bufzone.prev_waiting == 0);
+	dbg_assert (aiobuf->bufzone.last_written == 0);
+	dbg_assert (aiobuf->bufzone.batches == 0);
+	dbg_assert (aiobuf->bufzone.failed_batches == 0);
+	dbg_assert (aiobuf->bufzone.num_cleared == 0);
+	dbg_assert (aiobuf->bufzone.num_blocked == 0);
 #endif
 
-	aiodat->aios.aio_fildes = open (filename, fmode,
+	aiobuf->aios.aio_fildes = open (filename, fmode,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-	if (aiodat->aios.aio_fildes == -1)
+	if (aiobuf->aios.aio_fildes == -1)
 		return -1;
 
 	return 0;
@@ -1767,34 +1780,35 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiodat,
  * Zero the aiocb struct.
  */
 static void
-s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiodat)
+s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 {
-	assert (aiodat != NULL);
+	assert (aiobuf != NULL);
 
-	if (aiodat->aios.aio_fildes == -1)
+	if (aiobuf->aios.aio_fildes == -1)
 		return; /* _open failed? */
 
-	aiodat->bufzone.waiting = 0;
-	aiodat->bufzone.enqueued = 0;
+	aiobuf->bufzone.waiting = 0;
+	aiobuf->bufzone.enqueued = 0;
 #ifdef ENABLE_FULL_DEBUG
-	aiodat->bufzone.prev_enqueued = 0;
-	aiodat->bufzone.prev_waiting = 0;
-	aiodat->bufzone.last_written = 0;
-	aiodat->bufzone.batches = 0;
-	aiodat->bufzone.failed_batches = 0;
-	aiodat->bufzone.num_cleared = 0;
+	aiobuf->bufzone.prev_enqueued = 0;
+	aiobuf->bufzone.prev_waiting = 0;
+	aiobuf->bufzone.last_written = 0;
+	aiobuf->bufzone.batches = 0;
+	aiobuf->bufzone.failed_batches = 0;
+	aiobuf->bufzone.num_cleared = 0;
+	aiobuf->bufzone.num_blocked = 0;
 #endif
 
-	ftruncate (aiodat->aios.aio_fildes, aiodat->size);
-	close (aiodat->aios.aio_fildes);
-	memset (&aiodat->aios, 0, sizeof(aiodat->aios));
-	aiodat->aios.aio_sigevent.sigev_notify = SIGEV_NONE;
-	aiodat->aios.aio_fildes = -1;
+	ftruncate (aiobuf->aios.aio_fildes, aiobuf->size);
+	close (aiobuf->aios.aio_fildes);
+	memset (&aiobuf->aios, 0, sizeof(aiobuf->aios));
+	aiobuf->aios.aio_sigevent.sigev_notify = SIGEV_NONE;
+	aiobuf->aios.aio_fildes = -1;
 
-	aiodat->size = 0;
+	aiobuf->size = 0;
 
-	aiodat->bufzone.cur = aiodat->bufzone.tail =
-		aiodat->bufzone.base;
+	aiobuf->bufzone.cur = aiobuf->bufzone.tail =
+		aiobuf->bufzone.base;
 }
 
 /*
@@ -1888,57 +1902,66 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
  * Otherwise returns same as s_task_save_queue_aiobuf.
  */
 static int
-s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiodat,
+s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len, int task_id)
 {
-	dbg_assert (aiodat != NULL);
-	dbg_assert (aiodat->aios.aio_fildes != -1);
+	dbg_assert (aiobuf != NULL);
+	dbg_assert (aiobuf->aios.aio_fildes != -1);
 	dbg_assert (buf != NULL);
 	dbg_assert (len > 0);
 
-	dbg_assert (aiodat->bufzone.enqueued + aiodat->bufzone.waiting <=
+	dbg_assert (aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
 		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
-	dbg_assert (aiodat->bufzone.cur >= aiodat->bufzone.base);
-	dbg_assert (aiodat->bufzone.tail >= aiodat->bufzone.base);
-	dbg_assert (aiodat->bufzone.cur < aiodat->bufzone.ceil);
-	dbg_assert (aiodat->bufzone.tail + aiodat->bufzone.enqueued <=
-		aiodat->bufzone.ceil);
-	dbg_assert (aiodat->bufzone.cur < aiodat->bufzone.tail ||
-		aiodat->bufzone.cur >=
-			aiodat->bufzone.tail + aiodat->bufzone.enqueued);
-	dbg_assert (aiodat->bufzone.cur == aiodat->bufzone.tail
-		+ aiodat->bufzone.enqueued + aiodat->bufzone.waiting -
-		((aiodat->bufzone.cur < aiodat->bufzone.tail) ?
+	dbg_assert (aiobuf->bufzone.cur >= aiobuf->bufzone.base);
+	dbg_assert (aiobuf->bufzone.tail >= aiobuf->bufzone.base);
+	dbg_assert (aiobuf->bufzone.cur < aiobuf->bufzone.ceil);
+	dbg_assert (aiobuf->bufzone.tail + aiobuf->bufzone.enqueued <=
+		aiobuf->bufzone.ceil);
+	dbg_assert (aiobuf->bufzone.cur < aiobuf->bufzone.tail ||
+		aiobuf->bufzone.cur >=
+			aiobuf->bufzone.tail + aiobuf->bufzone.enqueued);
+	dbg_assert (aiobuf->bufzone.cur == aiobuf->bufzone.tail
+		+ aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting -
+		((aiobuf->bufzone.cur < aiobuf->bufzone.tail) ?
 			 TSAVE_BUFSIZE : 0));
 
 	/* Wrap cursor if needed */
-	int reserve = len - (aiodat->bufzone.ceil - aiodat->bufzone.cur);
+	int reserve = len - (aiobuf->bufzone.ceil - aiobuf->bufzone.cur);
 	if (likely (reserve < 0))
 	{
-		memcpy (aiodat->bufzone.cur, buf, len); 
-		aiodat->bufzone.cur += len;
+		memcpy (aiobuf->bufzone.cur, buf, len); 
+		aiobuf->bufzone.cur += len;
 	}
 	else
 	{
-		memcpy (aiodat->bufzone.cur, buf, len - reserve); 
+		memcpy (aiobuf->bufzone.cur, buf, len - reserve); 
 		if (reserve > 0)
-			memcpy (aiodat->bufzone.base,
+			memcpy (aiobuf->bufzone.base,
 					buf + len - reserve, reserve); 
-		aiodat->bufzone.cur = aiodat->bufzone.base + reserve;
+		aiobuf->bufzone.cur = aiobuf->bufzone.base + reserve;
 	}
-	aiodat->bufzone.waiting += len;
+	aiobuf->bufzone.waiting += len;
 
 #if 1 /* 0 to skip writing */
 	/* Try to queue next batch but don't force */
-	int jobrc = s_task_save_queue_aiobuf (aiodat, 0);
+	int jobrc = s_task_save_queue_aiobuf (aiobuf, 0);
 	/* If there is no space for a full frame, force write until there is.
 	 * If we are finalizingm wait for all bytes to be written. */
-	while ( aiodat->bufzone.enqueued + aiodat->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN &&
+#ifdef ENABLE_FULL_DEBUG
+	bool blocked = 0;
+#endif
+	while ( aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting >
+			TSAVE_BUFSIZE - MAX_TES_FRAME_LEN &&
 		jobrc == EINPROGRESS )
 	{
-		jobrc = s_task_save_queue_aiobuf (aiodat, 1);
+#ifdef ENABLE_FULL_DEBUG
+		blocked = 1;
+#endif
+		jobrc = s_task_save_queue_aiobuf (aiobuf, 1);
 	}
+#ifdef ENABLE_FULL_DEBUG
+	aiobuf->bufzone.num_blocked += blocked;
+#endif
 	if (jobrc == -1)
 	{
 		/* TO DO: how to handle errors */
@@ -1950,8 +1973,8 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiodat,
 #ifdef ENABLE_FULL_DEBUG
 		s_msgf (0, LOG_ERR, task_id,
 			"Queued %lu bytes, wrote %lu",
-			aiodat->bufzone.enqueued,
-			aiodat->bufzone.last_written);
+			aiobuf->bufzone.enqueued,
+			aiobuf->bufzone.last_written);
 #else /* ENABLE_FULL_DEBUG */
 		s_msg (0, LOG_ERR, task_id,
 			"Wrote unexpected number of bytes");
@@ -1960,12 +1983,12 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiodat,
 
 #else /* skip writing */
 	int jobrc = 0;
-	aiodat->size += aiodat->bufzone.waiting;
-	aiodat->bufzone.waiting = 0;
-	aiodat->bufzone.tail = aiodat->bufzone.cur;
+	aiobuf->size += aiobuf->bufzone.waiting;
+	aiobuf->bufzone.waiting = 0;
+	aiobuf->bufzone.tail = aiobuf->bufzone.cur;
 #endif /* skip writing */
 
-	dbg_assert (aiodat->bufzone.enqueued + aiodat->bufzone.waiting <=
+	dbg_assert (aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
 		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
 	return jobrc;
 }
@@ -1976,7 +1999,8 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiodat,
  * Always calls aio_return for previous job. Calls aio_return if waiting for
  * new job.
  * 
- * Returns 0 if no bytes left to write.
+ * Returns 0 if no new bytes in the bufzone (should only happen if flushing or
+ * waiting for a large batch and no space in the bufzone).
  * Returns EINPROGRESS on successful queue, or if force is false and file is
  * not ready.
  * Returns -1 on error.
@@ -1984,28 +2008,28 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiodat,
  * unexpected.
  */
 static int
-s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiodat, bool force)
+s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf, bool force)
 {
-	dbg_assert (aiodat != NULL);
+	dbg_assert (aiobuf != NULL);
 
 	/* If there was no previous job, no need to do checks. */
-	if (aiodat->bufzone.enqueued == 0)
+	if (aiobuf->bufzone.enqueued == 0)
 		goto prepare_next;
 
 	/* ----------------------------------------------------------------- */
 	/* Check if ready. */
-	int rc = aio_error (&aiodat->aios);
+	int rc = aio_error (&aiobuf->aios);
 	if ( ! force && rc == EINPROGRESS )
 		return EINPROGRESS;
 
 	/* Suspend while ready. */
 	if ( rc == EINPROGRESS )
 	{
-		const struct aiocb* aiol = &aiodat->aios;
+		const struct aiocb* aiol = &aiobuf->aios;
 		rc = aio_suspend (&aiol, 1, NULL);
 		if (rc == -1)
 			return -1;
-		rc = aio_error (&aiodat->aios);
+		rc = aio_error (&aiobuf->aios);
 	}
 
 	if (rc != 0)
@@ -2016,22 +2040,22 @@ s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiodat, bool force)
 	}
 
 	/* Check completion status. */
-	ssize_t wrc = aio_return (&aiodat->aios);
+	ssize_t wrc = aio_return (&aiobuf->aios);
 	if (wrc == -1 && errno == EAGAIN)
 	{
 #ifdef ENABLE_FULL_DEBUG
-		aiodat->bufzone.failed_batches++;
+		aiobuf->bufzone.failed_batches++;
 #endif
 		goto queue_as_is; /* requeue previous batch */
 	}
 
 	if (wrc == -1)
 		return -1; /* an error other than EAGAIN */
-	if ((size_t)wrc != aiodat->bufzone.enqueued)
+	if ((size_t)wrc != aiobuf->bufzone.enqueued)
 	{
-		dbg_assert (aiodat->bufzone.enqueued > 0);
+		dbg_assert (aiobuf->bufzone.enqueued > 0);
 #ifdef ENABLE_FULL_DEBUG
-		aiodat->bufzone.last_written = wrc;
+		aiobuf->bufzone.last_written = wrc;
 #endif
 		return -2;
 	}
@@ -2039,53 +2063,60 @@ s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiodat, bool force)
 	/* ----------------------------------------------------------------- */
 prepare_next:
 #ifdef ENABLE_FULL_DEBUG
-	aiodat->bufzone.batches++;
-	aiodat->bufzone.prev_waiting = aiodat->bufzone.waiting;
-	aiodat->bufzone.prev_enqueued = aiodat->bufzone.enqueued;
+	aiobuf->bufzone.batches++;
+	aiobuf->bufzone.prev_waiting = aiobuf->bufzone.waiting;
+	aiobuf->bufzone.prev_enqueued = aiobuf->bufzone.enqueued;
 #endif
 
 	/* Increase file size by number of bytes written. */
-	aiodat->size += aiodat->bufzone.enqueued;
+	aiobuf->size += aiobuf->bufzone.enqueued;
 
-	aiodat->bufzone.tail += aiodat->bufzone.enqueued;
-	if (aiodat->bufzone.tail == aiodat->bufzone.ceil)
-		aiodat->bufzone.tail = aiodat->bufzone.base;
-	dbg_assert (aiodat->bufzone.tail < aiodat->bufzone.ceil);
+	/* Release written bytes by moving the tail. */
+	aiobuf->bufzone.tail += aiobuf->bufzone.enqueued;
+	if (aiobuf->bufzone.tail == aiobuf->bufzone.ceil)
+		aiobuf->bufzone.tail = aiobuf->bufzone.base;
+	dbg_assert (aiobuf->bufzone.tail < aiobuf->bufzone.ceil);
 
 	/* If cursor had wrapped around, queue until the end of the
 	 * bufzone. When done, tail will move to ceil, we handle
 	 * this above. */
-	if (unlikely (aiodat->bufzone.cur < aiodat->bufzone.tail))
-		aiodat->bufzone.enqueued = aiodat->bufzone.ceil
-			- aiodat->bufzone.tail;
+	if (unlikely (aiobuf->bufzone.cur < aiobuf->bufzone.tail))
+		aiobuf->bufzone.enqueued = aiobuf->bufzone.ceil
+			- aiobuf->bufzone.tail;
 	else
-		aiodat->bufzone.enqueued = aiodat->bufzone.cur
-			- aiodat->bufzone.tail;
+		aiobuf->bufzone.enqueued = aiobuf->bufzone.cur
+			- aiobuf->bufzone.tail;
 
-	dbg_assert (aiodat->bufzone.waiting >= aiodat->bufzone.enqueued);
-	aiodat->bufzone.waiting -= aiodat->bufzone.enqueued;
+	dbg_assert (aiobuf->bufzone.waiting >= aiobuf->bufzone.enqueued);
+	aiobuf->bufzone.waiting -= aiobuf->bufzone.enqueued;
 
-	dbg_assert (aiodat->bufzone.waiting == 0 || aiodat->bufzone.tail
-			+ aiodat->bufzone.enqueued == aiodat->bufzone.ceil);
+	dbg_assert (aiobuf->bufzone.waiting == 0 || aiobuf->bufzone.tail
+			+ aiobuf->bufzone.enqueued == aiobuf->bufzone.ceil);
 
 	/* ----------------------------------------------------------------- */
 queue_as_is:
-	/* Check if all waiting bytes have been written. */
-	if (aiodat->bufzone.enqueued == 0)
+	dbg_assert (aiobuf->bufzone.tail != aiobuf->bufzone.ceil);
+	/* Check if called in vain, should only happen at the end when flushing or
+	 * if we had queued a batch larger than TSAVE_BUFSIZE - MAX_TES_FRAME_LEN. */
+	if (aiobuf->bufzone.enqueued == 0)
 	{
-#ifdef ENABLE_FULL_DEBUG
-		/* FIX: */
-		aiodat->bufzone.num_cleared++;
-#endif
+		dbg_assert (aiobuf->bufzone.waiting == 0);
 		return 0;
 	}
 
-	aiodat->aios.aio_offset = aiodat->size;
-	aiodat->aios.aio_buf = aiodat->bufzone.tail;
-	aiodat->aios.aio_nbytes = aiodat->bufzone.enqueued;
+#ifdef ENABLE_FULL_DEBUG
+	if (aiobuf->bufzone.waiting == 0)
+	{
+		aiobuf->bufzone.num_cleared++;
+	}
+#endif
+
+	aiobuf->aios.aio_offset = aiobuf->size;
+	aiobuf->aios.aio_buf = aiobuf->bufzone.tail;
+	aiobuf->aios.aio_nbytes = aiobuf->bufzone.enqueued;
 	do
 	{
-		rc = aio_write (&aiodat->aios);
+		rc = aio_write (&aiobuf->aios);
 	} while (rc == -1 && errno == EAGAIN);
 	if (rc == -1)
 		return -1; /* an error other than EAGAIN */
@@ -2236,13 +2267,13 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 
 #ifdef ENABLE_FULL_DEBUG
 static void
-s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiodat,
+s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiobuf,
 		const char* stream, int task_id)
 {
-	s_msgf (0, LOG_DEBUG, task_id,
-		"%s stream: Wrote %lu batches (%lu repeated, %lu cleared all)",
-		stream, aiodat->bufzone.batches, aiodat->bufzone.failed_batches,
-		aiodat->bufzone.num_cleared);
+	s_msgf (0, LOG_DEBUG, task_id, "%s stream: "
+		"Wrote %lu batches (%lu repeated, %lu cleared all, %lu blocked)",
+		stream, aiobuf->bufzone.batches, aiobuf->bufzone.failed_batches,
+		aiobuf->bufzone.num_cleared, aiobuf->bufzone.num_blocked);
 }
 #endif
 
