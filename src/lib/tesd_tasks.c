@@ -405,7 +405,6 @@ static void  s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiodat,
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
 
-#define TES_MCASIZE_BUG /* FIX: overflow bug, last_bin is too large */
 #ifndef TES_MCASIZE_BUG
 #define THIST_MAXSIZE 65528U // highest 16-bit number that is a multiple of 8 bytes
 #else
@@ -422,11 +421,12 @@ struct s_task_hist_data_t
 	uint64_t      dropped;   // number of aborted histograms
 #endif
 	uint16_t      nbins;     // total number of bins in histogram
-	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_nbins; // number of received bins so far
 #ifndef TES_MCASIZE_BUG
+	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_size;  // number of received bytes so far
 #else
+	uint32_t      size;      // size of histogram including header
 	uint32_t      cur_size;  // number of received bytes so far
 #endif
 	bool          discard;   // discard all frames until the next header
@@ -981,13 +981,15 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	self->dbg_stats.pkts.missed += missed;
 #endif
 
-	tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
 	/*
 	 * First exec of the loop uses the head from the last time
 	 * dispatch was called with this ring_id.
 	 */
 	uint16_t fseq_gap = missed;
-	do
+	for ( tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
+		self->heads[ring_id] != tes_ifring_tail (rxring);
+		self->heads[ring_id] = tes_ifring_following (
+				rxring, self->heads[ring_id]) )
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
 			rxring, self->heads[ring_id]);
@@ -1000,18 +1002,15 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		 * Check packet and drop invalid ones.
 		 */
 		int err = tespkt_is_valid (pkt);
-#ifdef TES_MCASIZE_BUG
-		err &= ~TES_EMCASIZE;
-#endif
 		if (err != 0)
-		{ /* drop the frame */
+		{
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet invalid, error is 0x%x", err);
 		}
 		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t flen = tespkt_flen (pkt);
 		if (flen > len)
-		{ /* drop the frame */
+		{
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
@@ -1032,17 +1031,14 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 				! tespkt_is_trace_dp (pkt))
 			self->prev_pseq_tr = tespkt_pseq (pkt);
 
-		self->heads[ring_id] = tes_ifring_following (
-				rxring, self->heads[ring_id]);
-
 		if (rc != 0)
 			return rc; /* pkt_handler doesn't want more */
 
-		/* TO DO: return code for a jump in fseq */
-		if (fseq_gap > 0)
-			return 0;
+		/* FIX: TO DO: return code for a jump in fseq */
+		// if (fseq_gap > 0)
+		//         return 0;
 
-	} while (self->heads[ring_id] != tes_ifring_tail (rxring));
+	}
 
 	return 0;
 }
@@ -2337,9 +2333,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if (hist->cur_nbins == hist->nbins) 
 	{
-#ifndef TES_MCASIZE_BUG
 		dbg_assert (hist->cur_size == hist->size);
-#endif
 
 		/* Send the histogram */
 #ifdef ENABLE_FULL_DEBUG
@@ -2374,9 +2368,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		return 0;
 	}
 
-#ifndef TES_MCASIZE_BUG
 	dbg_assert (hist->cur_size < hist->size);
-#endif
 	return 0;
 }
 

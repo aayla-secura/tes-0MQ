@@ -84,7 +84,11 @@ static inline uint16_t tespkt_esize (tespkt* pkt);
 /* Number of events in an event frame */
 static inline uint16_t tespkt_event_nums (tespkt* pkt);
 /* Size of histogram (valid for MCA header frames) */
+#ifndef TES_MCASIZE_BUG
 static inline uint16_t tespkt_mca_size (tespkt* pkt);
+#else
+static inline uint32_t tespkt_mca_size (tespkt* pkt);
+#endif
 /* Number of bins in this frame (valid for all MCA frames) */
 static inline uint16_t tespkt_mca_nbins (tespkt* pkt);
 /* Number of bins in entire histogram (valid for MCA header frames) */
@@ -568,11 +572,19 @@ tespkt_event_nums (tespkt* pkt)
 			/ ( tespkt_esize (pkt) << 3 ) );
 }
 
+#ifndef TES_MCASIZE_BUG
 static inline uint16_t
 tespkt_mca_size (tespkt* pkt)
 {
 	return ftohl (((struct tespkt_mca_hdr*)(void*) &pkt->body)->size);
 }
+#else
+static inline uint32_t
+tespkt_mca_size (tespkt* pkt)
+{
+	return ( (tespkt_mca_nbins_tot (pkt) * BIN_LEN) + MCA_HDR_LEN );
+}
+#endif
 
 static inline uint16_t
 tespkt_mca_nbins (tespkt* pkt)
@@ -790,7 +802,11 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 		fprintf (ostream, "Number of bins:      %u\n",   tespkt_mca_nbins (pkt));
 		if (!tespkt_is_header (pkt))
 			return;
+#ifndef TES_MCASIZE_BUG
 		fprintf (ostream, "Size:                %hu\n",  tespkt_mca_size (pkt));
+#else
+		fprintf (ostream, "Size:                %u\n",  tespkt_mca_size (pkt));
+#endif
 		struct tespkt_mca_flags* mf = tespkt_mca_fl (pkt);
 		fprintf (ostream, "Flag Q:              %hhu\n", mf->Q);
 		fprintf (ostream, "Flag V:              %hhu\n", mf->V);
@@ -979,7 +995,7 @@ tespkt_is_valid (tespkt* pkt)
 					rc |= TES_ETRSIZE;
 				/* and it should not be smaller than the
 				 * payload length */
-				if (tespkt_flen (pkt) - TES_HDR_LEN > trsize)
+				if (flen - TES_HDR_LEN > trsize)
 					rc |= TES_ETRSIZE;
 			}
 
@@ -995,14 +1011,20 @@ tespkt_is_valid (tespkt* pkt)
 		if (tespkt_is_header (pkt))
 		{
 			uint16_t nbins_tot = tespkt_mca_nbins_tot (pkt);
+#ifndef TES_MCASIZE_BUG
 			uint16_t histsize = tespkt_mca_size (pkt);
 			/* MCA size should correspond to last bin. */
 			if (histsize != (nbins_tot * BIN_LEN) + MCA_HDR_LEN)
 				rc |= TES_EMCASIZE;
 			/* and it should not be smaller than the
 			 * payload length */
-			if (tespkt_flen (pkt) - TES_HDR_LEN > histsize)
+			if (flen - TES_HDR_LEN > histsize)
 				rc |= TES_EMCASIZE;
+#else
+			uint32_t histsize = tespkt_mca_size (pkt);
+			if ((uint32_t)flen - TES_HDR_LEN > histsize)
+				rc |= TES_EMCASIZE;
+#endif
 
 			/* Most frequent bin cannot be greater than last
 			 * bin. */
