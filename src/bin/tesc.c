@@ -14,8 +14,8 @@
 #define REQ_EPERM 3 // filename is not allowed
 #define REQ_FAIL  4 // other error opening the file, nothing was written
 #define REQ_ERR   5 // error while writing, less than minimum requested was saved
-#define REQ_PIC  "s881"
-#define REP_PIC "18888"
+#define REQ_PIC    "s881"
+#define REP_PIC "1888888"
 #if 0 /* FIX */
 #define MAX_HISTSIZE 65528
 #else
@@ -194,8 +194,15 @@ save_to_remote (const char* server, const char* filename,
 	puts ("Waiting for reply");
 
 	uint8_t fstat;
-	uint64_t ticks, events, frames, missed;
-	int rc = zsock_recv (sock, REP_PIC, &fstat, &ticks, &events, &frames, &missed); 
+	uint64_t ticks, events, traces, hists, frames, missed;
+	int rc = zsock_recv (sock, REP_PIC,
+			&fstat,
+			&ticks,
+			&events,
+			&traces,
+			&hists,
+			&frames,
+			&missed); 
 	if (rc == -1)
 	{
 		zsock_destroy (&sock);
@@ -226,10 +233,12 @@ save_to_remote (const char* server, const char* filename,
 			printf ("%s\n"
 				"ticks:         %lu\n"
 				"other events:  %lu\n"
+				"traces:        %lu\n"
+				"histograms:    %lu\n"
 				"saved frames:  %lu\n"
 				"missed frames: %lu\n",
 				min_ticks ? "Wrote" : "File contains",
-				ticks, events, frames, missed);
+				ticks, events, traces, hists, frames, missed);
 			break;
 		default:
 			assert (0);
