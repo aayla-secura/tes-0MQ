@@ -95,13 +95,19 @@
 /*
  * Statistics, only used in foreground mode
  */
-struct stats_t
+struct stats_accumulated_t
 {
-	struct timeval last_update;
 	uint64_t received;
 	uint64_t missed;
 	uint64_t polled;
 	uint64_t skipped;
+};
+
+struct stats_t
+{
+	struct timeval last_update;
+	struct stats_accumulated_t latest;
+	struct stats_accumulated_t total;
 };
 
 struct data_t
@@ -290,29 +296,53 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 
 	timersub (&tnow, &stats->last_update, &tdiff);
 	double tdelta = tdiff.tv_sec + 1e-6 * tdiff.tv_usec;
+
+	stats->total.received += stats->latest.received;
+	stats->total.missed   += stats->latest.missed;
+	stats->total.polled   += stats->latest.polled;
+	stats->total.skipped  += stats->latest.skipped;
 	
-	s_msgf (0, LOG_INFO, 0, 
-		// "elapsed: %2.5fs   | "
-		// "received: %10lu   | "
-		"missed: %10lu   | "
-		// "polled: %10lu   | "
-		"skipped polls: %10lu   | "
-		"avg pkts per poll: %10lu   | "
-		"avg bandwidth: %10.3e pps",
-		// tdelta,
-		// stats->received,
-		stats->missed,
-		// stats->polled,
-		stats->skipped,
-		(stats->polled) ? stats->received / stats->polled : 0,
-		(double) stats->received / tdelta
-		);
+	if (loop == NULL)
+	{ /* final stats, exiting */
+		s_msgf (0, LOG_INFO, 0, 
+			"received: %10lu   | "
+			"missed: %10lu   | "
+			"polled: %10lu   | "
+			"skipped polls: %10lu   | ",
+			stats->total.received,
+			stats->total.missed,
+			stats->total.polled,
+			stats->total.skipped
+		       );
+	}
+	else
+	{ /* called by zloop's timer */
+		s_msgf (0, LOG_INFO, 0, 
+			// "elapsed: %2.5fs   | "
+			"missed: %10lu   | "
+			"skipped polls: %10lu   | "
+			"avg pkts per poll: %10lu   | "
+			"avg bandwidth: %10.3e pps",
+			// tdelta,
+			stats->latest.missed,
+			stats->latest.skipped,
+			(stats->latest.polled) ?
+			stats->latest.received / stats->latest.polled : 0,
+			(double) stats->latest.received / tdelta
+		       );
+	}
 
 	memcpy (&stats->last_update, &tnow, sizeof (struct timeval));
-	stats->received = 0;
-	stats->missed   = 0;
-	stats->polled   = 0;
-	stats->skipped  = 0;
+	stats->latest.received = 0;
+	stats->latest.missed   = 0;
+	stats->latest.polled   = 0;
+	stats->latest.skipped  = 0;
+
+	if ( ! is_daemon )
+	{
+		fflush (stdout);
+		fflush (stderr);
+	}
 
 	return 0;
 }
@@ -340,7 +370,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	}
 
 	/* Save statistics. */
-	data->stats.polled++;
+	data->stats.latest.polled++;
 	int skipped = 1;
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
@@ -376,15 +406,15 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		dbg_assert (tes_ifring_cur (rxring) == new_head);
 		uint32_t num_new = tes_ifring_done (rxring); /* cursor - old head */
 
-		data->stats.received += num_new;
-		data->stats.missed += (uint16_t)(fseqB - fseqA - num_new + 1);
+		data->stats.latest.received += num_new;
+		data->stats.latest.missed += (uint16_t)(fseqB - fseqA - num_new + 1);
 
 		tes_ifring_release_done_buf (rxring); /* head -> new head */
 		dbg_assert (tes_ifring_head (rxring) == tes_ifring_cur (rxring));
 	}
 
 	if (skipped)
-		data->stats.skipped++;
+		data->stats.latest.skipped++;
 
 	return 0;
 }
@@ -477,6 +507,7 @@ cleanup:
 	tasks_destroy ();
 	zloop_destroy (&loop);
 	tes_if_close (data.ifd);
+	s_print_stats (NULL, 0, &data.stats);
 	return rc;
 }
 
