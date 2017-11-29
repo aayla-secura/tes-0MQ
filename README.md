@@ -21,7 +21,7 @@ Messages are sent and read via `zsock_send` and `zsock_recv` respectively.
 These are simply multi-frame ØMQ messages, with each frame being a string
 representation of the value.
 
-Valid requests have a picture of "s881", replies have a picture of "1888888",
+Valid requests have a picture of "s881", replies have a picture of "18888888",
 as explained below.
 
 At the moment we only handle one request at a time. Will block until done.
@@ -100,6 +100,9 @@ to get a status of a file, only the filename is required.
 
 
 7. **No. of frames dropped by NIC**
+
+
+8. **No. of frames dropped by us (invalid)**
 
 ## PUB INTERFACE
 

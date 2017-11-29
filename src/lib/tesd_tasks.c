@@ -139,6 +139,7 @@
  *   socket block)?
  * - Write REQ job statistics in a global database such that it can be looked
  *   up by filename, client IP or time frame.
+ * - FIX: why does the save-to-file count more missed packets than coordinator?
  */
 
 #include "tesd_tasks.h"
@@ -233,15 +234,15 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define TSAVE_REQ_EPERM 3 // filename is not allowed
 #define TSAVE_REQ_FAIL  4 // other error opening the file, nothing was written
 #define TSAVE_REQ_ERR   5 // error while writing, less than minimum requested was saved
-#define TSAVE_REQ_PIC    "s881"
-#define TSAVE_REP_PIC "1888888"
+#define TSAVE_REQ_PIC     "s881"
+#define TSAVE_REP_PIC "18888888"
 
 #define TSAVE_ROOT "/media/data/" // must have a trailing slash
 #define TSAVE_ONLYFILES           // for now we don't generate filenames
 #define TSAVE_FIDX_LEN 16        // frame index
 #define TSAVE_TIDX_LEN 16        // tick index
 #define TSAVE_SIDX_LEN 16        // MCA and trace indices
-#define TSAVE_STAT_LEN 56        // job statistics
+#define TSAVE_STAT_LEN 64        // job statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
  * queue batches with aio_write. Size is adjusted based on bufzone.num_cleared
@@ -258,7 +259,8 @@ struct s_task_save_stats_t
 	uint64_t traces;         // number of traces written 
 	uint64_t hists;          // number of histograms written 
 	uint64_t frames;         // total frames saved
-	uint64_t frames_lost;    // total frames lost (includes dropped)
+	uint64_t frames_lost;    // total frames lost
+	uint64_t frames_dropped; // total frames dropped
 	uint64_t errors;         // TO DO: last 8-bytes of the tick header 
 };
 
@@ -1024,7 +1026,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	self->dbg_stats.pkts.missed += missed;
 	if (self->just_activated)
 		s_msg (0, LOG_DEBUG, self->id,
-			"First time after activation");
+			"Just activated");
 	if (missed)
 		s_msgf (0, LOG_DEBUG, self->id,
 			"Dispatching ring %d, missed %hu",
@@ -1133,7 +1135,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		s_msg (0, LOG_INFO, self->id,
 			"Received a malformed request");
 		zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_INV,
-				0, 0, 0, 0, 0, 0);
+				0, 0, 0, 0, 0, 0, 0);
 		return 0;
 	}
 
@@ -1164,14 +1166,14 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			s_msg (0, LOG_INFO, self->id,
 					"Job not found");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
-					0, 0, 0, 0, 0, 0);
+					0, 0, 0, 0, 0, 0, 0);
 		}
 		else
 		{
 			s_msg (errno, LOG_INFO, self->id,
 					"Filename is not valid");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_EPERM,
-					0, 0, 0, 0, 0, 0);
+					0, 0, 0, 0, 0, 0, 0);
 		}
 
 		return 0;
@@ -1192,7 +1194,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			s_msg (errno, LOG_ERR, self->id,
 				"Could not read stats");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
-					0, 0, 0, 0, 0, 0);
+					0, 0, 0, 0, 0, 0, 0);
 			return 0;
 		}
 		rc = s_task_save_stats_send  (sjob, self->frontend);
@@ -1237,13 +1239,13 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 				"Could not open file %s",
 				sjob->filename);
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
-					0, 0, 0, 0, 0, 0);
+					0, 0, 0, 0, 0, 0, 0);
 		}
 		else
 		{
 			s_msg (0, LOG_INFO, self->id, "Job will not proceed");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
-					0, 0, 0, 0, 0, 0);
+					0, 0, 0, 0, 0, 0, 0);
 		}
 		s_task_save_close (sjob);
 		return 0;
@@ -1268,20 +1270,30 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
-	/* TO DO: check err */
-	if (err)
-		return 0;
+	if (missed)
+		s_msgf (0, LOG_DEBUG, self->id,
+			"Missed %hu", missed);
 
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 
+	sjob->st.frames_lost += missed;
+
+	/* TO DO: check err */
+	if (err)
+	{
+		sjob->st.frames_dropped++;
+		return 0;
+	}
+
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! sjob->recording && is_tick )
-	{
 		sjob->recording = 1;
-	}
+
 	if ( ! sjob->recording )
 		return 0;
+
+	sjob->st.frames++;
 
 	uint16_t esize = tespkt_esize (pkt);
 	esize = htofs (esize); /* in FPGA byte-order */
@@ -1323,7 +1335,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if (tidx->nframes == 0)
 		{ /* first non-tick event frame after a tick */
 			/* frames is incremented below, so no need to subtract 1 */
-			tidx->start_frame = sjob->st.frames;
+			tidx->start_frame = sjob->st.frames - 1;
 			tidx->esize = esize;
 
 			/* copy only fields that are defined */
@@ -1348,24 +1360,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	 * of a new stream.
 	 */
 
-	if (sjob->st.frames > 0)
-		sjob->st.frames_lost += missed;
-	sjob->st.frames++;
-
-#ifdef ENABLE_FULL_DEBUG
-#if 0
-	if (sjob->st.frames_lost != 0)
-	{
-		s_msgf (0, LOG_DEBUG, self->id, "Lost frames: %hu -> %hu",
-			self->prev_fseq, tespkt_fseq (pkt));
-		s_dump_buf (sjob->prev_hdr, TES_HDR_LEN);
-		s_dump_buf ((void*)pkt, TES_HDR_LEN);
-		return TASK_ERROR;
-	}
-#endif
-	memcpy (sjob->prev_hdr, pkt, TES_HDR_LEN);
-#endif
-
 	if (sjob->cur_stream.size > 0)
 	{
 		dbg_assert (sjob->cur_stream.cur_size > 0);
@@ -1385,6 +1379,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if (is_ctd_mca || is_ctd_trace)
 	{ /* ongoing multi-frame stream, check validity, add to size, check if done */
+
+		sjob->cur_stream.cur_size += paylen;
+
 		if (missed > 0)
 		{
 			s_msgf (0, LOG_DEBUG, self->id, "Missed %s frames",
@@ -1393,10 +1390,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			sjob->cur_stream.cur_size = 0;
 			sjob->cur_stream.discard = 1;
 		}
-
-		sjob->cur_stream.cur_size += paylen;
-
-		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
+		else if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
 		{
 			s_msgf (0, LOG_DEBUG, self->id, "Extra %s data",
 				is_mca ? "histogram" : "trace");
@@ -1722,6 +1716,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	dbg_assert (sjob->st.hists == 0);
 	dbg_assert (sjob->st.frames == 0);
 	dbg_assert (sjob->st.frames_lost == 0);
+	dbg_assert (sjob->st.frames_dropped == 0);
 	dbg_assert (sjob->st.errors == 0);
 
 	dbg_assert (sjob->cur_stream.size == 0);
@@ -1922,7 +1917,8 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 			sjob->st.traces,
 			sjob->st.hists,
 			sjob->st.frames,
-			sjob->st.frames_lost);
+			sjob->st.frames_lost,
+			sjob->st.frames_dropped);
 
 	memset (&sjob->st, 0, TSAVE_STAT_LEN);
 	memset (&sjob->cur_stream, 0, sizeof (sjob->cur_stream));
