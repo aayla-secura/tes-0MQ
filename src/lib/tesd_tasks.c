@@ -42,6 +42,7 @@
  *         bool        active;         // client_handler or data_init should
  *                                     // enable this
  *         bool        autoactivate;   // s_task_shim will activate task
+ *         bool        just_activated; // first packet dispatch after activation
  * };
  *
  * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
@@ -138,10 +139,6 @@
  *   socket block)?
  * - Write REQ job statistics in a global database such that it can be looked
  *   up by filename, client IP or time frame.
- * - FIX: missed frames as determined by task's prev_fseq should be ignored the
- *   first time after activation.
- * - FIX: first time after activation, ring should be chosen without regard to
- *   task's prev_fseq.
  */
 
 #include "tesd_tasks.h"
@@ -188,6 +185,7 @@ struct _task_t
 	bool        busy;
 	bool        active;
 	bool        autoactivate;
+	bool        just_activated;
 #ifdef ENABLE_FULL_DEBUG
 	struct
 	{
@@ -248,8 +246,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
  * queue batches with aio_write. Size is adjusted based on bufzone.num_cleared
  * and bufzone.num_blocked. */
-// #define TSAVE_BUFSIZE  15728640UL // 15 MB
-#define TSAVE_BUFSIZE 131072 // 128 kB
+#define TSAVE_BUFSIZE 1048576 // 1 MB
 
 /*
  * Statistics sent as a reply and saved to the file. 
@@ -679,33 +676,64 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert (self->active);
 #endif
 	self->busy = 1;
-	/*
-	 * Process packets. Find the ring that contains the next packet in
-	 * sequence. Allowing for lost frames, simply take the ring for which
-	 * the task's head packet is closest in sequence to the last seen frame
-	 * sequence.
-	 */
+	/* Process packets. */
 	/* TO DO: check all rings */
-	uint16_t missed = ~0;  /* will hold minimum jump in frame seq,
-			        * initialize to UINT16_MAX */
 	int next_ring_id = -1; /* next to process */
-	for (int r = 0; r < NUM_RINGS; r++)
+	uint16_t missed = 0;   /* will hold the jump in frame seq */
+
+	if (unlikely (self->just_activated))
 	{
-		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
-		if (tes_ifring_tail (rxring) == self->heads[r])
-			continue;
-		tespkt* pkt = (tespkt*) tes_ifring_buf (
-				rxring, self->heads[r]);
-		uint16_t cur_fseq = tespkt_fseq (pkt);
-		uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
-		if (fseq_gap <= missed)
+		/*
+		 * If first time after activation, set the previous sequence
+		 * and choose the ring by comparing the heads of all rings.
+		 * Find the "smallest" frame sequence among the heads. Treat
+		 * seq. no. A as after seq. no.  B if B - A is > UINT16_MAX/2.
+		 */
+		uint16_t thres_gap = (uint16_t)~0 >> 1;
+		for (int r = 0; r < NUM_RINGS; r++)
 		{
-			next_ring_id = r;
-			missed = fseq_gap;
-			if (fseq_gap == 0)
-				break;
+			tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+			if (tes_ifring_tail (rxring) == self->heads[r])
+				continue;
+			tespkt* pkt = (tespkt*) tes_ifring_buf (
+					rxring, self->heads[r]);
+			uint16_t cur_fseq = tespkt_fseq (pkt);
+			if (r == 0 || cur_fseq - self->prev_fseq > thres_gap)
+			{
+				self->prev_fseq = cur_fseq - 1;
+				next_ring_id = r;
+			}
+		}
+		// self->just_activated = 0; /* do that below */
+	}
+	else
+	{
+		/*
+		 * Otherwise, choose the ring based on prev_seq. Allowing for
+		 * lost frames, simply take the ring for which the task's head
+		 * packet is closest in sequence to the last seen frame
+		 * sequence.
+		 */
+		missed = ~0; /* initialize to UINT16_MAX */
+		for (int r = 0; r < NUM_RINGS; r++)
+		{
+			tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+			if (tes_ifring_tail (rxring) == self->heads[r])
+				continue;
+			tespkt* pkt = (tespkt*) tes_ifring_buf (
+					rxring, self->heads[r]);
+			uint16_t cur_fseq = tespkt_fseq (pkt);
+			uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
+			if (fseq_gap <= missed)
+			{
+				next_ring_id = r;
+				missed = fseq_gap;
+				if (fseq_gap == 0)
+					break;
+			}
 		}
 	}
+
 	/*
 	 * We should never have received a WAKEUP if there are no new
 	 * packets, but sometimes we do, why?
@@ -720,6 +748,10 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	int rc = s_task_dispatch (self, loop, next_ring_id, missed);
+	/* In case packet hanlder or dispatcher need to know that it's the
+	 * first time after activation. */
+	self->just_activated = 0;
+
 	if (rc == TASK_ERROR)
 	{
 		self->error = 1;
@@ -971,6 +1003,7 @@ s_task_activate (task_t* self)
 		self->heads[r] = tes_ifring_head (rxring);
 	}
 	self->active = 1;
+	self->just_activated = 1;
 }
 
 /*
@@ -989,6 +1022,13 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #ifdef ENABLE_FULL_DEBUG
 	self->dbg_stats.rings_dispatched++;
 	self->dbg_stats.pkts.missed += missed;
+	if (self->just_activated)
+		s_msg (0, LOG_DEBUG, self->id,
+			"First time after activation");
+	if (missed)
+		s_msgf (0, LOG_DEBUG, self->id,
+			"Dispatching ring %d, missed %hu",
+			ring_id, missed);
 #endif
 
 	/*
