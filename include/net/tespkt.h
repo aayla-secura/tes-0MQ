@@ -45,6 +45,11 @@
 #include <stdio.h>
 #include <stddef.h>
 
+#ifdef TESPKT_DEBUG
+#include <string.h>
+#include <assert.h>
+#endif
+
 /* ------------------------------------------------------------------------- */
 
 typedef struct tespkt tespkt;
@@ -1095,7 +1100,9 @@ tespkt_serror (char* buf, int err)
 		snprintf (buf, TES_EMAXLEN, TES_EMCABINS_S);
 		return (err & ~TES_EMCABINS);
 	}
+#ifdef TESPKT_DEBUG
 	assert (0); /* we forgot to handle an error */
+#endif
 	return 0; /* suppress gcc warning */
 }
 
@@ -1104,8 +1111,6 @@ tespkt_serror (char* buf, int err)
 /* ------------------------------------------------------------------------- */
 
 #ifdef TESPKT_DEBUG
-#include <string.h>
-#include <assert.h>
 
 #define EVT_TYPE_LEN  2
 #define MCA_FL_LEN    4
