@@ -1045,6 +1045,10 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		self->heads[ring_id] = tes_ifring_following (
 				rxring, self->heads[ring_id]) )
 	{
+		/* FIX: TO DO: return code for a jump in fseq */
+		// if (fseq_gap > 0)
+		//         return 0;
+
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
 			rxring, self->heads[ring_id]);
 		dbg_assert (pkt != NULL);
@@ -1092,11 +1096,6 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 
 		if (rc != 0)
 			return rc; /* pkt_handler doesn't want more */
-
-		/* FIX: TO DO: return code for a jump in fseq */
-		// if (fseq_gap > 0)
-		//         return 0;
-
 	}
 
 	return 0;
@@ -1407,18 +1406,39 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		}
 	}
 
-	if (continues_stream)
-	{ /* ongoing multi-frame stream, add to size, check if done */
-		dbg_assert ( ! sjob->cur_stream.discard && missed == 0);
-		sjob->cur_stream.cur_size += paylen;
+	if (starts_stream || continues_stream)
+	{
+		if (starts_stream)
+		{ /* start a new stream */
+			if (is_trace)
+			{
+				sjob->cur_stream.size = tespkt_trace_size (pkt);
+				sjob->cur_stream.is_event = 1;
+			}
+			else
+			{
+				sjob->cur_stream.size = tespkt_mca_size (pkt);
+				sjob->cur_stream.is_event = 0;
+			}
+			sjob->cur_stream.discard = 0;
 
+			sjob->cur_stream.idx.start = aiodat->size +
+				aiodat->bufzone.waiting +
+				aiodat->bufzone.enqueued;
+		}
+		else
+		{ /* ongoing multi-frame stream */
+			dbg_assert ( ! sjob->cur_stream.discard && missed == 0);
+		}
+
+		sjob->cur_stream.cur_size += paylen;
 		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
 		{ /* extra bytes */
 #ifdef ENABLE_FULL_DEBUG
 			s_msgf (0, LOG_DEBUG, self->id, "Extra %s data "
-				"at frame #%lu",
-				is_mca ? "histogram" : "trace",
-				sjob->st.frames - 1);
+					"at frame #%lu",
+					is_mca ? "histogram" : "trace",
+					sjob->st.frames - 1);
 #endif
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
@@ -1451,27 +1471,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			if (jobrc < 0)
 				finishing = 1; /* error */
 		}
-	}
-	else if (starts_stream)
-	{ /* start a new stream */
-		if (is_trace)
-		{
-			sjob->cur_stream.size = tespkt_trace_size (pkt);
-			sjob->cur_stream.is_event = 1;
-		}
-		else
-		{
-			sjob->cur_stream.size = tespkt_mca_size (pkt);
-			sjob->cur_stream.is_event = 0;
-		}
-		sjob->cur_stream.discard = 0;
-		sjob->cur_stream.cur_size = paylen;
-		/* tespkt_is_valid checks that payload size <= trace size */
-		/* FIX: check if payload size == size, i.e. just a signle frame */
-
-		sjob->cur_stream.idx.start = aiodat->size +
-			aiodat->bufzone.waiting +
-			aiodat->bufzone.enqueued;
 	}
 	else if (is_mca || is_trace)
 	{ /* missed beginning of a stream or in the process of discarding */
