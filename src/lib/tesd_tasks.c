@@ -1021,16 +1021,19 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 {
 	dbg_assert (self != NULL);
 	dbg_assert (loop != NULL);
+
+	tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
+	dbg_assert ( self->heads[ring_id] != tes_ifring_tail (rxring) );
 #ifdef ENABLE_FULL_DEBUG
 	self->dbg_stats.rings_dispatched++;
-	self->dbg_stats.pkts.missed += missed;
-	if (self->just_activated)
-		s_msg (0, LOG_DEBUG, self->id,
-			"Just activated");
 	if (missed)
+	{
+		tespkt* pkt = (tespkt*) tes_ifring_buf (
+				rxring, self->heads[ring_id]);
 		s_msgf (0, LOG_DEBUG, self->id,
-			"Dispatching ring %d, missed %hu",
-			ring_id, missed);
+				"Dispatching ring %hu: missed %hu at frame %hu",
+				ring_id, missed, tespkt_fseq (pkt));
+	}
 #endif
 
 	/*
@@ -1038,8 +1041,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	 * dispatch was called with this ring_id.
 	 */
 	uint16_t fseq_gap = missed;
-	for ( tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
-		self->heads[ring_id] != tes_ifring_tail (rxring);
+	for ( ; self->heads[ring_id] != tes_ifring_tail (rxring);
 		self->heads[ring_id] = tes_ifring_following (
 				rxring, self->heads[ring_id]) )
 	{
@@ -1048,33 +1050,38 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		dbg_assert (pkt != NULL);
 #ifdef ENABLE_FULL_DEBUG
 		self->dbg_stats.pkts.rcvd_in[ring_id]++;
+		self->dbg_stats.pkts.missed += fseq_gap;
 #endif
 
 		/*
 		 * Check packet and drop invalid ones.
 		 */
 		int err = tespkt_is_valid (pkt);
+#ifdef ENABLE_FULL_DEBUG
 		if (err != 0)
 		{
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet invalid, error is 0x%x", err);
 		}
+#endif
 		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t flen = tespkt_flen (pkt);
 		if (flen > len)
 		{
+#ifdef ENABLE_FULL_DEBUG
 			s_msgf (0, LOG_DEBUG, self->id,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
+#endif
 			err |= TES_EETHLEN;
 			flen = len;
 		}
 		dbg_assert (flen <= MAX_TES_FRAME_LEN);
 
-		int rc = self->pkt_handler (loop, pkt, flen, fseq_gap, err, self);
-
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
+
+		int rc = self->pkt_handler (loop, pkt, flen, fseq_gap, err, self);
 
 		self->prev_fseq = cur_fseq;
 		if (tespkt_is_mca (pkt))
@@ -1270,9 +1277,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
-	if (missed)
-		s_msgf (0, LOG_DEBUG, self->id,
-			"Missed %hu", missed);
 
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
@@ -1334,7 +1338,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		tidx->nframes++;
 		if (tidx->nframes == 0)
 		{ /* first non-tick event frame after a tick */
-			/* frames is incremented below, so no need to subtract 1 */
 			tidx->start_frame = sjob->st.frames - 1;
 			tidx->esize = esize;
 
@@ -1364,36 +1367,59 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 		dbg_assert (sjob->cur_stream.cur_size > 0);
 		dbg_assert (sjob->cur_stream.cur_size < sjob->cur_stream.size);
+		dbg_assert ( ! sjob->cur_stream.discard );
+
 	}
 	else
 		dbg_assert (sjob->cur_stream.cur_size == 0);
 
-	bool is_ctd_trace = ( is_trace && sjob->cur_stream.size > 0 &&
-			sjob->cur_stream.is_event && ! is_header );
-	bool is_ctd_mca = ( is_mca && sjob->cur_stream.size > 0 &&
-			! sjob->cur_stream.is_event && ! is_header );
-	bool starts_trace = ( is_trace && is_header &&
+	bool continues_stream = ( ( (is_trace && sjob->cur_stream.is_event) ||
+				    (is_mca && ! sjob->cur_stream.is_event) ) &&
+			sjob->cur_stream.size > 0 && ! is_header && missed == 0 );
+	bool starts_stream = ( (is_trace || is_mca) && is_header &&
 			sjob->cur_stream.size == 0 );
-	bool starts_mca = ( is_mca && is_header &&
-			sjob->cur_stream.size == 0 );
+	bool interrupts_stream = ( ! continues_stream &&
+			sjob->cur_stream.size > 0 );
 
-	if (is_ctd_mca || is_ctd_trace)
-	{ /* ongoing multi-frame stream, check validity, add to size, check if done */
+	if (interrupts_stream) 
+	{ /* unexpected or first missed frames during an ongoing stream */
+		sjob->cur_stream.discard = 1;
+		sjob->cur_stream.size = 0;
+		sjob->cur_stream.cur_size = 0;
 
+		dbg_assert ( is_header || missed > 0 ||
+			(is_trace && ! sjob->cur_stream.is_event) ||
+			(is_mca && sjob->cur_stream.is_event) ||
+			( ! is_trace && ! is_mca ) );
+		if (missed == 0)
+		{ /* should only happen in case of FPGA fault */
+			s_msgf (0, LOG_NOTICE, self->id,
+				"Received a%s %sframe (#%lu) "
+				"while a %s was ongoing",
+				is_mca ? " histogram" : (
+					is_trace ? " trace" : (
+						is_tick ? " tick" :
+						"n event" ) ),
+				is_header ? "header " : "",
+				sjob->st.frames - 1,
+				sjob->cur_stream.is_event ?
+				"trace" : "histogram");
+		}
+	}
+
+	if (continues_stream)
+	{ /* ongoing multi-frame stream, add to size, check if done */
+		dbg_assert ( ! sjob->cur_stream.discard && missed == 0);
 		sjob->cur_stream.cur_size += paylen;
 
-		if (missed > 0)
-		{
-			s_msgf (0, LOG_DEBUG, self->id, "Missed %s frames",
-				is_mca ? "histogram" : "trace");
-			sjob->cur_stream.size = 0;
-			sjob->cur_stream.cur_size = 0;
-			sjob->cur_stream.discard = 1;
-		}
-		else if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
-		{
-			s_msgf (0, LOG_DEBUG, self->id, "Extra %s data",
-				is_mca ? "histogram" : "trace");
+		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
+		{ /* extra bytes */
+#ifdef ENABLE_FULL_DEBUG
+			s_msgf (0, LOG_DEBUG, self->id, "Extra %s data "
+				"at frame #%lu",
+				is_mca ? "histogram" : "trace",
+				sjob->st.frames - 1);
+#endif
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
 			sjob->cur_stream.discard = 1;
@@ -1426,7 +1452,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				finishing = 1; /* error */
 		}
 	}
-	else if (starts_mca || starts_trace)
+	else if (starts_stream)
 	{ /* start a new stream */
 		if (is_trace)
 		{
@@ -1441,34 +1467,30 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		sjob->cur_stream.discard = 0;
 		sjob->cur_stream.cur_size = paylen;
 		/* tespkt_is_valid checks that payload size <= trace size */
+		/* FIX: check if payload size == size, i.e. just a signle frame */
 
 		sjob->cur_stream.idx.start = aiodat->size +
 			aiodat->bufzone.waiting +
 			aiodat->bufzone.enqueued;
 	}
 	else if (is_mca || is_trace)
-	{ /* unexpected part of a multi-frame stream */
-		if (sjob->cur_stream.size > 0)
-		{
-			s_msgf (0, LOG_DEBUG, self->id,
-				"Received a %s%s frame "
-				"while a %s was ongoing",
-				is_header ? "header " : "",
-				is_mca ? "histogram" : "trace",
-				sjob->cur_stream.is_event ?
-					"trace" : "histogram");
-			sjob->cur_stream.size = 0;
-			sjob->cur_stream.cur_size = 0;
-			sjob->cur_stream.discard = 1;
-		}
-		else
+	{ /* missed beginning of a stream or in the process of discarding */
+		if ( ! interrupts_stream )
 		{
 			dbg_assert ( ! is_header );
+			dbg_assert (sjob->cur_stream.size == 0);
+
 			if ( ! sjob->cur_stream.discard )
+			{
+#ifdef ENABLE_FULL_DEBUG
 				s_msgf (0, LOG_DEBUG, self->id,
-					"Received a %s frame "
-					"while a no stream was ongoing",
-					is_mca ? "histogram" : "trace");
+					"Received a non-header %s frame (#%lu) "
+					"while no stream was ongoing",
+					is_mca ? "histogram" : "trace",
+					sjob->st.frames - 1);
+#endif
+				sjob->cur_stream.discard = 1;
+			}
 		}
 	}
 	else if (is_tick)
@@ -1493,7 +1515,14 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	fidx.length = paylen;
 	fidx.esize = esize;
 	if (missed > 0)
+	{
+#ifdef ENABLE_FULL_DEBUG
+		s_msgf (0, LOG_DEBUG, self->id,
+			"SEQ error at frame #%lu",
+			sjob->st.frames - 1);
+#endif
 		fidx.etype.SEQ = 1;
+	}
 
 	if (is_mca)
 		fidx.etype.MCA = 1;
@@ -1514,7 +1543,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			aiofidx->bufzone.enqueued );
 
 	/* ********************** Write frame payload. ********************* */
-// #define TSAVE_SAVE_HEADERS
+#define TSAVE_SAVE_HEADERS
 #ifdef TSAVE_SAVE_HEADERS
 	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt,
 			flen, self->id);
