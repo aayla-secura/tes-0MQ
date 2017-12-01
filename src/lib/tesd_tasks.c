@@ -1347,7 +1347,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		aiodat = &sjob->aio.edat;
 
 		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-		tidx->nframes++;
 		if (tidx->nframes == 0)
 		{ /* first non-tick event frame after a tick */
 			tidx->start_frame = sjob->st.frames - 1;
@@ -1363,6 +1362,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			  tidx->etype.TR != etype->TR ||
 			  tidx->esize != esize )
 			tidx->etype.HOM = 1;
+		tidx->nframes++;
 	}
 
 	/*
