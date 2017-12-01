@@ -248,6 +248,9 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
  * queue batches with aio_write. Size is adjusted based on bufzone.num_cleared
  * and bufzone.num_blocked. */
 #define TSAVE_BUFSIZE 1048576 // 1 MB
+#ifdef WHDR
+#  define TSAVE_SAVE_HEADERS
+#endif
 
 /*
  * Statistics sent as a reply and saved to the file. 
@@ -1552,7 +1555,6 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			aiofidx->bufzone.enqueued );
 
 	/* ********************** Write frame payload. ********************* */
-#define TSAVE_SAVE_HEADERS
 #ifdef TSAVE_SAVE_HEADERS
 	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt,
 			flen, self->id);
