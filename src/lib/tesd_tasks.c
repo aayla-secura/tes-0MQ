@@ -665,17 +665,21 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert (sig == SIG_WAKEUP);
 	dbg_assert ( ! self->busy );
 
-#ifdef ENABLE_FULL_DEBUG
-	self->dbg_stats.wakeups++;
-	/* FIX: We should never have received a WAKEUP if we are not active,
-	 * but sometimes we do, why??? */
+	/* We should never have received a WAKEUP if we are not active, but we
+	 * do, after a job is done. Signals must be queueing in the PAIR socket
+	 * and coming with a slight delay. */
 	if ( ! self->active )
 	{
+#ifdef ENABLE_FULL_DEBUG
+		if (self->dbg_stats.wakeups_inactive == 0)
+			s_msg (0, LOG_DEBUG, self->id,
+				"First inactive wakeup");
 		self->dbg_stats.wakeups_inactive++;
+#endif
 		return 0;
 	}
-#else
-	dbg_assert (self->active);
+#ifdef ENABLE_FULL_DEBUG
+	self->dbg_stats.wakeups++;
 #endif
 	self->busy = 1;
 	/* Process packets. */
@@ -1040,7 +1044,10 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	 * First exec of the loop uses the head from the last time
 	 * dispatch was called with this ring_id.
 	 */
-	uint16_t fseq_gap = missed;
+	uint16_t fseq_gap = 0;
+#ifdef ENABLE_FULL_DEBUG
+	bool first = 1;
+#endif
 	for ( ; self->heads[ring_id] != tes_ifring_tail (rxring);
 		self->heads[ring_id] = tes_ifring_following (
 				rxring, self->heads[ring_id]) )
@@ -1052,10 +1059,6 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
 			rxring, self->heads[ring_id]);
 		dbg_assert (pkt != NULL);
-#ifdef ENABLE_FULL_DEBUG
-		self->dbg_stats.pkts.rcvd_in[ring_id]++;
-		self->dbg_stats.pkts.missed += fseq_gap;
-#endif
 
 		/*
 		 * Check packet and drop invalid ones.
@@ -1084,6 +1087,13 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
+#ifdef ENABLE_FULL_DEBUG
+		if (first)
+			dbg_assert (fseq_gap == missed);
+		first = 0;
+		self->dbg_stats.pkts.rcvd_in[ring_id]++;
+		self->dbg_stats.pkts.missed += fseq_gap;
+#endif
 
 		int rc = self->pkt_handler (loop, pkt, flen, fseq_gap, err, self);
 
@@ -1280,7 +1290,12 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	struct s_task_save_data_t* sjob =
 		(struct s_task_save_data_t*) self->data;
 
-	sjob->st.frames_lost += missed;
+	bool is_tick = tespkt_is_tick (pkt);
+	if ( ! sjob->recording && is_tick )
+		sjob->recording = 1;
+
+	if ( ! sjob->recording )
+		return 0;
 
 	/* TO DO: check err */
 	if (err)
@@ -1289,14 +1304,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		return 0;
 	}
 
-	bool is_tick = tespkt_is_tick (pkt);
-	if ( ! sjob->recording && is_tick )
-		sjob->recording = 1;
-
-	if ( ! sjob->recording )
-		return 0;
-
 	sjob->st.frames++;
+	sjob->st.frames_lost += missed;
+
 
 	uint16_t esize = tespkt_esize (pkt);
 	esize = htofs (esize); /* in FPGA byte-order */
@@ -1517,8 +1527,8 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 #ifdef ENABLE_FULL_DEBUG
 		s_msgf (0, LOG_DEBUG, self->id,
-			"SEQ error at frame #%lu",
-			sjob->st.frames - 1);
+			"Missed %hu at frame #%lu",
+			missed, sjob->st.frames - 1);
 #endif
 		fidx.etype.SEQ = 1;
 	}
