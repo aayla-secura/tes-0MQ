@@ -245,9 +245,14 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define TSAVE_STAT_LEN 64        // job statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
- * queue batches with aio_write. Size is adjusted based on bufzone.num_cleared
- * and bufzone.num_blocked. */
-#define TSAVE_BUFSIZE 1048576 // 1 MB
+ * queue batches with aio_write. aio_write has significant overhead and is not
+ * worth queueing less than ~2kB (it'd be much slower than synchronous write).
+ * */
+#define TSAVE_BUFSIZE 10485760 // 10 MB
+#define TSAVE_MINSIZE 512000   // 500 kB
+#ifdef ENABLE_FULL_DEBUG
+#  define TSAVE_HISTBINS 11
+#endif
 #ifdef WHDR
 #  define TSAVE_SAVE_HEADERS
 #endif
@@ -282,13 +287,15 @@ struct s_task_save_aiobuf_t
 		size_t waiting;      // copied into buffer since the last aio_write
 		size_t enqueued;     // queued for writing at the last aio_write
 #ifdef ENABLE_FULL_DEBUG
-		size_t prev_enqueued;
-		size_t prev_waiting;
-		size_t last_written;
-		uint64_t batches;
-		uint64_t failed_batches;
-		uint64_t num_cleared;
-		uint64_t num_blocked;
+		struct {
+			size_t prev_enqueued;
+			size_t prev_waiting;
+			size_t last_written;
+			uint64_t batches[TSAVE_HISTBINS];
+			uint64_t failed_batches;
+			uint64_t num_skipped;
+			uint64_t num_blocked;
+		} st;
 #endif
 	} bufzone;
 	size_t size; // number of bytes written
@@ -401,7 +408,7 @@ static int   s_task_save_stats_send  (struct s_task_save_data_t* sjob,
 	zsock_t* frontend);
 
 /* Ongoing job helpers */
-static int   s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
+static int   s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len, int task_id);
 static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	bool force);
@@ -1033,6 +1040,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	dbg_assert ( self->heads[ring_id] != tes_ifring_tail (rxring) );
 #ifdef ENABLE_FULL_DEBUG
 	self->dbg_stats.rings_dispatched++;
+#if 0
 	if (missed)
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
@@ -1041,6 +1049,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 				"Dispatching ring %hu: missed %hu at frame %hu",
 				ring_id, missed, tespkt_fseq (pkt));
 	}
+#endif
 #endif
 
 	/*
@@ -1334,7 +1343,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		aiodat = &sjob->aio.tdat;
 
 		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-		jobrc = s_task_save_write_aiobuf (&sjob->aio.tidx, (char*)tidx,
+		jobrc = s_task_save_try_queue_aiobuf (&sjob->aio.tidx, (char*)tidx,
 				TSAVE_TIDX_LEN, self->id);
 		if (jobrc < 0)
 			finishing = 1; /* error */
@@ -1403,6 +1412,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			(is_trace && ! sjob->cur_stream.is_event) ||
 			(is_mca && sjob->cur_stream.is_event) ||
 			( ! is_trace && ! is_mca ) );
+#if 0
 		if (missed == 0)
 		{ /* should only happen in case of FPGA fault */
 			s_msgf (0, LOG_NOTICE, self->id,
@@ -1417,6 +1427,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				sjob->cur_stream.is_event ?
 				"trace" : "histogram");
 		}
+#endif
 	}
 
 	if (starts_stream || continues_stream)
@@ -1448,10 +1459,12 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
 		{ /* extra bytes */
 #ifdef ENABLE_FULL_DEBUG
+#if 0
 			s_msgf (0, LOG_DEBUG, self->id, "Extra %s data "
 					"at frame #%lu",
 					is_mca ? "histogram" : "trace",
 					sjob->st.frames - 1);
+#endif
 #endif
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
@@ -1478,7 +1491,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				aiodat->bufzone.waiting +
 				aiodat->bufzone.enqueued + paylen;
 
-			jobrc = s_task_save_write_aiobuf (aiosidx,
+			jobrc = s_task_save_try_queue_aiobuf (aiosidx,
 					(char*)&sjob->cur_stream.idx,
 					TSAVE_SIDX_LEN, self->id);
 			if (jobrc < 0)
@@ -1495,11 +1508,13 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			if ( ! sjob->cur_stream.discard )
 			{
 #ifdef ENABLE_FULL_DEBUG
+#if 0
 				s_msgf (0, LOG_DEBUG, self->id,
 					"Received a non-header %s frame (#%lu) "
 					"while no stream was ongoing",
 					is_mca ? "histogram" : "trace",
 					sjob->st.frames - 1);
+#endif
 #endif
 				sjob->cur_stream.discard = 1;
 			}
@@ -1529,9 +1544,11 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (missed > 0)
 	{
 #ifdef ENABLE_FULL_DEBUG
+#if 0
 		s_msgf (0, LOG_DEBUG, self->id,
 			"Missed %hu at frame #%lu",
 			missed, sjob->st.frames - 1);
+#endif
 #endif
 		fidx.etype.SEQ = 1;
 	}
@@ -1544,7 +1561,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		fidx.etype.PKT = etype->PKT;
 		fidx.etype.TR = etype->TR;
 	}
-	jobrc = s_task_save_write_aiobuf (aiofidx, (char*)&fidx,
+	jobrc = s_task_save_try_queue_aiobuf (aiofidx, (char*)&fidx,
 			TSAVE_FIDX_LEN, self->id);
 	if (jobrc < 0)
 		finishing = 1; /* error */
@@ -1556,10 +1573,10 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	/* ********************** Write frame payload. ********************* */
 #ifdef TSAVE_SAVE_HEADERS
-	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt,
+	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt,
 			flen, self->id);
 #else
-	jobrc = s_task_save_write_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
+	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
 	                 paylen, self->id);
 #endif
 	if (jobrc < 0)
@@ -1832,15 +1849,6 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	dbg_assert (aiobuf->bufzone.cur == aiobuf->bufzone.base);
 	dbg_assert (aiobuf->bufzone.waiting == 0);
 	dbg_assert (aiobuf->bufzone.enqueued == 0);
-#ifdef ENABLE_FULL_DEBUG
-	dbg_assert (aiobuf->bufzone.prev_enqueued == 0);
-	dbg_assert (aiobuf->bufzone.prev_waiting == 0);
-	dbg_assert (aiobuf->bufzone.last_written == 0);
-	dbg_assert (aiobuf->bufzone.batches == 0);
-	dbg_assert (aiobuf->bufzone.failed_batches == 0);
-	dbg_assert (aiobuf->bufzone.num_cleared == 0);
-	dbg_assert (aiobuf->bufzone.num_blocked == 0);
-#endif
 
 	aiobuf->aios.aio_fildes = open (filename, fmode,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -1865,13 +1873,7 @@ s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 	aiobuf->bufzone.waiting = 0;
 	aiobuf->bufzone.enqueued = 0;
 #ifdef ENABLE_FULL_DEBUG
-	aiobuf->bufzone.prev_enqueued = 0;
-	aiobuf->bufzone.prev_waiting = 0;
-	aiobuf->bufzone.last_written = 0;
-	aiobuf->bufzone.batches = 0;
-	aiobuf->bufzone.failed_batches = 0;
-	aiobuf->bufzone.num_cleared = 0;
-	aiobuf->bufzone.num_blocked = 0;
+	memset (&aiobuf->bufzone.st, 0, sizeof(aiobuf->bufzone.st));
 #endif
 
 	ftruncate (aiobuf->aios.aio_fildes, aiobuf->size);
@@ -1971,14 +1973,14 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 }
 
 /*
- * Checks for completed aio_write jobs and queues the next, updating the
- * bufzone.
+ * Copies buf to bufzone. If previous aio_write is completed and enough bytes
+ * are waiting in buffer, queues them.
  * If there is no space for another packet, will block until it's done.
  * Returns 0 on success or if nothing was queued.
  * Otherwise returns same as s_task_save_queue_aiobuf.
  */
 static int
-s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
+s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len, int task_id)
 {
 	dbg_assert (aiobuf != NULL);
@@ -2019,8 +2021,20 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	aiobuf->bufzone.waiting += len;
 
 #if 1 /* 0 to skip writing */
+	/* If there is < MINSIZE waiting and the cursor hasn't wrapped and
+	 * there is stil space for more packets, wait. */
+	if (aiobuf->bufzone.waiting < TSAVE_MINSIZE && reserve < 0 &&
+		aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
+			TSAVE_BUFSIZE - MAX_TES_FRAME_LEN)
+		return 0;
+
 	/* Try to queue next batch but don't force */
 	int jobrc = s_task_save_queue_aiobuf (aiobuf, 0);
+#ifdef ENABLE_FULL_DEBUG
+	if (jobrc == EINPROGRESS)
+		aiobuf->bufzone.st.num_skipped++;
+#endif
+
 	/* If there is no space for a full frame, force write until there is.
 	 * If we are finalizingm wait for all bytes to be written. */
 #ifdef ENABLE_FULL_DEBUG
@@ -2036,7 +2050,8 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 		jobrc = s_task_save_queue_aiobuf (aiobuf, 1);
 	}
 #ifdef ENABLE_FULL_DEBUG
-	aiobuf->bufzone.num_blocked += blocked;
+	if (blocked)
+		aiobuf->bufzone.st.num_blocked++;
 #endif
 	if (jobrc == -1)
 	{
@@ -2050,7 +2065,7 @@ s_task_save_write_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 		s_msgf (0, LOG_ERR, task_id,
 			"Queued %lu bytes, wrote %lu",
 			aiobuf->bufzone.enqueued,
-			aiobuf->bufzone.last_written);
+			aiobuf->bufzone.st.last_written);
 #else /* ENABLE_FULL_DEBUG */
 		s_msg (0, LOG_ERR, task_id,
 			"Wrote unexpected number of bytes");
@@ -2120,7 +2135,7 @@ s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf, bool force)
 	if (wrc == -1 && errno == EAGAIN)
 	{
 #ifdef ENABLE_FULL_DEBUG
-		aiobuf->bufzone.failed_batches++;
+		aiobuf->bufzone.st.failed_batches++;
 #endif
 		goto queue_as_is; /* requeue previous batch */
 	}
@@ -2131,7 +2146,7 @@ s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf, bool force)
 	{
 		dbg_assert (aiobuf->bufzone.enqueued > 0);
 #ifdef ENABLE_FULL_DEBUG
-		aiobuf->bufzone.last_written = wrc;
+		aiobuf->bufzone.st.last_written = wrc;
 #endif
 		return -2;
 	}
@@ -2139,9 +2154,13 @@ s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf, bool force)
 	/* ----------------------------------------------------------------- */
 prepare_next:
 #ifdef ENABLE_FULL_DEBUG
-	aiobuf->bufzone.batches++;
-	aiobuf->bufzone.prev_waiting = aiobuf->bufzone.waiting;
-	aiobuf->bufzone.prev_enqueued = aiobuf->bufzone.enqueued;
+	{
+		int bin = aiobuf->bufzone.enqueued * (TSAVE_HISTBINS - 1) / TSAVE_BUFSIZE;
+		dbg_assert (bin >= 0 && bin < TSAVE_HISTBINS);
+		aiobuf->bufzone.st.batches[bin]++;
+	}
+	aiobuf->bufzone.st.prev_waiting = aiobuf->bufzone.waiting;
+	aiobuf->bufzone.st.prev_enqueued = aiobuf->bufzone.enqueued;
 #endif
 
 	/* Increase file size by number of bytes written. */
@@ -2149,6 +2168,7 @@ prepare_next:
 
 	/* Release written bytes by moving the tail. */
 	aiobuf->bufzone.tail += aiobuf->bufzone.enqueued;
+	/* if cursor had wrapped around last time */
 	if (aiobuf->bufzone.tail == aiobuf->bufzone.ceil)
 		aiobuf->bufzone.tail = aiobuf->bufzone.base;
 	dbg_assert (aiobuf->bufzone.tail < aiobuf->bufzone.ceil);
@@ -2179,13 +2199,6 @@ queue_as_is:
 		dbg_assert (aiobuf->bufzone.waiting == 0);
 		return 0;
 	}
-
-#ifdef ENABLE_FULL_DEBUG
-	if (aiobuf->bufzone.waiting == 0)
-	{
-		aiobuf->bufzone.num_cleared++;
-	}
-#endif
 
 	aiobuf->aios.aio_offset = aiobuf->size;
 	aiobuf->aios.aio_buf = aiobuf->bufzone.tail;
@@ -2346,10 +2359,20 @@ static void
 s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiobuf,
 		const char* stream, int task_id)
 {
-	s_msgf (0, LOG_DEBUG, task_id, "%s stream: "
-		"Wrote %lu batches (%lu repeated, %lu cleared all, %lu blocked)",
-		stream, aiobuf->bufzone.batches, aiobuf->bufzone.failed_batches,
-		aiobuf->bufzone.num_cleared, aiobuf->bufzone.num_blocked);
+	s_msgf (0, LOG_DEBUG, task_id, "%s stream: ", stream); 
+	uint64_t batches_tot = 0, steps = TSAVE_BUFSIZE / (TSAVE_HISTBINS - 1);
+	for (int b = 0 ; b < TSAVE_HISTBINS ; b++)
+	{
+		s_msgf (0, LOG_DEBUG, task_id,
+			"     %lu B to %lu B: %lu batches",
+			b*steps, (b+1)*steps, aiobuf->bufzone.st.batches[b]);
+		batches_tot += aiobuf->bufzone.st.batches[b];
+	}
+
+	s_msgf (0, LOG_DEBUG, task_id,
+		"     Wrote %lu batches (%lu repeated, %lu skipped, %lu blocked)",
+		batches_tot, aiobuf->bufzone.st.failed_batches,
+		aiobuf->bufzone.st.num_skipped, aiobuf->bufzone.st.num_blocked);
 }
 #endif
 

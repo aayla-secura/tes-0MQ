@@ -514,7 +514,9 @@ cleanup:
 int
 main (int argc, char **argv)
 {
+#ifdef ENABLE_FULL_DEBUG
 	tespkt_self_test ();
+#endif
 	int rc;
 
 	/* Process command-line options. */
