@@ -171,18 +171,12 @@ struct tespkt_event_type
 	uint8_t     :  1; /* reserved */
 	uint8_t T   :  1;
 	uint8_t PKT :  2;
-	uint8_t SEQ :  1; /* set by us */
-	uint8_t BAD :  1; /* set by us */
-	uint8_t MCA :  1; /* set by us */
-	uint8_t HOM :  1; /* set by us */
+	uint8_t     :  4; /* reserved */
 #else
 	uint8_t     :  6; /* reserved */
 	uint8_t TR  :  2;
 
-	uint8_t HOM :  1; /* set by us */
-	uint8_t MCA :  1; /* set by us */
-	uint8_t BAD :  1; /* set by us */
-	uint8_t SEQ :  1; /* set by us */
+	uint8_t     :  4; /* reserved */
 	uint8_t PKT :  2;
 	uint8_t T   :  1;
 	uint8_t     :  1; /* reserved */

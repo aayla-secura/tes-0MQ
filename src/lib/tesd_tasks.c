@@ -240,7 +240,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define TSAVE_ROOT "/media/data/" // must have a trailing slash
 #define TSAVE_ONLYFILES           // for now we don't generate filenames
 #define TSAVE_FIDX_LEN 16        // frame index
-#define TSAVE_TIDX_LEN 16        // tick index
+#define TSAVE_TIDX_LEN  8        // tick index
 #define TSAVE_SIDX_LEN 16        // MCA and trace indices
 #define TSAVE_STAT_LEN 64        // job statistics
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
@@ -253,9 +253,31 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #ifdef ENABLE_FULL_DEBUG
 #  define TSAVE_HISTBINS 11
 #endif
-#ifdef WHDR
-#  define TSAVE_SAVE_HEADERS
-#endif
+/* #define TSAVE_SAVE_HEADERS */
+/* #define TSAVE_NO_BAD_FRAMES */
+
+/*
+ * Transformed packet type byte: for the frame index
+ */
+struct s_task_save_ftype_t
+{
+	/* PT: */
+#define TSAVE_FTYPE_PEAK        0
+#define TSAVE_FTYPE_AREA        1
+#define TSAVE_FTYPE_PULSE       2
+#define TSAVE_FTYPE_TRACE_SGL   3
+#define TSAVE_FTYPE_TRACE_AVG   4
+#define TSAVE_FTYPE_TRACE_DP    5
+#define TSAVE_FTYPE_TRACE_DP_TR 6
+#define TSAVE_FTYPE_TICK        7
+#define TSAVE_FTYPE_MCA         8
+#define TSAVE_FTYPE_BAD         9
+	uint8_t PT  : 4;
+	uint8_t     : 3; /* reserved */
+	uint8_t SEQ : 1; /* sequence error in event stream */
+};
+#define linear_etype(pkt_type,tr_type) \
+	( (pkt_type == PKT_TYPE_TRACE) ? 3 + tr_type : pkt_type )
 
 /*
  * Statistics sent as a reply and saved to the file. 
@@ -310,7 +332,8 @@ struct s_task_save_fidx_t
 	uint64_t start;   // frame's offset into its corresponding dat file
 	uint32_t length;  // payload's length
 	uint16_t esize;   // original event size
-	struct tespkt_event_type etype; // original event type + bits set by us
+	uint8_t  changed; // event frame differs from previous
+	struct s_task_save_ftype_t ftype; // see definition of struct
 };
 
 /*
@@ -318,11 +341,8 @@ struct s_task_save_fidx_t
  */
 struct s_task_save_tidx_t
 {
-	uint64_t start_frame; // start frame number of first non-tick event
-			      // after this tick
-	uint32_t nframes;     // no. of event frames until NEXT tick
-	uint16_t esize;       // original event size
-	struct tespkt_event_type etype; // original event type + bits set by us
+	uint32_t start_frame; // frame number of first non-tick event
+	uint32_t stop_frame;  // frame number of last non-tick event
 };
 
 /*
@@ -330,8 +350,8 @@ struct s_task_save_tidx_t
  */
 struct s_task_save_sidx_t
 {
-	uint64_t start; // first byte of histogram/trace into dat file
-	uint64_t end;   // last byte of histogram/trace into dat file
+	uint64_t start;  // first byte of histogram/trace into dat file
+	uint64_t length; // length in bytes of histogram/trace
 };
 
 /*
@@ -343,6 +363,7 @@ struct s_task_save_data_t
 	struct s_task_save_stats_t st;
 
 	struct {
+		struct s_task_save_aiobuf_t bdat; // bad payloads
 		struct s_task_save_aiobuf_t mdat; // MCA payloads
 		struct s_task_save_aiobuf_t tdat; // tick payloads
 		struct s_task_save_aiobuf_t edat; // event payloads
@@ -364,7 +385,10 @@ struct s_task_save_data_t
 	struct
 	{
 		struct s_task_save_tidx_t idx;
+		uint32_t nframes; // no. of event frames in this tick
 	} cur_tick;
+	uint8_t  prev_esize; // event size for previous event
+	uint8_t  prev_etype; // transformed event type for previous event, see PT above
 
 	uint64_t min_ticks;
 	uint64_t min_events;
@@ -1073,7 +1097,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		dbg_assert (pkt != NULL);
 
 		/*
-		 * Check packet and drop invalid ones.
+		 * Check packet.
 		 */
 		int err = tespkt_is_valid (pkt);
 #ifdef ENABLE_FULL_DEBUG
@@ -1310,20 +1334,20 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! sjob->recording )
 		return 0;
 
-	/* TO DO: check err */
 	if (err)
 	{
 		sjob->st.frames_dropped++;
+#ifdef TSAVE_NO_BAD_FRAMES
+		/* drop bad frames */
 		return 0;
+#endif
 	}
 
 	sjob->st.frames++;
 	sjob->st.frames_lost += missed;
 
-
 	uint16_t esize = tespkt_esize (pkt);
 	esize = htofs (esize); /* in FPGA byte-order */
-	const struct tespkt_event_type* etype = tespkt_etype (pkt);
 	uint16_t paylen = flen - TES_HDR_LEN;
 
 	bool is_header = tespkt_is_header (pkt);
@@ -1331,49 +1355,88 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	bool is_trace = ( tespkt_is_trace (pkt) &&
 			! tespkt_is_trace_dp (pkt) );
 
-	/* ******** Update the tick index and choose the data file. ******** */
+	/* **** Update tick and frame indices and choose the data file. **** */
 	struct s_task_save_aiobuf_t* aiofidx = &sjob->aio.fidx;
 	struct s_task_save_aiobuf_t* aiodat = NULL;
+	struct s_task_save_fidx_t fidx;
+	fidx.length = paylen;
+	fidx.esize = esize;
+	fidx.changed = 0;
+	fidx.ftype.SEQ = 0;
+
 	bool finishing = 0;
 	int jobrc;
 
-	if (is_mca)
+	/* Check for sequence error. */
+	if (missed > 0)
+	{
+#ifdef ENABLE_FULL_DEBUG
+#if 0
+		s_msgf (0, LOG_DEBUG, self->id,
+			"Missed %hu at frame #%lu",
+			missed, sjob->st.frames - 1);
+#endif
+#endif
+		fidx.ftype.SEQ = 1;
+	}
+
+	/* Check packet type. */
+	if (err)
+	{
+		fidx.ftype.PT = TSAVE_FTYPE_BAD;
+		aiodat = &sjob->aio.bdat;
+	}
+	else if (is_mca)
+	{
+		fidx.ftype.PT = TSAVE_FTYPE_MCA;
 		aiodat = &sjob->aio.mdat;
+	}
 	else if (is_tick)
 	{
+		fidx.ftype.PT = TSAVE_FTYPE_TICK;
 		aiodat = &sjob->aio.tdat;
 
-		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-		jobrc = s_task_save_try_queue_aiobuf (&sjob->aio.tidx, (char*)tidx,
-				TSAVE_TIDX_LEN, self->id);
-		if (jobrc < 0)
-			finishing = 1; /* error */
+		if (sjob->st.ticks > 0)
+		{
+			struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
+			jobrc = s_task_save_try_queue_aiobuf (&sjob->aio.tidx, (char*)tidx,
+					TSAVE_TIDX_LEN, self->id);
+			if (jobrc < 0)
+				finishing = 1; /* error */
+		}
 
-		tidx->nframes = 0;
-		/* no need to zero the rest */
+		sjob->cur_tick.nframes = 0;
+		/* no need to zero the index */
 	}
 	else
 	{
 		aiodat = &sjob->aio.edat;
 
 		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-		if (tidx->nframes == 0)
+		const struct tespkt_event_type* etype = tespkt_etype (pkt);
+		uint8_t pt = linear_etype (etype->PKT, etype->TR);
+		fidx.ftype.PT = pt;
+		if ( sjob->st.frames > 1 && 
+			( sjob->prev_etype != pt || sjob->prev_esize != esize ) )
+		{
+			fidx.changed = 1;
+		}
+		sjob->prev_esize = esize;
+		sjob->prev_etype = pt;
+
+		if (sjob->cur_tick.nframes == 0)
 		{ /* first non-tick event frame after a tick */
 			tidx->start_frame = sjob->st.frames - 1;
-			tidx->esize = esize;
-
-			/* copy only fields that are defined */
-			tidx->etype.PKT = etype->PKT;
-			tidx->etype.TR = etype->TR;
-			tidx->etype.HOM = 0;
 		}
-		/* compare only fields that are defined */
-		else if ( tidx->etype.PKT != etype->PKT ||
-			  tidx->etype.TR != etype->TR ||
-			  tidx->esize != esize )
-			tidx->etype.HOM = 1;
-		tidx->nframes++;
+		else
+		{ /* in case it's the last event before a tick */
+			tidx->stop_frame = sjob->st.frames - 1;
+		}
+		sjob->cur_tick.nframes++;
 	}
+
+	fidx.start = aiodat->size +
+		aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
 
 	/*
 	 * *************** Update statistics and stream index. *************
@@ -1384,6 +1447,10 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	 * frames) occurs. idx and is_event are set when receiving the header
 	 * of a new stream.
 	 */
+
+	/* Skip if frame is bad */
+	if (err)
+		goto done;
 
 	if (sjob->cur_stream.size > 0)
 	{
@@ -1448,8 +1515,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			sjob->cur_stream.discard = 0;
 
 			sjob->cur_stream.idx.start = aiodat->size +
-				aiodat->bufzone.waiting +
-				aiodat->bufzone.enqueued;
+				aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
 		}
 		else
 		{ /* ongoing multi-frame stream */
@@ -1485,12 +1551,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				aiosidx = &sjob->aio.midx;
 				sjob->st.hists++;
 			}
+			sjob->cur_stream.idx.length = sjob->cur_stream.size;
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
-
-			sjob->cur_stream.idx.end = aiodat->size +
-				aiodat->bufzone.waiting +
-				aiodat->bufzone.enqueued + paylen;
 
 			jobrc = s_task_save_try_queue_aiobuf (aiosidx,
 					(char*)&sjob->cur_stream.idx,
@@ -1535,43 +1598,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		sjob->st.events += tespkt_event_nums (pkt);
 	}
 
-	/* *********************** Write frame index. ********************** */
-	struct s_task_save_fidx_t fidx;
-	fidx.start = aiodat->size +
-		aiodat->bufzone.waiting +
-		aiodat->bufzone.enqueued;
-	fidx.length = paylen;
-	fidx.esize = esize;
-	if (missed > 0)
-	{
-#ifdef ENABLE_FULL_DEBUG
-#if 0
-		s_msgf (0, LOG_DEBUG, self->id,
-			"Missed %hu at frame #%lu",
-			missed, sjob->st.frames - 1);
-#endif
-#endif
-		fidx.etype.SEQ = 1;
-	}
-
-	if (is_mca)
-		fidx.etype.MCA = 1;
-	else
-	{
-		fidx.etype.T = etype->T;
-		fidx.etype.PKT = etype->PKT;
-		fidx.etype.TR = etype->TR;
-	}
-	jobrc = s_task_save_try_queue_aiobuf (aiofidx, (char*)&fidx,
-			TSAVE_FIDX_LEN, self->id);
-	if (jobrc < 0)
-		finishing = 1; /* error */
-
-	dbg_assert ( sjob->st.frames * TSAVE_FIDX_LEN ==
-			aiofidx->size +
-			aiofidx->bufzone.waiting +
-			aiofidx->bufzone.enqueued );
-
+done:
 	/* ********************** Write frame payload. ********************* */
 #ifdef TSAVE_SAVE_HEADERS
 	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt,
@@ -1583,9 +1610,24 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
+	/* *********************** Write frame index. ********************** */
+
+	jobrc = s_task_save_try_queue_aiobuf (aiofidx, (char*)&fidx,
+			TSAVE_FIDX_LEN, self->id);
+	if (jobrc < 0)
+		finishing = 1; /* error */
+
+	dbg_assert ( sjob->st.frames * TSAVE_FIDX_LEN ==
+			aiofidx->size +
+			aiofidx->bufzone.waiting +
+			aiofidx->bufzone.enqueued );
+
 	/* ********************** Check if done. *************************** */
 	if (finishing)
 	{ /* flush all buffers */
+		do {
+			jobrc = s_task_save_queue_aiobuf (&sjob->aio.bdat, 1);
+		} while (jobrc == EINPROGRESS);
 		do {
 			jobrc = s_task_save_queue_aiobuf (&sjob->aio.mdat, 1);
 		} while (jobrc == EINPROGRESS);
@@ -1612,6 +1654,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.bdat, "BAD data", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.mdat, "MCA data", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.tdat, "Tick data", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.edat, "Event data", self->id);
@@ -1665,7 +1708,8 @@ s_task_save_init (task_t* self)
 	static struct s_task_save_data_t sjob;
 	sjob.fd = -1;
 
-	int rc = s_task_save_init_aiobuf (&sjob.aio.mdat);
+	int rc = s_task_save_init_aiobuf (&sjob.aio.bdat);
+	rc |= s_task_save_init_aiobuf (&sjob.aio.mdat);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.tdat);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.edat);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.fidx);
@@ -1705,6 +1749,7 @@ s_task_save_fin (task_t* self)
 		rc |= s_task_save_stats_send  (sjob, self->frontend);
 	}
 
+	s_task_save_fin_aiobuf (&sjob->aio.bdat);
 	s_task_save_fin_aiobuf (&sjob->aio.mdat);
 	s_task_save_fin_aiobuf (&sjob->aio.tdat);
 	s_task_save_fin_aiobuf (&sjob->aio.edat);
@@ -1779,7 +1824,7 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 
 	dbg_assert (sjob->cur_stream.size == 0);
 	dbg_assert (sjob->cur_stream.cur_size == 0);
-	dbg_assert (sjob->cur_tick.idx.nframes == 0);
+	dbg_assert (sjob->cur_tick.nframes == 0);
 
 	/* Open the data files. */
 	if (strlen (sjob->filename) + 6 > PATH_MAX)
@@ -1794,6 +1839,8 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	strcpy (buf, sjob->filename);
 	char* ext = buf + strlen (buf);
 
+	strcpy (ext, ".bdat");
+	rc  = s_task_save_open_aiobuf (&sjob->aio.bdat, buf, fmode);
 	strcpy (ext, ".mdat");
 	rc  = s_task_save_open_aiobuf (&sjob->aio.mdat, buf, fmode);
 	strcpy (ext, ".tdat");
@@ -1825,6 +1872,7 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	assert (sjob->filename != NULL);
 
 	/* Close the data files. */
+	s_task_save_close_aiobuf (&sjob->aio.bdat);
 	s_task_save_close_aiobuf (&sjob->aio.mdat);
 	s_task_save_close_aiobuf (&sjob->aio.tdat);
 	s_task_save_close_aiobuf (&sjob->aio.edat);
