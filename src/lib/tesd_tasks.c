@@ -248,8 +248,8 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
  * queue batches with aio_write. aio_write has significant overhead and is not
  * worth queueing less than ~2kB (it'd be much slower than synchronous write).
  * */
-#define TSAVE_BUFSIZE 10485760 // 10 MB
-#define TSAVE_MINSIZE 512000   // 500 kB
+#define TSAVE_BUFSIZE 10485760UL // 10 MB
+#define TSAVE_MINSIZE 512000UL   // 500 kB
 #ifdef ENABLE_FULL_DEBUG
 #  define TSAVE_HISTBINS 11
 #endif
@@ -495,7 +495,7 @@ tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		s_tasks[t].id = t + 1;
-		s_msgf (0, LOG_DEBUG, 0, "Starting task #%d", t);
+		s_msgf (0, LOG_DEBUG, 0, "Starting task #%d", t + 1);
 		rc = s_task_start (ifd, &s_tasks[t]);
 		if (rc != 0)
 		{
@@ -1178,8 +1178,9 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	else
 	{
 		s_msgf (0, LOG_INFO, self->id,
-			"Received request to write %lu ticks to '%s'",
-			sjob->min_ticks, filename);
+			"Received request to write %lu ticks and "
+			"%lu events to '%s'",
+			sjob->min_ticks, sjob->min_events, filename);
 	}
 
 	/* Check if filename is allowed and get the realpath. */
