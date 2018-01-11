@@ -492,7 +492,7 @@ tespkt_is_trace_sgl (tespkt* pkt)
 	return ( tespkt_is_event (pkt) &&
 		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.T == TRACE_TYPE_SGL );
+		 pkt->tes_hdr.etype.TR == TRACE_TYPE_SGL );
 }
 
 static inline int
@@ -501,7 +501,7 @@ tespkt_is_trace_avg (tespkt* pkt)
 	return ( tespkt_is_event (pkt) &&
 		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.T == TRACE_TYPE_AVG );
+		 pkt->tes_hdr.etype.TR == TRACE_TYPE_AVG );
 }
 
 static inline int
@@ -510,7 +510,7 @@ tespkt_is_trace_dp (tespkt* pkt)
 	return ( tespkt_is_event (pkt) &&
 		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.T == TRACE_TYPE_DP );
+		 pkt->tes_hdr.etype.TR == TRACE_TYPE_DP );
 }
 
 static inline int
@@ -519,7 +519,7 @@ tespkt_is_trace_dptr (tespkt* pkt)
 	return ( tespkt_is_event (pkt) &&
 		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.T == TRACE_TYPE_DPTR );
+		 pkt->tes_hdr.etype.TR == TRACE_TYPE_DPTR );
 }
 
 static inline char*
