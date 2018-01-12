@@ -10,7 +10,7 @@ connected to the FPGA.
 
 The server accepts client requests on two [ØMQ](http://zeromq.org/) sockets. 
 
-## REP INTERFACE
+## SAVE-TO-FILE REP INTERFACE
 
 This interface accepts requests to save all received frames, until a given
 minimum number of tick frames and a given minimum number of events are seen, to
@@ -104,7 +104,38 @@ to get a status of a file, only the filename is required.
 
 8. **No. of frames dropped by us (invalid)**
 
-## PUB INTERFACE
+## AVERAGE TRACE REP INTERFACE
+
+This interface accepts requests to get the first average trace within
+a given time period.
+
+Valid requests have a picture of "4", replies have a picture of "1?".
+
+#### Message frames in a valid request
+
+1. **Timeout**
+
+   Number of seconds to wait for an average trace.
+
+   The value is read as an **unsigned** int32.
+
+#### Message frames in a reply
+
+1. **Error status**
+
+ * "0": OK, sending trace
+
+ * "1": invalid request
+
+ * "2": timeout error
+
+ * "3": trace was corrupt
+
+2. **Trace data**
+
+   Empty in case of timeout error. Otherwise---the full trace.
+
+## HISTOGRAM PUB INTERFACE
 
 This socket publishes ZMQ single-frame messages, each message contains one full
 histogram (MCA stream). You can receive these with `zmq_recv` for example.
