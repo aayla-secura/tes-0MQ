@@ -21,6 +21,7 @@
  * struct _task_t
  * {
  *         zloop_reader_fn* client_handler;
+ *         zloop_t*         loop;
  *         s_pkt_fn*        pkt_handler;
  *         s_data_fn*       data_init; // initialize data
  *         s_data_fn*       data_fin;  // cleanup data
@@ -37,12 +38,13 @@
  *         uint16_t    prev_fseq;      // previous frame sequence
  *         uint16_t    prev_pseq_mca;  // previous MCA protocol sequence
  *         uint16_t    prev_pseq_tr;   // previous trace protocol sequence
- *         bool        error;          // client_ and pkt_handler should set this
- *         bool        busy;           // reading from rings
- *         bool        active;         // client_handler or data_init should
- *                                     // enable this
+ *         bool        automute;       // s_task_(de)activate will enable/disable
+ *                                     // client_handler
  *         bool        autoactivate;   // s_task_shim will activate task
  *         bool        just_activated; // first packet dispatch after activation
+ *         bool        error;          // see below
+ *         bool        busy;           // see below
+ *         bool        active;         // see below
  * };
  *
  * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
@@ -67,6 +69,10 @@
  * the loop. Otherwise the task should activate itself from within its
  * initializer or in its client frontend handler.
  *
+ * Tasks defined with the automute flag must have a client_handler. The handler
+ * will then be deregistered from the loop upon task activation, and registered
+ * again upon deactivation.
+ *
  * Right after the loop terminates, s_task_shim will call the task finalizer,
  * so it can cleanup its data and possibly send final messages to clients.
  *
@@ -84,9 +90,10 @@
  *
  * If either handler encounters a fatal error, it returns with TASK_ERROR.
  *
- * If the task wants to deactivate itself, either handler should return with
- * TASK_SLEEP. s_sig_hn will then deactivate the task. The task then won't be
- * receiving SIG_WAKEUP and its heads won't be synchronized with the real heads.
+ * If the task wants to deactivate itself, it should call s_task_deactivate.
+ * Alternatively it can return with TASK_SLEEP from within the pkt_handler.
+ * The task then won't be receiving SIG_WAKEUP and its heads won't be
+ * synchronized with the real heads.
  *
  * After talking to a client, if it needs to process packets again,
  * the task must reactivate via s_task_activate. Note that tasks which do not
@@ -94,8 +101,8 @@
  * should never return with TASK_SLEEP.
  *
  * The error, busy and active flags are handled by s_sig_hn and s_task_shim.
- * Tasks' handlers should only make use of s_task_activate and return codes (0,
- * TASK_SLEEP or TASK_ERROR).
+ * Tasks' handlers should only make use of s_task_activate, s_task_deactivate
+ * and return codes (0, TASK_SLEEP or TASK_ERROR).
  *
  * Tasks are defined in a static global array, see THE FULL LIST.
  *
@@ -125,10 +132,7 @@
  * ----------------------------------------------------------------------------
  * ---------------------------------- TO DO -----------------------------------
  * ----------------------------------------------------------------------------
- * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
- * - Check if packet is valid and drop (increment another counter for malformed
- *   packets).
- * - Check if repeating the loop over all rings until no more packets is better
+ * - !! Check if repeating the loop over all rings until no more packets is better
  *   than exiting and waiting for a WAKEUP.
  * - Set umask for the save-to-file task.
  * - Check filename for non-printable and non-ASCII characters.
@@ -139,6 +143,7 @@
  *   socket block)?
  * - Write REQ job statistics in a global database such that it can be looked
  *   up by filename, client IP or time frame.
+ * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
  * - FIX: why does the save-to-file count more missed packets than coordinator?
  */
 
@@ -167,6 +172,7 @@ typedef int (s_pkt_fn)(zloop_t*, tespkt*, uint16_t, uint16_t, int, task_t*);
 struct _task_t
 {
 	zloop_reader_fn* client_handler;
+	zloop_t*         loop;
 	s_pkt_fn*        pkt_handler;
 	s_data_fn*       data_init;
 	s_data_fn*       data_fin;
@@ -182,11 +188,12 @@ struct _task_t
 	uint16_t    prev_fseq;
 	uint16_t    prev_pseq_mca;
 	uint16_t    prev_pseq_tr;
+	bool        automute;
+	bool        autoactivate;
+	bool        just_activated;
 	bool        error;
 	bool        busy;
 	bool        active;
-	bool        autoactivate;
-	bool        just_activated;
 #ifdef ENABLE_FULL_DEBUG
 	struct
 	{
@@ -222,6 +229,7 @@ static zactor_fn       s_task_shim;
 static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
 static inline void s_task_activate (task_t* self);
+static inline int  s_task_deactivate (task_t* self);
 static int s_task_dispatch (task_t* self, zloop_t* loop,
 		uint16_t ring_id, uint16_t missed);
 
@@ -476,10 +484,12 @@ struct s_task_hist_data_t
 
 /* There is no handler for the PUB socket. */
 static s_pkt_fn        s_task_hist_pkt_hn;
+
+/* Task initializer and finalizer */
 static s_data_fn       s_task_hist_init;
 static s_data_fn       s_task_hist_fin;
 
-/* ----------------------------- THE FULL LIST ----------------------------- */
+/* ----------------------------- THE TASK LIST ----------------------------- */
 
 #define NUM_TASKS 2
 static task_t s_tasks[] = {
@@ -490,6 +500,7 @@ static task_t s_tasks[] = {
 		.data_fin       = s_task_save_fin,
 		.front_addr     = "tcp://*:55555",
 		.front_type     = ZMQ_REP,
+		.automute       = 1,
 	},
 	{ // PUBLISH HIST
 		.pkt_handler    = s_task_hist_pkt_hn,
@@ -792,14 +803,14 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	 * first time after activation. */
 	self->just_activated = 0;
 
+	if (rc == TASK_SLEEP)
+		rc = s_task_deactivate (self); /* will return TASK_ERROR on error */
+
 	if (rc == TASK_ERROR)
-	{
+	{ /* either pkt_handler or s_task_deactivate failed */
 		self->error = 1;
 		return -1;
 	}
-
-	if (rc == TASK_SLEEP)
-		self->active = 0;
 
 	/* TO DO: check the rest of the rings, depending on rc */
 
@@ -862,6 +873,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	assert (self->id > 0);
 	
 	zloop_t* loop = zloop_new ();
+	self->loop = loop;
 	/* Only the coordinator thread should get interrupted, we wait for
 	 * SIG_STOP. */
 #if (CZMQ_VERSION_MAJOR > 3)
@@ -897,6 +909,10 @@ s_task_shim (zsock_t* pipe, void* self_)
 			"Listening on port(s) %s", self->front_addr);
 	}
 	/* Register the readers */
+	if (self->automute)
+		assert (self->frontend != NULL &&
+				self->client_handler != NULL);
+
 	rc = zloop_reader (loop, pipe, s_sig_hn, self);
 	if (self->client_handler != NULL)
 	{
@@ -930,6 +946,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	
 	if (self->autoactivate)
 		s_task_activate (self);
+	
 	rc = zloop_start (loop);
 	dbg_assert (rc == -1); /* we don't get interrupted */
 
@@ -1032,11 +1049,17 @@ s_task_stop (task_t* self)
 
 /*
  * Synchronizes the task's head with the ring's head and sets active to true.
+ * If the task handles one client at a time, disables reading the
+ * client_handler.
  */
 static inline void
 s_task_activate (task_t* self)
 {
 	assert (self != NULL);
+
+	if (self->automute)
+		zloop_reader_end (self->loop, self->frontend);
+
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
 		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
@@ -1044,6 +1067,31 @@ s_task_activate (task_t* self)
 	}
 	self->active = 1;
 	self->just_activated = 1;
+}
+
+/*
+ * Deactivates the task and, if the task handles one client at a time, enables
+ * reading the client_handler.
+ * Returns 0 on success, TASK_ERROR on error.
+ */
+static inline int
+s_task_deactivate (task_t* self)
+{
+	if (self->automute)
+	{
+		int rc = zloop_reader (self->loop, self->frontend,
+				self->client_handler, self);
+		if (rc == -1)
+		{
+			s_msg (errno, LOG_ERR, self->id,
+				"Could not re-enable the zloop reader");
+			return TASK_ERROR;
+		}
+	}
+
+	self->active = 0;
+
+	return 0;
 }
 
 /*
@@ -1307,9 +1355,10 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	s_msgf (0, LOG_INFO, self->id,
 		"Opened files %s.* for writing", sjob->filename);
 
-	/* Disable polling on the reader until the job is done */
-	zloop_reader_end (loop, reader);
+	/* Disable polling on the reader until the job is done. Wakeup
+	 * packet handler. */
 	s_task_activate (self);
+
 	return 0;
 }
 
@@ -1675,15 +1724,8 @@ done:
 		}
 		s_task_save_stats_send  (sjob, self->frontend);
 
-		/* Enable polling on the reader. */
-		rc = zloop_reader (loop, self->frontend,
-				self->client_handler, self);
-		if (rc == -1)
-		{
-			s_msg (errno, LOG_ERR, self->id,
-				"Could not re-enable the zloop reader");
-			return TASK_ERROR;
-		}
+		/* Enable polling on the reader and deactivate packet
+		 * handler. */
 		return TASK_SLEEP;
 	}
 
