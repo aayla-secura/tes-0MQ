@@ -442,6 +442,7 @@ static int   s_task_save_stats_send  (struct s_task_save_data_t* sjob,
 	zsock_t* frontend);
 
 /* Ongoing job helpers */
+static void  s_task_save_flush (struct s_task_save_data_t* sjob);
 static int   s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len, int task_id);
 static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
@@ -1742,31 +1743,9 @@ done:
 
 	/* ********************** Check if done. *************************** */
 	if (finishing)
-	{ /* flush all buffers */
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.bdat, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.mdat, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.tdat, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.edat, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.fidx, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.midx, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.tidx, 1);
-		} while (jobrc == EINPROGRESS);
-		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio.ridx, 1);
-		} while (jobrc == EINPROGRESS);
+	{
+		/* Flush all buffers. */
+		s_task_save_flush (sjob);
 
 		s_msgf (0, LOG_INFO, self->id,
 			"Finished writing %lu ticks and %lu events",
@@ -1855,6 +1834,7 @@ s_task_save_fin (task_t* self)
 	int rc = 0;
 	if (sjob->filename != NULL)
 	{ /* A job was in progress. _stats_send nullifies this. */
+		s_task_save_flush (sjob);
 		s_task_save_close (sjob);
 		rc  = s_task_save_stats_write (sjob);
 		rc |= s_task_save_stats_send  (sjob, self->frontend);
@@ -2130,6 +2110,41 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob, zsock_t* frontend)
 	sjob->recording = 0;
 
 	return rc;
+}
+
+/*
+ * Blocks untils the aio jobs for all bufzones are ready.
+ */
+static void
+s_task_save_flush (struct s_task_save_data_t* sjob)
+{
+	assert (sjob != NULL);
+
+	int jobrc;
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.bdat, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.mdat, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.tdat, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.edat, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.fidx, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.midx, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.tidx, 1);
+	} while (jobrc == EINPROGRESS);
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.ridx, 1);
+	} while (jobrc == EINPROGRESS);
 }
 
 /*
