@@ -247,12 +247,22 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #define TSAVE_REQ_PIC     "s881"
 #define TSAVE_REP_PIC "18888888"
 
+#define TSAVE_FIDX_LEN 16         // frame index
+#define TSAVE_TIDX_LEN  8         // tick index
+#define TSAVE_SIDX_LEN 16         // MCA and trace indices
+#define TSAVE_STAT_LEN 64         // job statistics
 #define TSAVE_ROOT "/media/data/" // must have a trailing slash
-#define TSAVE_ONLYFILES           // for now we don't generate filenames
-#define TSAVE_FIDX_LEN 16        // frame index
-#define TSAVE_TIDX_LEN  8        // tick index
-#define TSAVE_SIDX_LEN 16        // MCA and trace indices
-#define TSAVE_STAT_LEN 64        // job statistics
+
+#define TSAVE_REQUIRE_FILENAME    // for now we don't generate filenames
+// #define TSAVE_SINGLE_FILE         // save all payloads (with headers) to single .dat file
+#ifdef TSAVE_SINGLE_FILE
+#  ifndef TSAVE_SAVE_HEADERS
+#    define TSAVE_SAVE_HEADERS
+#  endif
+#endif
+// #define TSAVE_SAVE_HEADERS        // save headers in .*dat files
+// #define TSAVE_NO_BAD_FRAMES       // drop bad frames
+
 /* Employ a buffer zone for asynchronous writing. We memcpy frames into the
  * bufzone, between its head and cursor (see s_task_save_data_t below) and
  * queue batches with aio_write. aio_write has significant overhead and is not
@@ -263,8 +273,6 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #ifdef ENABLE_FULL_DEBUG
 #  define TSAVE_HISTBINS 11
 #endif
-/* #define TSAVE_SAVE_HEADERS */
-/* #define TSAVE_NO_BAD_FRAMES */
 
 /*
  * Transformed packet type byte: for the frame index
@@ -373,10 +381,14 @@ struct s_task_save_data_t
 	struct s_task_save_stats_t st;
 
 	struct {
+#ifdef TSAVE_SINGLE_FILE
+		struct s_task_save_aiobuf_t dat;  // all payloads
+#else
 		struct s_task_save_aiobuf_t bdat; // bad payloads
 		struct s_task_save_aiobuf_t mdat; // MCA payloads
 		struct s_task_save_aiobuf_t tdat; // tick payloads
 		struct s_task_save_aiobuf_t edat; // event payloads
+#endif
 		struct s_task_save_aiobuf_t fidx; // frame index
 		struct s_task_save_aiobuf_t midx; // MCA index
 		struct s_task_save_aiobuf_t tidx; // tick index
@@ -1433,9 +1445,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 }
 
 /*
- * Saves packets to a file. flen is the frame length. Will drop frames that say
- * packet is longer than this. Will not write more than what the frame header
- * says.
+ * Saves packet payloads to corresponding file(s) and writes index files.
  */
 static int
 s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
@@ -1455,9 +1465,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if (err)
 	{
-		sjob->st.frames_dropped++;
 #ifdef TSAVE_NO_BAD_FRAMES
 		/* drop bad frames */
+		sjob->st.frames_dropped++;
 		return 0;
 #endif
 	}
@@ -1476,7 +1486,11 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	/* **** Update tick and frame indices and choose the data file. **** */
 	struct s_task_save_aiobuf_t* aiofidx = &sjob->aio.fidx;
-	struct s_task_save_aiobuf_t* aiodat = NULL;
+#ifdef TSAVE_SINGLE_FILE
+	struct s_task_save_aiobuf_t* aiodat = &sjob->aio.dat;
+#else
+	struct s_task_save_aiobuf_t* aiodat = NULL; /* set later */
+#endif
 	struct s_task_save_fidx_t fidx;
 	fidx.length = paylen;
 	fidx.esize = esize;
@@ -1503,17 +1517,23 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (err)
 	{
 		fidx.ftype.PT = TSAVE_FTYPE_BAD;
+#ifndef TSAVE_SINGLE_FILE
 		aiodat = &sjob->aio.bdat;
+#endif
 	}
 	else if (is_mca)
 	{
 		fidx.ftype.PT = TSAVE_FTYPE_MCA;
+#ifndef TSAVE_SINGLE_FILE
 		aiodat = &sjob->aio.mdat;
+#endif
 	}
 	else if (is_tick)
 	{
 		fidx.ftype.PT = TSAVE_FTYPE_TICK;
+#ifndef TSAVE_SINGLE_FILE
 		aiodat = &sjob->aio.tdat;
+#endif
 
 		if (sjob->st.ticks > 0)
 		{
@@ -1529,7 +1549,9 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 	else
 	{
+#ifndef TSAVE_SINGLE_FILE
 		aiodat = &sjob->aio.edat;
+#endif
 
 		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
 		const struct tespkt_event_type* etype = tespkt_etype (pkt);
@@ -1751,10 +1773,14 @@ done:
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
+#ifdef TSAVE_SINGLE_FILE
+		s_task_save_dbg_aiobuf_stats (&sjob->aio.dat, "ALL data", self->id);
+#else
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.bdat, "BAD data", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.mdat, "MCA data", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.tdat, "Tick data", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.edat, "Event data", self->id);
+#endif
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.fidx, "Frame index", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.tidx, "Tick index", self->id);
 		s_task_save_dbg_aiobuf_stats (&sjob->aio.midx, "MCA index", self->id);
@@ -1798,10 +1824,15 @@ s_task_save_init (task_t* self)
 	static struct s_task_save_data_t sjob;
 	sjob.fd = -1;
 
-	int rc = s_task_save_init_aiobuf (&sjob.aio.bdat);
+	int rc = 0;
+#ifdef TSAVE_SINGLE_FILE
+	rc |= s_task_save_init_aiobuf (&sjob.aio.dat);
+#else
+	rc |= s_task_save_init_aiobuf (&sjob.aio.bdat);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.mdat);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.tdat);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.edat);
+#endif
 	rc |= s_task_save_init_aiobuf (&sjob.aio.fidx);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.midx);
 	rc |= s_task_save_init_aiobuf (&sjob.aio.tidx);
@@ -1840,10 +1871,14 @@ s_task_save_fin (task_t* self)
 		rc |= s_task_save_stats_send  (sjob, self->frontend);
 	}
 
+#ifdef TSAVE_SINGLE_FILE
+	s_task_save_fin_aiobuf (&sjob->aio.dat);
+#else
 	s_task_save_fin_aiobuf (&sjob->aio.bdat);
 	s_task_save_fin_aiobuf (&sjob->aio.mdat);
 	s_task_save_fin_aiobuf (&sjob->aio.tdat);
 	s_task_save_fin_aiobuf (&sjob->aio.edat);
+#endif
 	s_task_save_fin_aiobuf (&sjob->aio.fidx);
 	s_task_save_fin_aiobuf (&sjob->aio.midx);
 	s_task_save_fin_aiobuf (&sjob->aio.tidx);
@@ -1930,14 +1965,20 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	strcpy (buf, sjob->filename);
 	char* ext = buf + strlen (buf);
 
+	rc = 0;
+#ifdef TSAVE_SINGLE_FILE
+	strcpy (ext, ".dat");
+	rc |= s_task_save_open_aiobuf (&sjob->aio.dat, buf, fmode);
+#else
 	strcpy (ext, ".bdat");
-	rc  = s_task_save_open_aiobuf (&sjob->aio.bdat, buf, fmode);
+	rc |= s_task_save_open_aiobuf (&sjob->aio.bdat, buf, fmode);
 	strcpy (ext, ".mdat");
-	rc  = s_task_save_open_aiobuf (&sjob->aio.mdat, buf, fmode);
+	rc |= s_task_save_open_aiobuf (&sjob->aio.mdat, buf, fmode);
 	strcpy (ext, ".tdat");
 	rc |= s_task_save_open_aiobuf (&sjob->aio.tdat, buf, fmode);
 	strcpy (ext, ".edat");
 	rc |= s_task_save_open_aiobuf (&sjob->aio.edat, buf, fmode);
+#endif
 	strcpy (ext, ".fidx");
 	rc |= s_task_save_open_aiobuf (&sjob->aio.fidx, buf, fmode);
 	strcpy (ext, ".midx");
@@ -1963,10 +2004,14 @@ s_task_save_close (struct s_task_save_data_t* sjob)
 	assert (sjob->filename != NULL);
 
 	/* Close the data files. */
+#ifdef TSAVE_SINGLE_FILE
+	s_task_save_close_aiobuf (&sjob->aio.dat);
+#else
 	s_task_save_close_aiobuf (&sjob->aio.bdat);
 	s_task_save_close_aiobuf (&sjob->aio.mdat);
 	s_task_save_close_aiobuf (&sjob->aio.tdat);
 	s_task_save_close_aiobuf (&sjob->aio.edat);
+#endif
 	s_task_save_close_aiobuf (&sjob->aio.fidx);
 	s_task_save_close_aiobuf (&sjob->aio.midx);
 	s_task_save_close_aiobuf (&sjob->aio.tidx);
@@ -2121,6 +2166,11 @@ s_task_save_flush (struct s_task_save_data_t* sjob)
 	assert (sjob != NULL);
 
 	int jobrc;
+#ifdef TSAVE_SINGLE_FILE
+	do {
+		jobrc = s_task_save_queue_aiobuf (&sjob->aio.dat, 1);
+	} while (jobrc == EINPROGRESS);
+#else
 	do {
 		jobrc = s_task_save_queue_aiobuf (&sjob->aio.bdat, 1);
 	} while (jobrc == EINPROGRESS);
@@ -2133,6 +2183,7 @@ s_task_save_flush (struct s_task_save_data_t* sjob)
 	do {
 		jobrc = s_task_save_queue_aiobuf (&sjob->aio.edat, 1);
 	} while (jobrc == EINPROGRESS);
+#endif
 	do {
 		jobrc = s_task_save_queue_aiobuf (&sjob->aio.fidx, 1);
 	} while (jobrc == EINPROGRESS);
@@ -2410,7 +2461,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 		return NULL;
 	}
 
-#ifdef TSAVE_ONLYFILES
+#ifdef TSAVE_REQUIRE_FILENAME
 	if (filename[len - 1] == '/')
 	{
 		s_msg (0, LOG_DEBUG, task_id,
@@ -2502,7 +2553,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	assert (rs == finalpath);
 
 	/* Add the base filename (realpath removes the trailing slash) */
-#ifdef TSAVE_ONLYFILES
+#ifdef TSAVE_REQUIRE_FILENAME
 	assert (strlen (cur_seg) > 0);
 #else
 	/* TO DO: generate a filename is none is given */
