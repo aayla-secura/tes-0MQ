@@ -586,7 +586,7 @@ tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		s_tasks[t].id = t + 1;
-		s_msgf (0, LOG_DEBUG, 0, "Starting task #%d", t + 1);
+		s_msg (0, LOG_DEBUG, 0, "Starting task #%d", t + 1);
 		rc = s_task_start (ifd, &s_tasks[t]);
 		if (rc != 0)
 		{
@@ -613,7 +613,7 @@ tasks_read (zloop_t* loop)
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		s_msgf (0, LOG_DEBUG, 0, "Registering reader for task #%d", t);
+		s_msg (0, LOG_DEBUG, 0, "Registering reader for task #%d", t);
 		task_t* self = &s_tasks[t];
 		rc = zloop_reader (loop, zactor_sock(self->shim),
 			s_die_hn, NULL);
@@ -636,7 +636,7 @@ tasks_mute (zloop_t* loop)
 	assert (loop != NULL);
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		s_msgf (0, LOG_DEBUG, 0,
+		s_msg (0, LOG_DEBUG, 0,
 			"Unregistering reader for task #%d", t);
 		task_t* self = &s_tasks[t];
 		zloop_reader_end (loop, zactor_sock(self->shim));
@@ -657,7 +657,7 @@ tasks_wakeup (void)
 			int rc = zsock_signal (self->shim, SIG_WAKEUP);
 			if (rc != 0)
 			{
-				s_msgf (errno, LOG_ERR, 0,
+				s_msg (errno, LOG_ERR, 0,
 					"Could not signal task #%d", t);
 				return -1;
 			}
@@ -674,7 +674,7 @@ tasks_destroy (void)
 {
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		s_msgf (0, LOG_DEBUG, 0, "Stopping task #%d", t);
+		s_msg (0, LOG_DEBUG, 0, "Stopping task #%d", t);
 		task_t* self = &s_tasks[t];
 		s_task_stop (self);
 	}
@@ -918,7 +918,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 			self->error = 1;
 			goto cleanup;
 		}
-		s_msgf (0, LOG_INFO, self->id,
+		s_msg (0, LOG_INFO, self->id,
 			"Listening on port(s) %s", self->front_addr);
 	}
 	/* Register the readers */
@@ -987,7 +987,7 @@ cleanup:
 	zsock_destroy (&self->frontend);
 	s_msg (0, LOG_DEBUG, self->id, "Done");
 #ifdef ENABLE_FULL_DEBUG
-	s_msgf (0, LOG_DEBUG, self->id,
+	s_msg (0, LOG_DEBUG, self->id,
 		"Woken up %lu times, %lu when not active, "
 		"%lu when no new packets, dispatched "
 		"%lu rings, %lu packets missed",
@@ -998,7 +998,7 @@ cleanup:
 		self->dbg_stats.pkts.missed
 		);
 	for (int r = 0; r < NUM_RINGS; r++)
-		s_msgf (0, LOG_DEBUG, self->id,
+		s_msg (0, LOG_DEBUG, self->id,
 			"Ring %d received: %lu", r, 
 			self->dbg_stats.pkts.rcvd_in[r]);
 #endif
@@ -1200,7 +1200,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
 				rxring, self->heads[ring_id]);
-		s_msgf (0, LOG_DEBUG, self->id,
+		s_msg (0, LOG_DEBUG, self->id,
 				"Dispatching ring %hu: missed %hu at frame %hu",
 				ring_id, missed, tespkt_fseq (pkt));
 	}
@@ -1234,7 +1234,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #ifdef ENABLE_FULL_DEBUG
 		if (err != 0)
 		{
-			s_msgf (0, LOG_DEBUG, self->id,
+			s_msg (0, LOG_DEBUG, self->id,
 				"Packet invalid, error is 0x%x", err);
 		}
 #endif
@@ -1243,7 +1243,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		if (flen > len)
 		{
 #ifdef ENABLE_FULL_DEBUG
-			s_msgf (0, LOG_DEBUG, self->id,
+			s_msg (0, LOG_DEBUG, self->id,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
 #endif
@@ -1325,13 +1325,13 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	bool checkonly = (sjob->min_ticks == 0);
 	if (checkonly)
 	{
-		s_msgf (0, LOG_INFO, self->id,
+		s_msg (0, LOG_INFO, self->id,
 			"Received request for status of '%s'",
 			filename);
 	}
 	else
 	{
-		s_msgf (0, LOG_INFO, self->id,
+		s_msg (0, LOG_INFO, self->id,
 			"Received request to write %lu ticks and "
 			"%lu events to '%s'",
 			sjob->min_ticks, sjob->min_events, filename);
@@ -1418,7 +1418,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		if (errno != exp_errno)
 		{
-			s_msgf (errno, LOG_ERR, self->id,
+			s_msg (errno, LOG_ERR, self->id,
 				"Could not open file %s",
 				sjob->filename);
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
@@ -1434,7 +1434,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	s_msgf (0, LOG_INFO, self->id,
+	s_msg (0, LOG_INFO, self->id,
 		"Opened files %s.* for writing", sjob->filename);
 
 	/* Disable polling on the reader until the job is done. Wakeup packet
@@ -1505,7 +1505,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-		s_msgf (0, LOG_DEBUG, self->id,
+		s_msg (0, LOG_DEBUG, self->id,
 			"Missed %hu at frame #%lu",
 			missed, sjob->st.frames - 1);
 #endif
@@ -1624,7 +1624,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #if 0
 		if (missed == 0)
 		{ /* should only happen in case of FPGA fault */
-			s_msgf (0, LOG_NOTICE, self->id,
+			s_msg (0, LOG_NOTICE, self->id,
 				"Received a%s %sframe (#%lu) "
 				"while a %s was ongoing",
 				is_mca ? " histogram" : (
@@ -1668,7 +1668,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		{ /* extra bytes */
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-			s_msgf (0, LOG_DEBUG, self->id, "Extra %s data "
+			s_msg (0, LOG_DEBUG, self->id, "Extra %s data "
 					"at frame #%lu",
 					is_mca ? "histogram" : "trace",
 					sjob->st.frames - 1);
@@ -1714,7 +1714,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			{
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-				s_msgf (0, LOG_DEBUG, self->id,
+				s_msg (0, LOG_DEBUG, self->id,
 					"Received a non-header %s frame (#%lu) "
 					"while no stream was ongoing",
 					is_mca ? "histogram" : "trace",
@@ -1769,7 +1769,7 @@ done:
 		/* Flush all buffers. */
 		s_task_save_flush (sjob);
 
-		s_msgf (0, LOG_INFO, self->id,
+		s_msg (0, LOG_INFO, self->id,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
@@ -1839,7 +1839,7 @@ s_task_save_init (task_t* self)
 	rc |= s_task_save_init_aiobuf (&sjob.aio.ridx);
 	if (rc != 0)
 	{
-		s_msgf (errno, LOG_ERR, self->id,
+		s_msg (errno, LOG_ERR, self->id,
 			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
 		return -1;
 	}
@@ -2288,7 +2288,7 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	{
 		/* TO DO: how to handle errors */
 #ifdef ENABLE_FULL_DEBUG
-		s_msgf (0, LOG_ERR, task_id,
+		s_msg (0, LOG_ERR, task_id,
 			"Queued %lu bytes, wrote %lu",
 			aiobuf->bufzone.enqueued,
 			aiobuf->bufzone.st.last_written);
@@ -2486,7 +2486,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 		assert (rs == finalpath);
 		if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
 		{
-			s_msgf (0, LOG_DEBUG, task_id,
+			s_msg (0, LOG_DEBUG, task_id,
 				"Resolved to %s, outside of root",
 				finalpath);
 			return NULL; /* outside of root */
@@ -2571,7 +2571,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	errno = 0;
 	if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
 	{
-		s_msgf (0, LOG_DEBUG, task_id,
+		s_msg (0, LOG_DEBUG, task_id,
 				"Resolved to %s, outside of root",
 				finalpath);
 		return NULL; /* outside of root */
@@ -2585,17 +2585,17 @@ static void
 s_task_save_dbg_aiobuf_stats (struct s_task_save_aiobuf_t* aiobuf,
 		const char* stream, int task_id)
 {
-	s_msgf (0, LOG_DEBUG, task_id, "%s stream: ", stream); 
+	s_msg (0, LOG_DEBUG, task_id, "%s stream: ", stream); 
 	uint64_t batches_tot = 0, steps = TSAVE_BUFSIZE / (TSAVE_HISTBINS - 1);
 	for (int b = 0 ; b < TSAVE_HISTBINS ; b++)
 	{
-		s_msgf (0, LOG_DEBUG, task_id,
+		s_msg (0, LOG_DEBUG, task_id,
 			"     %lu B to %lu B: %lu batches",
 			b*steps, (b+1)*steps, aiobuf->bufzone.st.batches[b]);
 		batches_tot += aiobuf->bufzone.st.batches[b];
 	}
 
-	s_msgf (0, LOG_DEBUG, task_id,
+	s_msg (0, LOG_DEBUG, task_id,
 		"     Wrote %lu batches (%lu repeated, %lu skipped, %lu blocked)",
 		batches_tot, aiobuf->bufzone.st.failed_batches,
 		aiobuf->bufzone.st.num_skipped, aiobuf->bufzone.st.num_blocked);
@@ -2634,7 +2634,7 @@ s_task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	s_msgf (0, LOG_INFO, self->id,
+	s_msg (0, LOG_INFO, self->id,
 		"Received request for a trace in the next %u seconds",
 		timeout);
 
@@ -2691,7 +2691,7 @@ s_task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (err)
 	{
 #ifdef ENABLE_FULL_DEBUG
-		s_msgf (0, LOG_DEBUG, self->id,
+		s_msg (0, LOG_DEBUG, self->id,
 			"Bad frame, error is %d", err);
 #endif
 		rep = TAVGTR_REQ_ERR;
@@ -2705,7 +2705,7 @@ s_task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if ((uint16_t)(cur_pseq - self->prev_pseq_tr) != 1)
 		{ /* missed frames */
 #ifdef ENABLE_FULL_DEBUG
-			s_msgf (0, LOG_DEBUG, self->id,
+			s_msg (0, LOG_DEBUG, self->id,
 				"Mismatch in protocol sequence after byte %hu",
 				trace->cur_size);
 #endif
@@ -2840,7 +2840,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t cur_pseq = tespkt_pseq (pkt);
 		if ((uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
 		{
-			s_msgf (0, LOG_INFO, self->id,
+			s_msg (0, LOG_INFO, self->id,
 				"Frame out of protocol sequence: %hu -> %hu",
 				self->prev_pseq_mca, cur_pseq);
 			hist->discard = 1;
@@ -2851,7 +2851,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 		if (hist->cur_nbins > 0)
 		{
-			s_msgf (0, LOG_WARNING, self->id,
+			s_msg (0, LOG_WARNING, self->id,
 				"Received new header frame while waiting for "
 				"%d more bins", hist->nbins - hist->cur_nbins);
 			hist->discard = 1;
@@ -2867,7 +2867,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			hist->discard = 0;
 #ifdef ENABLE_FULL_DEBUG
 			hist->dropped++;
-			s_msgf (0, LOG_DEBUG, self->id,
+			s_msg (0, LOG_DEBUG, self->id,
 				"Discarded %lu out of %lu histograms so far",
 				hist->dropped, hist->dropped + hist->published);
 #endif
@@ -2888,7 +2888,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	hist->cur_nbins += tespkt_mca_nbins (pkt);
 	if (hist->cur_nbins > hist->nbins)
 	{
-		s_msgf (0, LOG_WARNING, self->id,
+		s_msg (0, LOG_WARNING, self->id,
 			"Received extra bins: expected %d, so far got %d",
 			hist->nbins, hist->cur_nbins);
 		hist->discard = 1;
@@ -2910,7 +2910,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		/* Send the histogram */
 #ifdef ENABLE_FULL_DEBUG
 		hist->published++;
-		// s_msgf (0, LOG_DEBUG, self->id,
+		// s_msg (0, LOG_DEBUG, self->id,
 		//         "Publishing an %u-byte long histogram",
 		//         hist->cur_size);
 		int rc = zmq_send (zsock_resolve (self->frontend),
@@ -2923,7 +2923,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		}
 		if ((unsigned int)rc != hist->cur_size)
 		{
-			s_msgf (errno, LOG_ERR, self->id,
+			s_msg (errno, LOG_ERR, self->id,
 				"Histogram is %lu bytes long, sent %u",
 				hist->cur_size, rc);
 			return TASK_ERROR;

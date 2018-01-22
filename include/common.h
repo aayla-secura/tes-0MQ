@@ -67,61 +67,27 @@ int is_daemon;
 int is_verbose;
 
 /*
- * Print fixed or formatted messages of a given priority (one of syslog's
- * levels.). If errnum is not 0, it will be included using strerror_r.  When
- * running as a daemon, messages are printed using syslog's corresponding
- * level. Facility is not changed, set it when opening syslog.
+ * Print formatted messages of a given priority (one of syslog's levels.). If
+ * errnum is not 0, it will be included using strerror_r. When running as
+ * a daemon, messages are printed using syslog's corresponding level. Facility
+ * is not changed, set it when opening syslog.
+ *
+ * If task > 0  prefix is "[Task #<task>] "
+ * If task == 0 prefix is "[Coordinator] "
+ * If task > 0  there is no prefix
  *
  * If is_verbose is false, debugging messages are suppressed.
  * Otherwise, they are sent to stdout or stderr, depending on the verbosity level:
- * if is_verbose is false, warnings and errors are sent to stderr,
- * informational messages to stdout;
- * if is_verbose is true, debugging messages are sent to stderr, all others to
- * stdout.
+ *   if is_verbose is false, warnings and errors are sent to stderr,
+ *     informational messages to stdout;
+ *   if is_verbose is true, debugging messages are sent to stderr, all others to
+ *     stdout.
  */
 
 #define MAX_MSG_LEN 512
 
 static void
-s_msg (int errnum, int priority, int task, const char* msg)
-{
-	if ( ! is_verbose && priority == LOG_DEBUG )
-		return;
-
-	char err[MAX_MSG_LEN];
-	memset (err, 0, MAX_MSG_LEN);
-	if (errnum != 0)
-	{
-		int len = snprintf (err, MAX_MSG_LEN, ": ");
-		/* Thread-safe version of strerror. */
-		strerror_r (errnum, err + len, MAX_MSG_LEN - len);
-	}
-
-	if (is_daemon)
-	{
-		if (task > 0)
-			syslog (priority, "[Task #%d]     %s%s", task, msg, err);
-		else
-			syslog (priority, "[Coordinator] %s%s", msg, err);
-	}
-	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
-	{
-		if (task > 0)
-			fprintf (stderr, "[Task #%d]     %s%s\n", task, msg, err);
-		else
-			fprintf (stderr, "[Coordinator] %s%s\n", msg, err);
-	}
-	else
-	{
-		if (task > 0)
-			fprintf (stdout, "[Task #%d]     %s%s\n", task, msg, err);
-		else
-			fprintf (stdout, "[Coordinator] %s%s\n", msg, err);
-	}
-}
-
-static void
-s_msgf (int errnum, int priority, int task, const char* format, ...)
+s_msg (int errnum, int priority, int task, const char* format, ...)
 {
 	if ( ! is_verbose && priority == LOG_DEBUG )
 		return;
@@ -146,19 +112,20 @@ s_msgf (int errnum, int priority, int task, const char* format, ...)
 		else
 			syslog (priority, "[Coordinator] %s", msg);
 	}
-	else if (( priority == LOG_DEBUG ) || ( ! is_verbose && priority < 5 ))
-	{
-		if (task > 0)
-			fprintf (stderr, "[Task #%d]     %s\n", task, msg);
-		else
-			fprintf (stderr, "[Coordinator] %s\n", msg);
-	}
 	else
 	{
-		if (task > 0)
-			fprintf (stdout, "[Task #%d]     %s\n", task, msg);
+		FILE* outbuf;
+		if (( priority == LOG_DEBUG ) ||
+				( ! is_verbose && priority < 5 ))
+			outbuf = stderr;
 		else
-			fprintf (stdout, "[Coordinator] %s\n", msg);
+			outbuf = stdout;
+
+		if (task > 0)
+			fprintf (outbuf, "[Task #%d]     %s\n", task, msg);
+		else
+			fprintf (outbuf, "%s%s\n",
+				( task == 0 ? "[Coordinator] " : "" ), msg);
 	}
 	va_end (args);
 }

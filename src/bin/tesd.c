@@ -175,7 +175,7 @@ s_prepare_if (const char* ifname_full)
 		;
 	if (end <= start)
 	{
-		s_msgf (0, LOG_ERR, 0,
+		s_msg (0, LOG_ERR, 0,
 			"Malformed interface name '%s'", ifname_full);
 		return -1;
 	}
@@ -304,7 +304,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 	
 	if (loop == NULL)
 	{ /* final stats, exiting */
-		s_msgf (0, LOG_INFO, 0, 
+		s_msg (0, LOG_INFO, 0, 
 			"received: %10lu   | "
 			"missed: %10lu   | "
 			"polled: %10lu   | "
@@ -317,7 +317,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 	}
 	else
 	{ /* called by zloop's timer */
-		s_msgf (0, LOG_INFO, 0, 
+		s_msg (0, LOG_INFO, 0, 
 			// "elapsed: %2.5fs   | "
 			"missed: %10lu   | "
 			"skipped polls: %10lu   | "
@@ -439,13 +439,13 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	data.ifd = tes_if_open (ifname_full, NULL, 0, 0);
 	if (data.ifd == NULL)
 	{
-		s_msgf (errno, LOG_ERR, 0, "Could not open interface %s",
+		s_msg (errno, LOG_ERR, 0, "Could not open interface %s",
 			ifname_full);
 		return -1;
 	}
 	const char* ifname = tes_if_name (data.ifd);
 	dbg_assert (ifname != NULL);
-	s_msgf (0, LOG_INFO, 0, "Opened interface %s", ifname);
+	s_msg (0, LOG_INFO, 0, "Opened interface %s", ifname);
 	dbg_assert (tes_if_rxrings (data.ifd) == NUM_RINGS);
 
 	/* Bring the interface up and put it in promiscuous mode. */
@@ -487,7 +487,7 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 			s_msg (errno, LOG_ERR, 0, "Could not set a timer");
 			goto cleanup;
 		}
-		s_msgf (0, LOG_DEBUG, 0, "Will print stats every %d seconds",
+		s_msg (0, LOG_DEBUG, 0, "Will print stats every %d seconds",
 			stat_period);
 	}
 
@@ -590,7 +590,7 @@ main (int argc, char **argv)
 		/* Start syslog. */
 		openlog ("TES server", 0, LOG_DAEMON);
 
-		s_msgf (0, LOG_DEBUG, 0,
+		s_msg (0, LOG_DEBUG, 0,
 			"Wrote pid to file '%s'", pidfile);
 	}
 
