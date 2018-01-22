@@ -13,9 +13,21 @@ HEADERS    := $(wildcard $(CPATH)/*.h $(CPATH)/net/*.h)
 TEST_PROGS := $(patsubst %.c,%,$(notdir $(wildcard $(TEST_SRC)/*.c)))
 
 CC      := gcc
-CFLAGS  += -I$(CPATH) -fPIC #-Wall -Wextra \
-	# -Wno-unused-parameter -Wno-unused-function
+CFLAGS  += -I$(CPATH) -fPIC -Wall -Wextra \
+	   -Wno-unused-parameter -Wno-unused-function
 LDLIBS  := -lzmq -lczmq -lrt
+UNAME := $(shell uname -o)
+
+ifeq ($(HDF5LIB),)
+ifeq ($(UNAME),FreeBSD)
+      HDF5LIB := "-lhdf5"
+else ifeq ($(UNAME),GNU/Linux)
+      HDF5LIB := "-lhdf5_serial"
+else  # unknown OS
+      $(error I do not know what the HDF5 library is called on $(UNAME),\
+              define the HDF5LIB variable as "-l<lib>".)
+endif
+endif # end HDF5LIB == ""
 
 all: test main
 
@@ -34,7 +46,7 @@ $(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c
 
 $(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
 	$(LIBS:%=$(LIB_DEST)/lib%.a)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(HDF5LIB) $(LDLIBS) -o $@
 
 $(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o
 	ar rcs $@ $^
@@ -54,6 +66,7 @@ $(BIN_DEST)/%: $(TEST_SRC)/%.o $(LIBS:%=$(LIB_DEST)/lib%.a)
 			$(findstring pthread,$*) \
 			$(findstring pcap,$*), \
 			-l$(lib)) \
+		$(if $(findstring hdf5,$*),$(HDF5LIB)) \
 		 -o $@
 
 ##################################################
