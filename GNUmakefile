@@ -13,60 +13,56 @@ HEADERS    := $(wildcard $(CPATH)/*.h $(CPATH)/net/*.h)
 TEST_PROGS := $(patsubst %.c,%,$(notdir $(wildcard $(TEST_SRC)/*.c)))
 
 CC      := gcc
-CFLAGS  += -I$(CPATH) -fPIC -Wall -Wextra \
-	-Wno-unused-parameter -Wno-unused-function
-LDFLAGS += -L$(LIB_DEST)
-LDLIBS  := -lzmq -lczmq
+CFLAGS  += -I$(CPATH) -fPIC #-Wall -Wextra \
+	# -Wno-unused-parameter -Wno-unused-function
+LDLIBS  := -lzmq -lczmq -lrt
 
 all: test main
 
 ##################################################
 
-main: $(BIN_DEST)/tesd $(BIN_DEST)/tesc
+main: $(BIN_DEST)/tesd $(BIN_DEST)/tesc $(HEADERS) \
+	| $(BIN_DEST)
 	@echo
 	@echo "Now run 'make install'"
 
-$(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c \
-	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
-
-$(BIN_DEST)/tesd: $(BIN_SRC)/tesd.c \
-	$(LIBS:%=$(LIB_DEST)/lib%.so) $(HEADERS) \
-	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) $(LIBS:%=-l% ) -o $@
-
-$(LIB_DEST)/lib%.so: $(LIB_SRC)/%.c $(HEADERS) \
+libs: $(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
 	| $(LIB_DEST)
-	$(CC) $(CFLAGS) -c $< -o $@
-	$(CC) $(CFLAGS) $(LDFLAGS) -shared $< -o $@
+
+$(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
+	$(LIBS:%=$(LIB_DEST)/lib%.a)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o
+	ar rcs $@ $^
 
 $(LIB_DEST) $(BIN_DEST):
 	install -d $@
 
 ##################################################
 
-test: $(TEST_PROGS:%=$(BIN_DEST)/%) \
+test: $(TEST_PROGS:%=$(BIN_DEST)/%) $(HEADERS) \
 	| $(BIN_DEST)
 
 # name of program should include any needed libraries
-$(BIN_DEST)/%: $(TEST_SRC)/%.c $(HEADERS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $< $(foreach lib, \
-		$(findstring daemon_ng,$*) \
-		$(findstring pthread,$*) \
-		$(findstring pcap,$*), \
-		-l$(lib)) -o $@
+$(BIN_DEST)/%: $(TEST_SRC)/%.o $(LIBS:%=$(LIB_DEST)/lib%.a)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ \
+		$(foreach lib, \
+			$(findstring pthread,$*) \
+			$(findstring pcap,$*), \
+			-l$(lib)) \
+		 -o $@
 
 ##################################################
 
-install: $(BIN_DEST)/tesd $(BIN_DEST)/tesc \
-	$(LIBS:%=install-lib-%)
+install: $(BIN_DEST)/tesd $(BIN_DEST)/tesc
 	install -m 755 $(BIN_DEST)/tesd $(PREFIX)/sbin/tesd
 	install -m 755 $(BIN_DEST)/tesc $(PREFIX)/bin/tesc
 	@echo
 	@echo "Now run 'make clean'"
-
-install-lib-%: $(LIB_DEST)/lib%.so
-	install -m 755 $< $(PREFIX)/lib/lib$*.so
 
 ##################################################
 
@@ -75,4 +71,4 @@ clean:
 		$(BIN_DEST)/* $(LIB_DEST)/*
 
 .DEFAULT_GOAL := main
-.PHONY: all main test clean install
+.PHONY: all main libs test clean install
