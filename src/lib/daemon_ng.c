@@ -14,8 +14,6 @@
 #include <dirent.h>
 #include <errno.h>
 
-#define DAEMON_OK_MSG "0"
-#define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000
 
 #ifdef VERBOSE
@@ -54,10 +52,12 @@ static void s_close_nonstd_fds (void);
 static int s_close_open_fds (rlim_t max_fd);
 
 /* ------------------------------------------------------------------------- */
-/* -------------------------------- STATIC --------------------------------- */
+/* -------------------------------- HELPERS -------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-/* Try to get the soft limit on fd numbers  */
+/*
+ * Try to get the soft limit on fd numbers.
+ */
 static rlim_t
 s_get_max_fd (void)
 {
@@ -72,8 +72,10 @@ s_get_max_fd (void)
 		return rl.rlim_cur; /* Return the soft, not hard, limit, see NOTES */
 }
 
-/* Attempt to find all open file descriptors instead of blindly iterating up to
- * the maximum fd number */
+/*
+ * Attempt to find all open file descriptors instead of blindly iterating up to
+ * the maximum fd number.
+ */
 static int
 s_close_open_fds (rlim_t max_fd)
 {
@@ -143,8 +145,10 @@ s_close_open_fds (rlim_t max_fd)
 	return 0;
 }
 
-/* Attempts to close all file descriptors (except stdin, stdout, stderr) up to
- * the soft limit  */
+/*
+ * Attempts to close all file descriptors (except stdin, stdout, stderr) up to
+ * the soft limit.
+ */
 static void
 s_close_nonstd_fds (void)
 {
@@ -183,16 +187,19 @@ s_close_nonstd_fds (void)
 }
 
 /* ------------------------------------------------------------------------- */
-/* ------------------------------- EXTERNAL -------------------------------- */
+/* ---------------------------------- API ---------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-/* If we fail, we return -1 from the parent (i.e. in foreground) to the caller,
- * otherwise parent exits with 0 and the daemon returns 0 to caller. */
+/*
+ * If we fail, we return -1 from the parent (i.e. in foreground) to the caller,
+ * otherwise return the file descriptor of the pipe to parent. Caller
+ * should send DAEMON_OK_MSG or DAEMON_ERR_MSG to tell parent to exit with
+ * 0 or -1 respectively.
+ */
 int
-daemonize (const char* pidfile)
+daemonize_noexit (const char* pidfile)
 {
 	int rc;
-	int sig;
 	pid_t pid;
 	int pipe_fds[2];
 
@@ -204,7 +211,7 @@ daemonize (const char* pidfile)
 	sigemptyset (&sa.sa_mask);
 	sigprocmask (SIG_UNBLOCK, &sa.sa_mask, NULL);
 	sa.sa_handler = SIG_DFL;
-	for ( sig = 1; sig < NSIG ; sig++ )
+	for ( int sig = 1; sig < NSIG ; sig++ )
 	{
 		errno = 0;
 		sigaction (sig, &sa, NULL);
@@ -240,7 +247,6 @@ daemonize (const char* pidfile)
 	/* -------------------------------------------------- */
 	else if (pid > 0)
 	{
-		char sig;
 		struct pollfd poll_fd;
 		poll_fd.fd = pipe_fds[0];
 		poll_fd.events = POLLIN;
@@ -267,7 +273,9 @@ daemonize (const char* pidfile)
 			return -1;
 		}
 
-		ssize_t n = read (pipe_fds[0], &sig, 1);
+		/* Wait for signal on pipe from caller. */
+		char msg;
+		ssize_t n = read (pipe_fds[0], &msg, 1);
 		if (n == -1)
 		{
 			ERROR ("Could not read from pipe: %m");
@@ -280,7 +288,7 @@ daemonize (const char* pidfile)
 		}
 
 		close (pipe_fds[0]);
-		if ( memcmp (&sig, DAEMON_OK_MSG, 1) != 0 )
+		if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
 		{
 			/* Second fork didn't happen or failed and exited */
 			DEBUG ("Read an error from pipe");
@@ -447,24 +455,40 @@ daemonize (const char* pidfile)
 					pid, pidfile);
 			}
 
-			/* Done, signal parent */
-			ssize_t n = write (pipe_fds[1], DAEMON_OK_MSG, 1);
-			if (n == -1)
-			{
-				ERROR ("Could not write to pipe: %m");
-				close (pipe_fds[1]);
-				_exit (EXIT_FAILURE);
-			}
-			if (n != 1)
-			{
-				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
-			}
-
-			close (pipe_fds[1]);
-			closelog ();
-
-			/* Return to caller */
-			return 0;
+			/* Return pipe to caller */
+			return pipe_fds[1];
 		}
 	}
 }
+
+/*
+ * If we fail, we return -1 from the parent (i.e. in foreground) to the caller,
+ * otherwise parent exits with 0 and the daemon returns 0 to caller.
+ */
+int
+daemonize (const char* pidfile)
+{
+	int pipe_fd = daemonize_noexit (pidfile);
+	if (pipe_fd == -1)
+	{
+		/* Fork didn't happen. */
+		return -1;
+	}
+
+	/* Done, signal parent */
+	ssize_t n = write (pipe_fd, DAEMON_OK_MSG, 1);
+	close (pipe_fd);
+	if (n == -1)
+	{
+		ERROR ("Could not write to pipe: %m");
+		_exit (EXIT_FAILURE);
+	}
+	if (n != 1)
+	{
+		WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+	}
+
+	closelog ();
+	return 0;
+}
+
