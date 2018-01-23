@@ -6,7 +6,7 @@
 // #define MEASUREMENT "measurement"
 #define MEASUREMENT ""
 #define OVRWRT 1
-#define WAITDONE 1
+#define ASYNC 1
 
 int main (void)
 {
@@ -18,8 +18,8 @@ int main (void)
 		{ /* tick stream */
 			.filename = BASEFNAME ".tdat",
 			.dname = "tick",
-			.offset = 1,
-			.length = 7,
+			.offset = 2,
+			.length = 6,
 		},
 		{ /* event stream */
 			.filename = BASEFNAME ".edat",
@@ -34,7 +34,7 @@ int main (void)
 		.datasets = dsets,
 		.num_dsets = num_dsets,
 		.ovrwt = OVRWRT,
-		.async = WAITDONE,
+		.async = ASYNC,
 	};
 
 	int rc = hdf5_conv (&creq);
