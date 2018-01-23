@@ -14,6 +14,8 @@
 #include <dirent.h>
 #include <errno.h>
 
+#define DAEMON_OK_MSG  "0"
+#define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000
 
 #ifdef VERBOSE
@@ -191,13 +193,11 @@ s_close_nonstd_fds (void)
 /* ------------------------------------------------------------------------- */
 
 /*
- * If we fail, we return -1 from the parent (i.e. in foreground) to the caller,
- * otherwise return the file descriptor of the pipe to parent. Caller
- * should send DAEMON_OK_MSG or DAEMON_ERR_MSG to tell parent to exit with
- * 0 or -1 respectively.
+ * If we fail, we return -1 from the parent (i.e. in foreground) to the caller.
+ * If we succeed, parent exits with 0 and the daemon returns 0 to caller.
  */
 int
-daemonize_noexit (const char* pidfile)
+daemonize (const char* pidfile)
 {
 	int rc;
 	pid_t pid;
@@ -455,40 +455,23 @@ daemonize_noexit (const char* pidfile)
 					pid, pidfile);
 			}
 
-			/* Return pipe to caller */
-			return pipe_fds[1];
+			/* Done, signal parent */
+			ssize_t n = write (pipe_fds[1], DAEMON_OK_MSG, 1);
+			close (pipe_fds[1]);
+			if (n == -1)
+			{
+				ERROR ("Could not write to pipe: %m");
+				_exit (EXIT_FAILURE);
+			}
+			if (n != 1)
+			{
+				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+			}
+
+			closelog ();
+
+			/* Return to caller. */
+			return 0;
 		}
 	}
 }
-
-/*
- * If we fail, we return -1 from the parent (i.e. in foreground) to the caller,
- * otherwise parent exits with 0 and the daemon returns 0 to caller.
- */
-int
-daemonize (const char* pidfile)
-{
-	int pipe_fd = daemonize_noexit (pidfile);
-	if (pipe_fd == -1)
-	{
-		/* Fork didn't happen. */
-		return -1;
-	}
-
-	/* Done, signal parent */
-	ssize_t n = write (pipe_fd, DAEMON_OK_MSG, 1);
-	close (pipe_fd);
-	if (n == -1)
-	{
-		ERROR ("Could not write to pipe: %m");
-		_exit (EXIT_FAILURE);
-	}
-	if (n != 1)
-	{
-		WARN ("Wrote %lu bytes, expected 1", (size_t)n);
-	}
-
-	closelog ();
-	return 0;
-}
-
