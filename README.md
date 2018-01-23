@@ -30,10 +30,15 @@ At the moment we only handle one request at a time. Will block until done.
 
 1. **Filename**
 
-   It is relative to a hardcoded root, leading slashes are ignored.
-   Trailing slashes are not allowed. Missing directories are created.
+   Basename for the hdf5 file (no extension). It is relative to a hardcoded
+   root, leading slashes are ignored. Trailing slashes are not allowed. Missing
+   directories are created.
+
+2. **Measurement**
+
+   Name of hdf5 group relative to a hardcoded topmost group.
    
-2. **No. of ticks**
+3. **No. of ticks**
 
    The server will record all packets (including ethernet header) until at
    least that many ticks are seen.
@@ -43,18 +48,24 @@ At the moment we only handle one request at a time. Will block until done.
    Alternatively, if it is 0, the request is interpreted as a status request
    and the reply that was sent previously for this filename is re-sent.
 
-2. **No. of events**
+4. **No. of events**
 
    The server will record all packets (including ethernet header) until at
    least that many non-tick events are seen.
 
    The value is read as an **unsigned** int64.
 
-3. **Write mode**
+5. **Write mode**
 
- * "0": create but do not overwrite
+ * "0": create but do not overwrite hdf5 file
 
- * "1": create or overwrite
+ * "1": create or overwrite hdf5 file
+
+6. **Asyncronous conversion**
+
+ * "0": reply when hdf5 file is finalized
+
+ * "1": reply when hdf5 conversion begins
 
 A job will only terminate at receiving a tick, and only if both the minimum
 number of ticks and the minimum number of non-tick events has been recorded.
@@ -80,6 +91,8 @@ to get a status of a file, only the filename is required.
  * "4": error while opening the file, nothing was written
 
  * "5": error while writing to file, some data was saved
+
+ * "6": error while converting to hdf5 format
 
 2. **No. of ticks written**
 

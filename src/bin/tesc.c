@@ -14,8 +14,9 @@
 #define A_REQ_ABORT 2 // no such job (for status query) or file exist (for no-overwrite)
 #define A_REQ_EPERM 3 // filename is not allowed
 #define A_REQ_FAIL  4 // other error opening the file, nothing was written
-#define A_REQ_ERR   5 // error while writing, less than minimum requested was saved
-#define A_REQ_PIC     "s881"
+#define A_REQ_EWRT  5 // error while writing, less than minimum requested was saved
+#define A_REQ_ECONV 6 // error while converting to hdf5
+#define A_REQ_PIC   "ss8811"
 #define A_REP_PIC "18888888"
 
 /* mode T */
@@ -45,12 +46,14 @@ usage (const char* self)
 		"1) Save frames to a remote file: Selected by the 'A' option.\n"
 		"  Options:\n"
 		"    -A <filename>      Remote filename.\n"
+		"    -m <measurement>   Measurement name. Default is empty.\n"
 		"    -t <ticks>         Save at least that many ticks.\n"
 		"                       Default is 1.\n"
 		"    -e <ticks>         Save at least that many non-tick\n"
 	       	"                       events. Default is 0.\n"
 		"    -o                 Overwrite if file exists.\n"
 		"    -s                 Request status of filename.\n"
+		"    -a                 Asynchronous hdf5 conversion.\n"
 		"The 'o', 't' or 'e' options cannot be given for status\n"
 	        "                       requests.\n\n"
 		"2) Save average traces to a local file: Selected by the 'T' option.\n"
@@ -282,8 +285,8 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 }
 
 static int
-save_to_remote (const char* server, const char* filename,
-		uint64_t min_ticks, uint64_t min_events, uint8_t ovrwrt)
+save_to_remote (const char* server, const char* filename, const char* measurement,
+		uint64_t min_ticks, uint64_t min_events, uint8_t ovrwrt, uint8_t async)
 {
 	/* Open the socket */
 	errno = 0;
@@ -298,20 +301,26 @@ save_to_remote (const char* server, const char* filename,
 	}
 
 	/* Send the request */
-	zsock_send (sock, A_REQ_PIC, filename, min_ticks, min_events, ovrwrt);
+	zsock_send (sock, A_REQ_PIC,
+			filename,
+			measurement,
+			min_ticks,
+			min_events,
+			ovrwrt,
+			async);
 	puts ("Waiting for reply");
 
 	uint8_t fstat;
 	uint64_t ticks, events, traces, hists, frames, missed, dropped;
 	int rc = zsock_recv (sock, A_REP_PIC,
-			&fstat,
-			&ticks,
-			&events,
-			&traces,
-			&hists,
-			&frames,
-			&missed,
-			&dropped); 
+				&fstat,
+				&ticks,
+				&events,
+				&traces,
+				&hists,
+				&frames,
+				&missed,
+				&dropped); 
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -334,8 +343,11 @@ save_to_remote (const char* server, const char* filename,
 		case A_REQ_FAIL:
 			printf ("Unknown error while opening\n\n");
 			break;
-		case A_REQ_ERR:
+		case A_REQ_EWRT:
 			printf ("Unknown error while writing\n\n");
+			/* fallthrough */
+		case A_REQ_ECONV:
+			printf ("Unknown error while converting\n\n");
 			/* fallthrough */
 		case A_REQ_OK:
 			printf ("%s\n"
@@ -377,20 +389,22 @@ main (int argc, char **argv)
 	}
 
 	/* Command-line */
-	char server[256];
+	char server[1024];
 	memset (server, 0, sizeof (server));
-	char filename[256];
+	char filename[PATH_MAX];
 	memset (filename, 0, sizeof (filename));
+	char measurement[1024];
+	memset (measurement, 0, sizeof (measurement));
 	char* buf = NULL;
 	uint64_t min_ticks = 0, min_events = 0, num_hist = 0;
 	uint32_t timeout = 0;
-	uint8_t ovrwrt = 0, status = 0;
+	uint8_t ovrwrt = 0, async = 0, status = 0;
 	/* A for remotely save all frames, T, for locally save traces, H for
 	 * locally save histograms. */
 	char mode = '\0';
 
 	int opt;
-	while ( (opt = getopt (argc, argv, "Z:H:T:A:w:c:t:e:osh")) != -1 )
+	while ( (opt = getopt (argc, argv, "Z:H:T:A:m:w:c:t:e:osah")) != -1 )
 	{
 		switch (opt)
 		{
@@ -404,6 +418,10 @@ main (int argc, char **argv)
 				snprintf (filename, sizeof (filename),
 						"%s", optarg);
 				mode = opt;
+				break;
+			case 'm':
+				snprintf (measurement, sizeof (measurement),
+						"%s", optarg);
 				break;
 			case 'w':
 				timeout = strtoul (optarg, &buf, 10);
@@ -430,6 +448,9 @@ main (int argc, char **argv)
 				break;
 			case 's':
 				status = 1;
+				break;
+			case 'a':
+				async = 1;
 				break;
 			case 'h':
 			case '?':
@@ -470,8 +491,8 @@ main (int argc, char **argv)
 	{
 		case 'A':
 			/* save frames to remote file */
-			if ( num_hist ||
-				( status && (ovrwrt || min_ticks || min_events) ) )
+			if ( num_hist || timeout ||
+				( status && (async || ovrwrt || min_ticks || min_events) ) )
 			{
 				fprintf (stderr, "Conflicting options.\n"
 					"Type %s -h for help\n", argv[0]);
@@ -481,9 +502,10 @@ main (int argc, char **argv)
 				min_ticks = 1;
 
 			/* Proceed? */
-			printf ("Sending %s request for remote filename %s.",
-				status ? "a status": (ovrwrt ? "an overwrite" : "a write" ),
-				filename);
+			printf ("Sending %s%s request for remote filename %s and group %s.",
+				async ? "an asynchronous " : "a ",
+				status ? "status": (ovrwrt ? "overwrite" : "write" ),
+				filename, measurement);
 			if (!status)
 			{
 				printf (" Will terminate after at least "
@@ -492,13 +514,21 @@ main (int argc, char **argv)
 			}
 			if ( prompt () )
 				exit (EXIT_SUCCESS);
-			rc = save_to_remote (server, filename, min_ticks, min_events, ovrwrt);
+			rc = save_to_remote (server, filename, measurement,
+					min_ticks, min_events, ovrwrt, async);
 			exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 
 			break;
 
 		case 'T':
 			/* save traces to local file */
+			if (strlen (measurement) || num_hist ||
+					async || min_ticks || min_events || status || ovrwrt)
+			{
+				fprintf (stderr, "Conflicting options.\n"
+					"Type %s -h for help\n", argv[0]);
+				exit (EXIT_FAILURE);
+			}
 			if (timeout == 0)
 			{
 				fprintf (stderr, "You must specify a non-zero timeout.\n"
@@ -518,7 +548,8 @@ main (int argc, char **argv)
 
 		case 'H':
 			/* save histograms to local file */
-			if (min_ticks || min_events || status || ovrwrt)
+			if (strlen (measurement) || timeout ||
+					async || min_ticks || min_events || status || ovrwrt)
 			{
 				fprintf (stderr, "Conflicting options.\n"
 					"Type %s -h for help\n", argv[0]);
