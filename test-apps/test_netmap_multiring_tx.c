@@ -225,14 +225,16 @@ main (void)
 	alarm (UPDATE_INTERVAL);
 
 	/* Poll */
+/* #define DO_POLL */
+#ifdef DO_POLL
 	struct pollfd pfd;
 	pfd.fd = gobj.nmd->fd;
 	pfd.events = POLLOUT;
+#endif
 	INFO ("\nStarting poll\n");
 
 	for (gobj.loop = 1, errno = 0 ;; gobj.loop++)
 	{
-/* #define DO_POLL */
 #ifdef DO_POLL
 		rc = poll (&pfd, 1, 1000);
 		if (rc == -1 && errno == EINTR)
