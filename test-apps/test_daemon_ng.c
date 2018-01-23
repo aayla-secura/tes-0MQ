@@ -4,10 +4,18 @@
 #include <syslog.h>
 #include <errno.h>
 
+int foo (void* arg)
+{
+	syslog(LOG_DAEMON | LOG_INFO, "foo here");
+	sleep(2);
+	syslog(LOG_DAEMON | LOG_INFO, "foo done");
+	return 0;
+}
+
 /* Check the system logger to confirm all is ok */
 int main(void)
 {
-	int rc = daemonize("/tmp/test.pid");
+	int rc = daemonize_and_init("/tmp/test.pid", foo, NULL, 5);
 	if (rc != 0)
 	{
 		puts("Couldn't go into background");
@@ -15,8 +23,8 @@ int main(void)
 			perror("");
 		return -1;
 	}
-	syslog(LOG_USER | LOG_INFO, "foo here");
-	sleep(10);
-	syslog(LOG_USER | LOG_INFO, "foo done");
+	syslog(LOG_DAEMON | LOG_INFO, "main here");
+	sleep(2);
+	syslog(LOG_DAEMON | LOG_INFO, "main done");
 	return 0;
 }

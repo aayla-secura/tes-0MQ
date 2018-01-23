@@ -16,7 +16,7 @@
 
 #define DAEMON_OK_MSG  "0"
 #define DAEMON_ERR_MSG "1"
-#define DAEMON_TIMEOUT 3000
+#define DAEMON_TIMEOUT 3000 /* deafault */
 
 #ifdef VERBOSE
 #  define DEBUG(...) \
@@ -30,12 +30,6 @@
 	syslog (LOG_DAEMON | LOG_WARNING, __VA_ARGS__)
 
 /*
- * Daemonize process according to SysV specification:
- * https://www.freedesktop.org/software/systemd/man/daemon.html#SysV%20Daemons
- * 
- * Only tested on:
- *   - Linux 4.8
- * 
  * TO DO:
  *   - use BSD's closefrom () if available 
  *   - method for finding highest fd number is not portable, see
@@ -192,12 +186,9 @@ s_close_nonstd_fds (void)
 /* ---------------------------------- API ---------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-/*
- * If we fail, we return -1 from the parent (i.e. in foreground) to the caller.
- * If we succeed, parent exits with 0 and the daemon returns 0 to caller.
- */
 int
-daemonize (const char* pidfile)
+daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
+		void* arg, int timeout_sec)
 {
 	int rc;
 	pid_t pid;
@@ -255,7 +246,10 @@ daemonize (const char* pidfile)
 		close (pipe_fds[1]); /* We don't use the write end */
 
 		/* Set a reasonable timeout */
-		rc = poll (&poll_fd, 1, DAEMON_TIMEOUT);
+		int timeout = timeout_sec * 1000;
+		if (timeout == 0)
+			timeout = DAEMON_TIMEOUT;
+		rc = poll (&poll_fd, 1, timeout);
 
 		if (rc == 0)
 		{
@@ -455,7 +449,30 @@ daemonize (const char* pidfile)
 					pid, pidfile);
 			}
 
-			/* Done, signal parent */
+			/* Call initializer. */
+			if (initializer != NULL)
+			{
+				int irc = initializer (arg);
+				if (irc == -1)
+				{
+					ERROR ("Initializer encountered an error");
+					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
+					if (n == -1)
+					{
+						ERROR ("Could not write to pipe: %m");
+					}
+					if (n != 1)
+					{
+						WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+					}
+
+					close (pipe_fds[1]);
+
+					_exit (EXIT_FAILURE);
+				}
+			}
+
+			/* Done, signal parent. */
 			ssize_t n = write (pipe_fds[1], DAEMON_OK_MSG, 1);
 			close (pipe_fds[1]);
 			if (n == -1)
@@ -474,4 +491,9 @@ daemonize (const char* pidfile)
 			return 0;
 		}
 	}
+}
+
+int daemonize (const char* pidfile)
+{
+	return daemonize_and_init (pidfile, NULL, NULL, 0);
 }
