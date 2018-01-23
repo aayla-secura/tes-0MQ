@@ -159,7 +159,7 @@ static int
 s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 {
 #ifdef ENABLE_FULL_DEBUG
-	sleep (1);
+	/* sleep (1); */
 #endif
 	assert (ddesc != NULL);
 	assert (ddesc->length >= 0);
@@ -318,6 +318,30 @@ s_hdf5_init (void* creq_data_)
 	return 0;
 }
 
+static int
+s_hdf5_write (void* creq_data_)
+{
+	assert (creq_data_ != NULL);
+
+	struct s_creq_data_t* creq_data = (struct s_creq_data_t*)creq_data_;
+	/* Create the datasets. */
+	int rc = 0;
+	for (int d = 0; d < creq_data->creq.num_dsets; d++)
+	{
+		struct hdf5_dset_desc_t* ddesc =
+			creq_data->creq.datasets + d;
+		int rc = s_create_dset (ddesc, creq_data->group_id);
+		if (rc != 0)
+			break;
+	}
+
+	/* Close the hdf5 file. */
+	H5Gclose (creq_data->group_id);
+	H5Fclose (creq_data->file_id);
+
+	return rc;
+}
+
 /*
  * Open/create creq->filename, create/overwrite group
  * ROOT_GROUP/creq->group; for each dataset mmap the file if needed and
@@ -348,51 +372,14 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 	 * the files and signal parent before starting copy. */
 	int rc = -1;
 	if (creq->async)
-	{
-		s_msg (0, LOG_DEBUG, -1, "%sForking", LOGID);
-
-		int is_daemon_old = is_daemon;
-		is_daemon = 1; /* for the initializer */
-		rc = daemonize_and_init (NULL, s_hdf5_init,
+		rc = fork_and_run (s_hdf5_init, s_hdf5_write,
 				&creq_data, INIT_TIMEOUT);
-		if (rc == -1)
-			is_daemon = is_daemon_old;
-
-		openlog ("HDF5 converter", 0, LOG_DAEMON);
-		s_msg (0, LOG_DEBUG, -1, "%sForked", LOGID);
-	}
 	else
-	{
 		rc = s_hdf5_init (&creq_data);
-	}
 
 	if (rc == -1)
-	{
 		s_msg (errno, LOG_ERR, -1,
 			"%sCouldn't initialize", LOGID);
-		return -1;
-	}
 
-	/* Create the datasets. */
-	hid_t g_id = creq_data.group_id;
-	assert (g_id >= 0);
-	hid_t f_id = creq_data.file_id;
-	assert (f_id >= 0);
-	for (int d = 0; d < creq->num_dsets; d++)
-	{
-		struct hdf5_dset_desc_t* ddesc = creq->datasets + d;
-		int rc = s_create_dset (ddesc, g_id);
-		if (rc != 0)
-		{
-			H5Gclose (g_id);
-			H5Fclose (f_id);
-			return -1;
-		}
-	}
-
-	/* Close the hdf5 file. */
-	H5Gclose (g_id);
-	H5Fclose (f_id);
-
-	return 0;
+	return rc;
 }
