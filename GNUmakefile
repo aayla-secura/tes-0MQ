@@ -33,35 +33,38 @@ all: test main
 
 ##################################################
 
-main: $(BIN_DEST)/tesd $(BIN_DEST)/tesc $(HEADERS) \
-	| $(BIN_DEST)
+main: $(BIN_DEST)/tesd $(BIN_DEST)/tesc
 	@echo
 	@echo "Now run 'make install'"
 
-libs: $(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
+libs: $(LIBS:%=$(LIB_DEST)/lib%.a) \
 	| $(LIB_DEST)
 
-$(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+$(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c $(HEADERS) \
+	| $(BIN_DEST)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) $(LDLIBS) -o $@
 
 $(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
-	$(LIBS:%=$(LIB_DEST)/lib%.a)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(HDF5LIB) $(LDLIBS) -o $@
+	$(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
+	| $(BIN_DEST)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) $(HDF5LIB) $(LDLIBS) -o $@
 
-$(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o
-	ar rcs $@ $^
+$(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o $(HEADERS) \
+	| $(LIB_DEST)
+	ar rcs $@ $(filter-out %.h,$^)
 
 $(LIB_DEST) $(BIN_DEST):
 	install -d $@
 
 ##################################################
 
-test: $(TEST_PROGS:%=$(BIN_DEST)/%) $(HEADERS) \
-	| $(BIN_DEST)
+test: $(TEST_PROGS:%=$(BIN_DEST)/%)
 
 # name of program should include any needed libraries
-$(BIN_DEST)/%: $(TEST_SRC)/%.o $(LIBS:%=$(LIB_DEST)/lib%.a)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ \
+$(BIN_DEST)/%: $(TEST_SRC)/%.o \
+	$(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
+	| $(BIN_DEST)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
 		$(foreach lib, \
 			$(findstring pthread,$*) \
 			$(findstring pcap,$*), \
