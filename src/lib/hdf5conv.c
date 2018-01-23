@@ -157,6 +157,9 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 static int
 s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 {
+#ifdef ENABLE_FULL_DEBUG
+	sleep (1);
+#endif
 	assert (ddesc != NULL);
 	assert (ddesc->length >= 0);
 	s_msg (0, LOG_DEBUG, -1,
@@ -343,9 +346,14 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 	if (creq->async)
 	{
 		s_msg (0, LOG_DEBUG, -1, "%sForking", LOGID);
+
+		int is_daemon_old = is_daemon;
+		is_daemon = 1; /* for the initializer */
 		rc = daemonize_and_init (NULL, s_hdf5_init,
 				&creq_init, INIT_TIMEOUT);
-		is_daemon = 1;
+		if (rc == -1)
+			is_daemon = is_daemon_old;
+
 		openlog ("HDF5 converter", 0, LOG_DAEMON);
 		s_msg (0, LOG_DEBUG, -1, "%sForked", LOGID);
 	}
