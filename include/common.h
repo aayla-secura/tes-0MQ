@@ -110,7 +110,8 @@ s_msg (int errnum, int priority, int task, const char* format, ...)
 		if (task > 0)
 			syslog (priority, "[Task #%d]     %s", task, msg);
 		else
-			syslog (priority, "[Coordinator] %s", msg);
+			syslog (priority, "%s%s",
+				( task == 0 ? "[Coordinator] " : "" ), msg);
 	}
 	else
 	{
