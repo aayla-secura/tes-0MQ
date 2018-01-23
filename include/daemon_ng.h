@@ -25,5 +25,7 @@ typedef int (daemon_init_fn)(void*);
 int daemonize (const char* pidfile);
 int daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		void* arg, int timeout);
+int fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
+		void* arg, int timeout_sec);
 
 #endif
