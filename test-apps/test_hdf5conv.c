@@ -10,7 +10,7 @@
 
 int main (void)
 {
-	is_daemon = 0;
+	is_daemon = 1;
 	is_verbose = 1;
 
 	uint8_t num_dsets = 2;
@@ -37,7 +37,11 @@ int main (void)
 		.async = ASYNC,
 	};
 
-	int rc = hdf5_conv (&creq);
+	int rc = 0;
+	if (is_daemon)
+		rc = daemonize (NULL);
+	if (rc == 0)
+		rc = hdf5_conv (&creq);
 
 	return rc;
 }
