@@ -17,9 +17,9 @@
 
 #define LOGID "[HDF5CONV] "
 
-struct s_creq_init_t
+struct s_creq_data_t
 {
-	const struct hdf5_conv_req_t* creq;
+	struct hdf5_conv_req_t creq;
 	hid_t group_id;
 	hid_t file_id;
 };
@@ -83,7 +83,8 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 
 /*
  * Open filename, mmap it and close the file descriptor.
- * Saves the address of the mapping in ddesc->buffer (overwriting filename).
+ * Saves the address of the mapping in ddesc->buffer (overwriting filename
+ * pointer).
  * If ddesc->length < 0 or extends beyond EOF, calculates length and
  * saves it.
  * Returns 0 on success, -1 on error.
@@ -215,12 +216,12 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 }
 
 static int
-s_hdf5_init (void* creq_init_)
+s_hdf5_init (void* creq_data_)
 {
-	assert (creq_init_ != NULL);
+	assert (creq_data_ != NULL);
 
-	struct s_creq_init_t* creq_init = (struct s_creq_init_t*)creq_init_;
-	const struct hdf5_conv_req_t* creq = creq_init->creq;
+	struct s_creq_data_t* creq_data = (struct s_creq_data_t*)creq_data_;
+	struct hdf5_conv_req_t* creq = &creq_data->creq;
 
 	/* Check if hdf5 file exists. */
 	hid_t f_id;
@@ -312,8 +313,8 @@ s_hdf5_init (void* creq_init_)
 	}
 
 	/* Save the file and group id. */
-	creq_init->file_id = f_id;
-	creq_init->group_id = cg_id;
+	creq_data->file_id = f_id;
+	creq_data->group_id = cg_id;
 	return 0;
 }
 
@@ -337,11 +338,14 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 		return -1;
 	}
 
+	/* Copy the request so we don't clobber the filename/buffer pointer in
+	 * any of the struct hdf5_dset_desc_t's */
+	struct s_creq_data_t creq_data;
+	memset (&creq_data, 0, sizeof (creq_data));
+	memcpy (&creq_data.creq, creq, sizeof (creq_data.creq));
+
 	/* If operating in asynchronous mode, fork here before opening
 	 * the files and signal parent before starting copy. */
-	struct s_creq_init_t creq_init;
-	memset (&creq_init, 0, sizeof (creq_init));
-	creq_init.creq = creq;
 	int rc = -1;
 	if (creq->async)
 	{
@@ -350,7 +354,7 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 		int is_daemon_old = is_daemon;
 		is_daemon = 1; /* for the initializer */
 		rc = daemonize_and_init (NULL, s_hdf5_init,
-				&creq_init, INIT_TIMEOUT);
+				&creq_data, INIT_TIMEOUT);
 		if (rc == -1)
 			is_daemon = is_daemon_old;
 
@@ -359,7 +363,7 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 	}
 	else
 	{
-		rc = s_hdf5_init (&creq_init);
+		rc = s_hdf5_init (&creq_data);
 	}
 
 	if (rc == -1)
@@ -370,9 +374,9 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 	}
 
 	/* Create the datasets. */
-	hid_t g_id = creq_init.group_id;
+	hid_t g_id = creq_data.group_id;
 	assert (g_id >= 0);
-	hid_t f_id = creq_init.file_id;
+	hid_t f_id = creq_data.file_id;
 	assert (f_id >= 0);
 	for (int d = 0; d < creq->num_dsets; d++)
 	{

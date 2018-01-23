@@ -14,7 +14,7 @@
 /*
  * If offset is negative, copy directly from buffer. Length must be
  * positive.
-
+ *
  * If offset >= 0, open <filename> and mmap it.
  * If length is negative or extends beyond EOF, copy until EOF starting
  * at <offset>.

@@ -1,3 +1,5 @@
+/* TO DO: test with mmapped files, in daemon mode */
+
 #include "hdf5conv.h"
 #include "common.h" /* is_verbose, is_daemon */
 
