@@ -372,14 +372,16 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 	 * the files and signal parent before starting copy. */
 	int rc = -1;
 	if (creq->async)
+	{
 		rc = fork_and_run (s_hdf5_init, s_hdf5_write,
 				&creq_data, INIT_TIMEOUT);
+	}
 	else
+	{
 		rc = s_hdf5_init (&creq_data);
-
-	if (rc == -1)
-		s_msg (errno, LOG_ERR, -1,
-			"%sCouldn't initialize", LOGID);
+		if (rc == 0)
+			rc = s_hdf5_write (&creq_data);
+	}
 
 	return rc;
 }
