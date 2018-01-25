@@ -33,7 +33,7 @@
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 #define UPDATE_INTERVAL 1
 
-#define NM_IFNAME "vale:tes"
+#define NM_IFNAME "vale0:vi0"
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
 			* signal handler */
 

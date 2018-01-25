@@ -20,7 +20,7 @@
 #  define SKIP 40 /* how many bytes at BOF to skip */
 #endif
 #ifndef NM_IFNAME
-#  define NM_IFNAME "vale0:vi1"
+#  define NM_IFNAME "vale0:vi0"
 #endif
 #define DUMP_ROW_LEN  8 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN  5 /* how many digits to use for the offset */

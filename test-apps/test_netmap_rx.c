@@ -21,7 +21,7 @@
 #define UPDATE_INTERVAL 1
 #define MAX_TICKS 10000000 /* Set to 0 for unlimited */
 
-#define NM_IFNAME "vale:tes"
+#define NM_IFNAME "vale0:vi1"
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)

@@ -1,6 +1,7 @@
 #include <pcap/pcap.h>
 #include "net/tespkt.h"
 #include <stdio.h>
+#include <limits.h>
 #include <string.h>
 #include <ctype.h>
 #include <poll.h>
@@ -10,9 +11,10 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
-#define NM_IFNAME "vale:tes{1"
+#define NM_IFNAME "vale0:vi0"
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
+#define NUM_LOOPS INT_MAX
 
 int interrupted;
 
@@ -96,7 +98,7 @@ main (int argc, char** argv)
 	uint64_t missed = 0;
 	int looped = 0;
 
-	while (!interrupted && looped < 1)
+	while (!interrupted && looped < NUM_LOOPS)
 	{
 		const unsigned char* pkt = pcap_next (pc, &h);
 		if (pkt == NULL)
@@ -112,7 +114,7 @@ main (int argc, char** argv)
 			}
 			/* Reopen the file */
 			pcap_close (pc);
-			pcap_t* pc = pcap_open_offline (argv[1], err);
+			pc = pcap_open_offline (argv[1], err);
 			if (pc == NULL)
 			{
 				fprintf (stderr, "Cannot open pcap file: %s", err);
@@ -160,9 +162,9 @@ main (int argc, char** argv)
 				(uint16_t)(tespkt_fseq ((tespkt*)pkt) - ef) - 1 );
 		}
 		ef = tespkt_fseq ((tespkt*)pkt);
-		pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
+		// pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
 		tespkt_perror (stdout, tespkt_is_valid ((tespkt*)pkt));
-		printf ("\n");
+		// printf ("\n");
 		// dump_pkt (pkt, TES_HDR_LEN);
 	}
 

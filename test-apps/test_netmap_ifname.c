@@ -9,7 +9,7 @@
 #include <net/netmap_user.h>
 
 #ifndef NMIF
-#define NMIF "vale1:tes"
+#define NMIF "vale0:vi0"
 #endif
 
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
