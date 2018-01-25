@@ -1,12 +1,20 @@
 #define _WITH_GETLINE
-#include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <assert.h>
 #include <czmq.h>
+
+#ifndef PATH_MAX
+#  ifdef MAXPATHLEN
+#    define PATH_MAX MAXPATHLEN
+#  else
+#    define PATH_MAX 4096
+#  endif
+#endif
 
 /* mode A */
 #define A_REQ_OK    0 // accepted

@@ -5,8 +5,18 @@
  */
 
 #include "hdf5conv.h"
-#include "common.h" /* is_daemon */
 #include "daemon_ng.h"
+
+#ifdef linux
+// is it there only on Debian?
+#  include <hdf5/serial/hdf5.h>
+#else
+#  include <hdf5.h>
+#endif
+
+#include <sys/mman.h>
+#include <errno.h>
+#include <assert.h>
 
 #define INIT_TIMEOUT 5 /* in seconds */
 #define ROOT_GROUP "capture"

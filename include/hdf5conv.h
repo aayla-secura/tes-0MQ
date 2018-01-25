@@ -4,13 +4,6 @@
 #include <stdint.h>
 #include <czmq_prelude.h> // bool type
 
-#ifdef linux
-// is it there only on Debian?
-#  include <hdf5/serial/hdf5.h>
-#else
-#  include <hdf5.h>
-#endif
-
 /*
  * If offset is negative, copy directly from buffer. Length must be
  * positive.

@@ -1,7 +1,7 @@
 /* TO DO: test with mmapped files, in daemon mode */
 
 #include "hdf5conv.h"
-#include "common.h" /* is_verbose, is_daemon */
+#include "daemon_ng.h"
 
 #define BASEFNAME "/media/data/testcap"
 #define H5FNAME "/media/data/test.hdf5"

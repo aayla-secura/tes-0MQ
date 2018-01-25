@@ -150,8 +150,8 @@
  * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
  */
 
-#include "tesd_tasks.h"
-#include "common.h"
+#include "tesd.h"
+#include "tesd_tasks_coordinator.h"
 
 /* From netmap_user.h */
 #define likely(x)   __builtin_expect(!!(x), 1)

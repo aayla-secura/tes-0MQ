@@ -63,17 +63,19 @@
  * - chroot and drop privileges.
  */
 
-#include "tesd_tasks.h"
+#include "tesd.h"
+#include "tesd_tasks_coordinator.h"
 #include "net/tesif_manager.h"
-#include "common.h"
+#include <sys/time.h>
+#include <syslog.h>
+#include <signal.h>
+#include <poll.h>
 #include <net/if.h> /* IFNAMSIZ */
 #include <sys/socket.h>
 #include <net/ethernet.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
-
-#define PROGNAME "tesd"
 
 #ifdef linux
 #  define ifr_index ifr_ifindex
@@ -87,8 +89,10 @@
 
 #define NEED_PROMISC // put the interface in promiscuous mode
 
+#define PROGNAME "tesd"
+
 /* Defaults */
-#define UPDATE_INTERVAL 1             // in seconds
+#define UPDATE_INTERVAL 1 // in seconds
 #define TES_IFNAME "netmap:" IFNAME
 #define PIDFILE "/var/run/" PROGNAME ".pid"
 

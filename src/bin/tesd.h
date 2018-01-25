@@ -1,21 +1,16 @@
-#ifndef __COMMON_H__INCLUDED__
-#define __COMMON_H__INCLUDED__
+#ifndef __TESD_H__INCLUDED__
+#define __TESD_H__INCLUDED__
 
 #include <sys/types.h>
-#include <sys/time.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <errno.h>
-#include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <syslog.h>
 #include <string.h>
 #include <limits.h>
-#include <signal.h>
-#include <poll.h>
-// #include <pthread.h>
+#include <errno.h>
+#include <assert.h>
 
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
