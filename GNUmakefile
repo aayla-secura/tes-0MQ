@@ -11,6 +11,7 @@ PROGS      := tesd tesc
 LIBS       := $(patsubst %.c,%,$(notdir $(wildcard $(LIB_SRC)/*.c)))
 HEADERS    := $(wildcard $(CPATH)/*.h $(CPATH)/net/*.h)
 TEST_PROGS := $(patsubst %.c,%,$(notdir $(wildcard $(TEST_SRC)/*.c)))
+TASKS_OBJ  := $(patsubst %.c,%.o,$(wildcard $(BIN_SRC)/tesd_task_*.c))
 
 CC      := gcc
 CFLAGS  += -I$(CPATH) -fPIC -Wall -Wextra \
@@ -45,7 +46,7 @@ $(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c $(HEADERS) \
 	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) $(LDLIBS) -o $@
 
 $(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
-	$(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
+	$(TASKS_OBJ) $(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
 	| $(BIN_DEST)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) $(HDF5LIB) $(LDLIBS) -o $@
 

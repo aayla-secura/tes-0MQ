@@ -34,7 +34,7 @@
  * dbg_assert is used in functions which are called very often (e.g. handlers)
  * and is a no-op unless ENABLE_DEBUG is defined.
  *
- * There is a separate thread for each "task" (see tesd_tasks.h). Tasks are
+ * There is a separate thread for each "task" (see tesd_tasks.c). Tasks are
  * started with tasks_start. Each task has read-only access to rings (they
  * cannot modify the cursor or head) and each task keeps its own head, which is
  * visible by the coordinator (tesd.c).
@@ -63,8 +63,8 @@
  * - chroot and drop privileges.
  */
 
-#include "tesd.h"
-#include "tesd_tasks_coordinator.h"
+#include "tesd.h" // common to tasks and coordinator
+#include "tesd_tasks_coordinator.h" // declarations of external task-related functions
 #include "net/tesif_manager.h"
 #include <sys/time.h>
 #include <syslog.h>
