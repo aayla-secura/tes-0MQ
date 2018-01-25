@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <syslog.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <string.h>
@@ -267,7 +268,7 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 			return -1;
 		}
 
-		/* Wait for signal on pipe from caller. */
+		/* Read signal */
 		char msg;
 		ssize_t n = read (pipe_fds[0], &msg, 1);
 		if (n == -1)
@@ -505,15 +506,6 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 {
 	int rc;
 	pid_t pid;
-	int pipe_fds[2];
-
-	/* Open a pipe for parent to second child communication */
-	errno = 0;
-	if ( pipe (pipe_fds) == -1 )
-	{
-		ERROR ("Could not open a pipe to communicate with fork");
-		return -1;
-	}
 
 	/* -------------------------------------------------- */
 	/*             Fork for the first time                */
@@ -531,59 +523,13 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 	/* -------------------------------------------------- */
 	else if (pid > 0)
 	{
-		struct pollfd poll_fd;
-		poll_fd.fd = pipe_fds[0];
-		poll_fd.events = POLLIN;
-
-		/* Wait for the second child (the daemon) */
-		close (pipe_fds[1]); /* We don't use the write end */
-
-		/* Set a reasonable timeout */
-		int timeout = timeout_sec * 1000;
-		if (timeout == 0)
-			timeout = DAEMON_TIMEOUT;
-		rc = poll (&poll_fd, 1, timeout);
-
-		if (rc == 0)
-		{
-			/* Timed out */
-			ERROR ("Timed out waiting for daemon to initialize");
-			close (pipe_fds[0]);
-			return -1;
-		}
-		if (rc == -1)
-		{
-			/* Something went wrong, assume daemon is dead or never
-			 * started */
-			ERROR ("Could not read from pipe: %m");
-			close (pipe_fds[0]);
-			return -1;
-		}
-
-		/* Wait for signal on pipe from caller. */
-		char msg;
-		ssize_t n = read (pipe_fds[0], &msg, 1);
-		if (n == -1)
-		{
-			ERROR ("Could not read from pipe: %m");
-			close (pipe_fds[0]);
-			return -1;
-		}
-		if (n != 1)
-		{
-			WARN ("Read %lu bytes, expected 1", (size_t)n);
-		}
-
-		close (pipe_fds[0]);
-		if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
-		{
-			/* Second fork didn't happen or failed and exited */
-			DEBUG ("Read an error from pipe");
-			return -1;
-		}
+		/* Wait for first child to exit (it will wait for signal
+		 * from second child) */
+		
+		waitpid (pid, &rc, 0);
 
 		/* Parent is done */
-		return 0;
+		return WEXITSTATUS (rc);
 	}
 
 	/* -------------------------------------------------- */
@@ -591,7 +537,14 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 	/* -------------------------------------------------- */
 	else
 	{
-		close (pipe_fds[0]); /* We don't use the read end */
+		/* Open a pipe to second child */
+		errno = 0;
+		int pipe_fds[2];
+		if ( pipe (pipe_fds) == -1 )
+		{
+			ERROR ("Could not open a pipe to communicate with fork: %m");
+			_exit (EXIT_FAILURE);
+		}
 
 		/* Fork again to prevent child becoming a zombie */
 		pid = fork ();
@@ -617,6 +570,57 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 
 		else if (pid > 0)
 		{
+			struct pollfd poll_fd;
+			poll_fd.fd = pipe_fds[0];
+			poll_fd.events = POLLIN;
+
+			/* Wait for the second child to run initializer */
+			close (pipe_fds[1]); /* We don't use the write end */
+
+			/* Set a reasonable timeout */
+			int timeout = timeout_sec * 1000;
+			if (timeout == 0)
+				timeout = DAEMON_TIMEOUT;
+			rc = poll (&poll_fd, 1, timeout);
+
+			if (rc == 0)
+			{
+				/* Timed out */
+				ERROR ("Timed out waiting for daemon to initialize");
+				close (pipe_fds[0]);
+				_exit (EXIT_FAILURE);
+			}
+			if (rc == -1)
+			{
+				/* Something went wrong, assume child is dead or never
+				 * started */
+				ERROR ("Could not read from pipe: %m");
+				close (pipe_fds[0]);
+				_exit (EXIT_FAILURE);
+			}
+
+			/* Read signal */
+			char msg;
+			ssize_t n = read (pipe_fds[0], &msg, 1);
+			if (n == -1)
+			{
+				ERROR ("Could not read from pipe: %m");
+				close (pipe_fds[0]);
+				_exit (EXIT_FAILURE);
+			}
+			if (n != 1)
+			{
+				WARN ("Read %lu bytes, expected 1", (size_t)n);
+			}
+
+			close (pipe_fds[0]);
+			if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
+			{
+				/* Second fork didn't happen or failed and exited */
+				DEBUG ("Read an error from pipe");
+				_exit (EXIT_FAILURE);
+			}
+
 			/* Child number 1 is done */
 			close (pipe_fds[1]);
 
