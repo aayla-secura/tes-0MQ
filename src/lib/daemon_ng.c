@@ -15,6 +15,7 @@
 #include <paths.h>
 #include <dirent.h>
 #include <errno.h>
+#include <assert.h>
 
 #define MAX_MSG_LEN 512
 #define LOG_ID_LEN 32
@@ -44,6 +45,8 @@ static __thread char log_id[LOG_ID_LEN];
 static rlim_t s_get_max_fd (void);
 static void s_close_nonstd_fds (void);
 static int s_close_open_fds (rlim_t max_fd);
+static int s_wait_sig (int pipe_fd, int timeout_sec);
+static int s_send_sig (int pipe_fd, char* sig);
 
 /* ------------------------------------------------------------------------- */
 /* -------------------------------- HELPERS -------------------------------- */
@@ -64,12 +67,15 @@ s_get_max_fd (void)
 		return (rlim_t) sysconf (_SC_OPEN_MAX);
 	}
 	else
-		return rl.rlim_cur; /* Return the soft, not hard, limit, see NOTES */
+	{ /* return the soft, not hard, limit, see NOTES */
+		return rl.rlim_cur;
+	}
 }
 
 /*
- * Attempt to find all open file descriptors instead of blindly iterating up to
- * the maximum fd number.
+ * Attempt to find and close all open file descriptors (except stdin, stdout,
+ * stderr) up to the soft limit.
+ * Returns 0 on success, -1 on error.
  */
 static int
 s_close_open_fds (rlim_t max_fd)
@@ -81,7 +87,7 @@ s_close_open_fds (rlim_t max_fd)
 	int rc;
 
 	/* /dev/fd should exist on both Linux and FreeBSD, otherwise check if
-	 * procfs is enabled and provides it */
+	 * procfs is enabled and provides it. */
 	self_fds_dir = opendir ("/dev/fd");
 	if (!self_fds_dir)
 	{
@@ -96,9 +102,9 @@ s_close_open_fds (rlim_t max_fd)
 	}
 
 	/* Iterate through all fds in the directory and close all but stdin,
-	 * stdout, stderr and the directory's fd */
+	 * stdout, stderr and the directory's fd. */
 	dir_no = dirfd (self_fds_dir);
-	errno = 0; /* Reset for readdir */
+	errno = 0; /* reset for readdir */
 
 	while ( (self_fds_dirent = readdir (self_fds_dir)) )
 	{
@@ -116,6 +122,7 @@ s_close_open_fds (rlim_t max_fd)
 			continue;
 		if (dirent_no == STDERR_FILENO)
 			continue;
+		/* See NOTES for why this is needed. */
 		if ((rlim_t)dirent_no >= max_fd)
 			break;
 
@@ -129,13 +136,13 @@ s_close_open_fds (rlim_t max_fd)
 			/* return -1; */
 		}
 
-		errno = 0; /* Reset it for readdir */
+		errno = 0; /* reset it for readdir */
 	}
 
 	if (errno)
 	{
 		logmsg (errno, LOG_DEBUG, "readdir ()");
-		return -1; /* Something went wrong... */
+		return -1;
 	}
 
 	closedir (self_fds_dir);
@@ -143,8 +150,8 @@ s_close_open_fds (rlim_t max_fd)
 }
 
 /*
- * Attempts to close all file descriptors (except stdin, stdout, stderr) up to
- * the soft limit.
+ * Closes all file descriptors (except stdin, stdout, stderr) up to the soft
+ * limit. Calls s_close_open_fds.
  */
 static void
 s_close_nonstd_fds (void)
@@ -157,18 +164,16 @@ s_close_nonstd_fds (void)
 		"s_get_max_fd () returned %li", max_fd);
 	if (max_fd == 0)
 	{
-		logmsg (0, LOG_DEBUG,
-			"Using 4096 as the maximum fdno then");
 		logmsg (0, LOG_WARNING,
 			"May not have closed all file descriptors. "
 			"Could not get limit, so using 4096.");
-		max_fd = 4096; /* Be reasonable */
+		max_fd = 4096; /* be reasonable */
 	}
 
 	if (s_close_open_fds (max_fd) == 0)
 		return;
 
-	/* A fallback method: try to close all fd numbers up to some maximum */
+	/* A fallback method: try to close all fd numbers up to some maximum. */
 	logmsg (0, LOG_DEBUG, "Using fallback method");
 	for (cur_fd = 0; cur_fd < max_fd; cur_fd++)
 	{
@@ -184,6 +189,80 @@ s_close_nonstd_fds (void)
 	}
 
 	return;
+}
+
+/*
+ * Read a signal from the pipe with the given timeout.
+ * Returns 0 on DAEMON_OK_MSG, -1 on DAEMON_ERR_MSG.
+ */
+static int
+s_wait_sig (int pipe_fd, int timeout_sec)
+{
+	struct pollfd poll_fd;
+	poll_fd.fd = pipe_fd;
+	poll_fd.events = POLLIN;
+
+	int timeout = timeout_sec * 1000;
+	if (timeout == 0)
+		timeout = DAEMON_TIMEOUT;
+	int rc = poll (&poll_fd, 1, timeout);
+
+	if (rc == 0)
+	{
+		logmsg (0, LOG_ERR,
+			"Timed out waiting for daemon to initialize");
+		return -1;
+	}
+	if (rc == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not read from pipe");
+		return -1;
+	}
+
+	char msg;
+	ssize_t n = read (pipe_fd, &msg, 1);
+	close (pipe_fd);
+
+	if (n == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not read from pipe");
+		return -1;
+	}
+	if (n != 1)
+	{
+		logmsg (0, LOG_ERR,
+			"Read %lu bytes, expected 1", (size_t)n);
+		return -1;
+	}
+
+	return ( memcmp (&msg, DAEMON_OK_MSG, 1) ? -1 : 0 );
+}
+
+/*
+ * Send a signal to the pipe.
+ * Returns 0 on success, -1 on error.
+ */
+static int
+s_send_sig (int pipe_fd, char* sig)
+{
+	ssize_t n = write (pipe_fd, sig, 1);
+	close (pipe_fd);
+
+	if (n == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not write to pipe");
+	}
+	if (n != 1)
+	{
+		logmsg (0, LOG_ERR,
+			"Wrote %lu bytes, expected 1",
+			(size_t)n);
+	}
+
+	return ((n == 1) ? 0 : -1);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -206,6 +285,7 @@ logmsg (int errnum, int priority, const char* format, ...)
 	{
 		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
 		/* Thread-safe version of strerror. */
+		/* FIX: XSI compliant or GNU version. */
 		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
 	}
 
@@ -248,12 +328,11 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 {
 	int rc;
 	pid_t pid;
-	int pipe_fds[2];
 
 	/* Close all file descriptors except STDIN, STDOUT and STDERR */
 	s_close_nonstd_fds ();
 
-	/* Reset signal handlers and masks */
+	/* Reset signal handlers and masks. */
 	struct sigaction sa = {0,};
 	sigemptyset (&sa.sa_mask);
 	sigprocmask (SIG_UNBLOCK, &sa.sa_mask, NULL);
@@ -263,26 +342,13 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		errno = 0;
 		sigaction (sig, &sa, NULL);
 		if (errno)
-		{
 			logmsg (0, LOG_DEBUG,
 				"signal (%d, SIG_DFL)", sig);
-		}
 	}
 
-	/* We do not sanitize environment, that is the job of the caller */
+	/* We do not sanitize environment, that is the job of the caller. */
 
-	/* Open a pipe for parent to second child communication */
-	errno = 0;
-	if ( pipe (pipe_fds) == -1 )
-	{
-		logmsg (errno, LOG_ERR,
-			"Could not open a pipe to communicate with fork");
-		return -1;
-	}
-
-	/* -------------------------------------------------- */
-	/*             Fork for the first time                */
-	/* -------------------------------------------------- */
+	/* Fork for the first time. */
 	pid = fork ();
 
 	if (pid == -1)
@@ -296,292 +362,157 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	/* -------------------------------------------------- */
 	else if (pid > 0)
 	{
-		struct pollfd poll_fd;
-		poll_fd.fd = pipe_fds[0];
-		poll_fd.events = POLLIN;
+		/* Wait for first child to exit. */
+		waitpid (pid, &rc, 0);
 
-		/* Wait for the second child (the daemon) */
-		close (pipe_fds[1]); /* We don't use the write end */
-
-		/* Set a reasonable timeout */
-		int timeout = timeout_sec * 1000;
-		if (timeout == 0)
-			timeout = DAEMON_TIMEOUT;
-		rc = poll (&poll_fd, 1, timeout);
-
-		if (rc == 0)
-		{
-			/* Timed out */
-			logmsg (0, LOG_ERR,
-				"Timed out waiting for daemon to initialize");
-			close (pipe_fds[0]);
+		/* Parent is done. */
+		if ( WEXITSTATUS (rc) != 0)
 			return -1;
-		}
-		if (rc == -1)
-		{
-			/* Something went wrong, assume daemon is dead or never
-			 * started */
-			logmsg (errno, LOG_ERR,
-				"Could not read from pipe");
-			close (pipe_fds[0]);
-			return -1;
-		}
 
-		/* Read signal */
-		char msg;
-		ssize_t n = read (pipe_fds[0], &msg, 1);
-		if (n == -1)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not read from pipe");
-			close (pipe_fds[0]);
-			return -1;
-		}
-		if (n != 1)
-		{
-			logmsg (0, LOG_WARNING,
-				"Read %lu bytes, expected 1", (size_t)n);
-		}
-
-		close (pipe_fds[0]);
-		if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
-		{
-			/* Second fork didn't happen or failed and exited */
-			logmsg (0, LOG_DEBUG, "Read an error from pipe");
-			return -1;
-		}
-
-		/* Parent is done */
 		exit (EXIT_SUCCESS);
 	}
 
 	/* -------------------------------------------------- */
 	/*                   Child no. 1                      */
 	/* -------------------------------------------------- */
-	else
+	assert (pid == 0);
+
+	/* Open a pipe to second child. */
+	errno = 0;
+	int pipe_fds[2];
+	if ( pipe (pipe_fds) == -1 )
 	{
-		close (pipe_fds[0]); /* We don't use the read end */
+		logmsg (errno, LOG_ERR,
+			"Could not open a pipe to child");
+		_exit (EXIT_FAILURE);
+	}
 
-		/* Detach from controlling TTY */
-		pid = setsid ();
-		if (pid == (pid_t)-1)
-		{
-			/* Something went wrong, tell parent */
-			logmsg (errno, LOG_DEBUG, "setsid ()");
-			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-			if (n == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not write to pipe");
-			}
-			if (n != 1)
-			{
-				logmsg (0, LOG_WARNING,
-					"Wrote %lu bytes, expected 1",
-					(size_t)n);
-			}
+	/* Detach from controlling TTY */
+	pid = setsid ();
+	if (pid == (pid_t)-1)
+	{
+		logmsg (errno, LOG_DEBUG, "setsid ()");
+		_exit (EXIT_FAILURE);
+	}
+	
+	/* Fork again to prevent daemon from obtaining a TTY */
+	pid = fork ();
 
-			close (pipe_fds[1]);
+	if (pid == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not fork a second time");
+		_exit (EXIT_FAILURE);
+	}
 
-			_exit (EXIT_FAILURE);
-		}
-		
-		/* Fork again to prevent daemon from obtaining a TTY */
-		pid = fork ();
+	else if (pid > 0)
+	{
+		close (pipe_fds[1]); /* we don't use the write end */
 
-		if (pid == -1)
-		{
-			/* Something went wrong, tell parent */
-			logmsg (errno, LOG_ERR,
-				"Could not fork a second time");
-			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-			if (n == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not write to pipe");
-			}
-			if (n != 1)
-			{
-				logmsg (0, LOG_WARNING,
-					"Wrote %lu bytes, expected 1",
-					(size_t)n);
-			}
+		/* Wait for the second child initialize. */
+		rc = s_wait_sig (pipe_fds[0], timeout_sec);
 
-			close (pipe_fds[1]);
-
-			_exit (EXIT_FAILURE);
-		}
-
-		else if (pid > 0)
-		{
-			/* Child number 1 is done */
-			close (pipe_fds[1]);
-
-			_exit (EXIT_SUCCESS);
-		}
+		/* Child number 1 is done. */
+		_exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
+	}
 
 	/* -------------------------------------------------- */
 	/*                   Child no. 2                      */
 	/* -------------------------------------------------- */
-		else
+	assert (pid == 0);
+	close (pipe_fds[0]); /* we don't use the read end */
+
+	/* Clear umask. */
+	umask (0);
+
+	/* Change working directory. */
+	rc = chdir ("/");
+	if (rc == -1)
+	{
+		logmsg (errno, LOG_DEBUG, "chdir (\"/\")");
+		s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
+
+		_exit (EXIT_FAILURE);
+	}
+
+	/* Reopen STDIN, STDOUT and STDERR to /dev/null. */
+	is_daemon = 1;
+	rc = 0;
+	if ( freopen (_PATH_DEVNULL, "r", stdin) == NULL )
+		rc = -1;
+	if ( rc == 0 && freopen (_PATH_DEVNULL, "w", stdout) == NULL )
+		rc = -1;
+	if ( rc == 0 && freopen (_PATH_DEVNULL, "w", stderr) == NULL )
+		rc = -1;
+	if (rc == -1)
+	{
+		/* Something went wrong, tell parent. */
+		logmsg (errno, LOG_ERR,
+			"Failed to reopen stdin, stdout or stderr");
+		s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
+
+		_exit (EXIT_FAILURE);
+	}
+
+	/* Write pid to a file. */
+	if (pidfile)
+	{
+		int fd = open (pidfile, O_CREAT | O_WRONLY,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+		if (fd == -1)
 		{
-			/* Clear umask */
-			umask (0);
+			logmsg (errno, LOG_ERR,
+				"Failed to open pidfile %s",
+				pidfile);
+			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
 
-			/* Change working directory */
-			rc = chdir ("/");
-			if (rc == -1)
-			{
-				/* Something went wrong, tell parent */
-				logmsg (errno, LOG_DEBUG, "chdir (\"/\")");
-				ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-				if (n == -1)
-				{
-					logmsg (errno, LOG_ERR,
-						"Could not write to pipe");
-				}
-				if (n != 1)
-				{
-					logmsg (0, LOG_WARNING,
-						"Wrote %lu bytes, expected 1",
-						(size_t)n);
-				}
+			_exit (EXIT_FAILURE);
+		}
+		
+		char pid_s[12];
+		pid = getpid();
+		size_t pid_l = snprintf (pid_s, 12, "%u", pid);
+		ssize_t n = write (fd, pid_s, pid_l);
+		if (n == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not write to pidfile");
+		}
+		if ((size_t)n != pid_l)
+		{
+			logmsg (0, LOG_WARNING,
+				"Wrote %lu bytes to pidfile, expected %lu",
+				(size_t)n, pid_l);
+		}
 
-				close (pipe_fds[1]);
+		logmsg (0, LOG_DEBUG,
+			"Wrote pid (%u) to pidfile (%s)",
+			pid, pidfile);
+	}
 
-				_exit (EXIT_FAILURE);
-			}
+	/* Call initializer. */
+	if (initializer != NULL)
+	{
+		rc = initializer (arg);
+		if (rc == -1)
+		{
+			logmsg (0, LOG_ERR,
+				"Initializer encountered an error");
+			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
 
-			/* Reopen STDIN, STDOUT and STDERR to /dev/null */
-			is_daemon = 1;
-			rc = 0;
-			if ( freopen (_PATH_DEVNULL, "r", stdin) == NULL )
-				rc = -1;
-			if ( rc == 0 && freopen (_PATH_DEVNULL, "w", stdout) == NULL )
-				rc = -1;
-			if ( rc == 0 && freopen (_PATH_DEVNULL, "w", stderr) == NULL )
-				rc = -1;
-			if (rc == -1)
-			{
-				/* Something went wrong, tell parent */
-				logmsg (errno, LOG_ERR,
-					"Failed to reopen stdin, stdout or stderr");
-				ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-				if (n == -1)
-				{
-					logmsg (errno, LOG_ERR,
-						"Could not write to pipe");
-				}
-				if (n != 1)
-				{
-					logmsg (0, LOG_WARNING,
-						"Wrote %lu bytes, expected 1",
-						(size_t)n);
-				}
-
-				close (pipe_fds[1]);
-
-				_exit (EXIT_FAILURE);
-			}
-
-			/* Write pid to a file */
-			if (pidfile)
-			{
-				int fd = open (pidfile, O_CREAT | O_WRONLY,
-					S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-				if (fd == -1)
-				{
-					logmsg (errno, LOG_ERR,
-						"Failed to open pidfile %s",
-						pidfile);
-					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-					if (n == -1)
-					{
-						logmsg (errno, LOG_ERR,
-							"Could not write to pipe");
-					}
-					if (n != 1)
-					{
-						logmsg (0, LOG_WARNING,
-							"Wrote %lu bytes, expected 1",
-							(size_t)n);
-					}
-
-					close (pipe_fds[1]);
-
-					_exit (EXIT_FAILURE);
-				}
-				
-				char pid_s[12];
-				pid = getpid();
-				size_t pid_l = snprintf (pid_s, 12, "%u", pid);
-				ssize_t n = write (fd, pid_s, pid_l);
-				if (n == -1)
-				{
-					logmsg (errno, LOG_ERR,
-						"Could not write to pipe");
-				}
-				if ((size_t)n != pid_l)
-				{
-					logmsg (0, LOG_WARNING,
-						"Wrote %lu bytes, expected %lu",
-						(size_t)n, pid_l);
-				}
-
-				logmsg (0, LOG_DEBUG,
-					"Wrote pid (%u) to pidfile (%s)",
-					pid, pidfile);
-			}
-
-			/* Call initializer. */
-			if (initializer != NULL)
-			{
-				int irc = initializer (arg);
-				if (irc == -1)
-				{
-					logmsg (0, LOG_ERR,
-						"Initializer encountered an error");
-					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-					if (n == -1)
-					{
-						logmsg (errno, LOG_ERR,
-							"Could not write to pipe");
-					}
-					if (n != 1)
-					{
-						logmsg (0, LOG_WARNING,
-							"Wrote %lu bytes, expected 1",
-							(size_t)n);
-					}
-
-					close (pipe_fds[1]);
-
-					_exit (EXIT_FAILURE);
-				}
-			}
-
-			/* Done, signal parent. */
-			ssize_t n = write (pipe_fds[1], DAEMON_OK_MSG, 1);
-			close (pipe_fds[1]);
-			if (n == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not write to pipe");
-				_exit (EXIT_FAILURE);
-			}
-			if (n != 1)
-			{
-				logmsg (0, LOG_WARNING,
-					"Wrote %lu bytes, expected 1",
-					(size_t)n);
-			}
-
-			closelog ();
-
-			/* Return to caller. */
-			return 0;
+			_exit (EXIT_FAILURE);
 		}
 	}
+
+	/* Done, signal child #1. */
+	rc = s_send_sig (pipe_fds[1], DAEMON_OK_MSG);
+	if (rc == -1)
+		_exit (EXIT_FAILURE);
+
+	closelog ();
+
+	/* Return to caller. */
+	return 0;
 }
 
 int
@@ -591,9 +522,7 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 	int rc;
 	pid_t pid;
 
-	/* -------------------------------------------------- */
-	/*             Fork for the first time                */
-	/* -------------------------------------------------- */
+	/* Fork for the first time. */
 	pid = fork ();
 
 	if (pid == -1)
@@ -607,194 +536,85 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 	/* -------------------------------------------------- */
 	else if (pid > 0)
 	{
-		/* Wait for first child to exit (it will wait for signal
-		 * from second child) */
-		
+		/* Wait for first child to exit. */
 		waitpid (pid, &rc, 0);
 
-		/* Parent is done */
+		/* Parent is done. */
 		return WEXITSTATUS (rc);
 	}
 
 	/* -------------------------------------------------- */
 	/*                   Child no. 1                      */
 	/* -------------------------------------------------- */
-	else
+	assert (pid == 0);
+
+	/* Open a pipe to second child. */
+	errno = 0;
+	int pipe_fds[2];
+	if ( pipe (pipe_fds) == -1 )
 	{
-		/* Open a pipe to second child */
-		errno = 0;
-		int pipe_fds[2];
-		if ( pipe (pipe_fds) == -1 )
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not open a pipe to communicate with fork");
-			_exit (EXIT_FAILURE);
-		}
+		logmsg (errno, LOG_ERR,
+			"Could not open a pipe to child");
+		_exit (EXIT_FAILURE);
+	}
 
-		/* Fork again to prevent child becoming a zombie */
-		pid = fork ();
+	/* Fork again to prevent the child becoming a zombie. */
+	pid = fork ();
 
-		if (pid == -1)
-		{
-			/* Something went wrong, tell parent */
-			logmsg (errno, LOG_ERR,
-				"Could not fork a second time");
-			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-			if (n == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not write to pipe");
-			}
-			if (n != 1)
-			{
-				logmsg (0, LOG_WARNING,
-					"Wrote %lu bytes, expected 1",
-					(size_t)n);
-			}
+	if (pid == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not fork a second time");
+		_exit (EXIT_FAILURE);
+	}
 
-			close (pipe_fds[1]);
+	else if (pid > 0)
+	{
+		close (pipe_fds[1]); /* we don't use the write end */
 
-			_exit (EXIT_FAILURE);
-		}
+		/* Wait for the second child initialize. */
+		rc = s_wait_sig (pipe_fds[0], timeout_sec);
 
-		else if (pid > 0)
-		{
-			struct pollfd poll_fd;
-			poll_fd.fd = pipe_fds[0];
-			poll_fd.events = POLLIN;
-
-			/* Wait for the second child to run initializer */
-			close (pipe_fds[1]); /* We don't use the write end */
-
-			/* Set a reasonable timeout */
-			int timeout = timeout_sec * 1000;
-			if (timeout == 0)
-				timeout = DAEMON_TIMEOUT;
-			rc = poll (&poll_fd, 1, timeout);
-
-			if (rc == 0)
-			{
-				/* Timed out */
-				logmsg (0, LOG_ERR,
-					"Timed out waiting for initializer");
-				close (pipe_fds[0]);
-				_exit (EXIT_FAILURE);
-			}
-			if (rc == -1)
-			{
-				/* Something went wrong, assume child is dead or never
-				 * started */
-				logmsg (errno, LOG_ERR,
-					"Could not read from pipe");
-				close (pipe_fds[0]);
-				_exit (EXIT_FAILURE);
-			}
-
-			/* Read signal */
-			char msg;
-			ssize_t n = read (pipe_fds[0], &msg, 1);
-			if (n == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not read from pipe");
-				close (pipe_fds[0]);
-				_exit (EXIT_FAILURE);
-			}
-			if (n != 1)
-			{
-				logmsg (0, LOG_WARNING,
-					"Read %lu bytes, expected 1",
-					(size_t)n);
-			}
-
-			close (pipe_fds[0]);
-			if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
-			{
-				/* Second fork didn't happen or failed and exited */
-				logmsg (0, LOG_DEBUG, "Read an error from pipe");
-				_exit (EXIT_FAILURE);
-			}
-
-			/* Child number 1 is done */
-			close (pipe_fds[1]);
-
-			_exit (EXIT_SUCCESS);
-		}
+		/* Child number 1 is done. */
+		_exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
+	}
 
 	/* -------------------------------------------------- */
 	/*                   Child no. 2                      */
 	/* -------------------------------------------------- */
-		else
+	assert (pid == 0);
+	close (pipe_fds[0]); /* we don't use the read end */
+
+	/* Call initializer. */
+	if (initializer != NULL)
+	{
+		rc = initializer (arg);
+		if (rc == -1)
 		{
-			/* Call initializer. */
-			if (initializer != NULL)
-			{
-				int irc = initializer (arg);
-				if (irc == -1)
-				{
-					logmsg (0, LOG_ERR,
-						"Initializer encountered an error");
-					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-					if (n == -1)
-					{
-						logmsg (errno, LOG_ERR,
-							"Could not write to pipe");
-					}
-					if (n != 1)
-					{
-						logmsg (0, LOG_WARNING,
-							"Wrote %lu bytes, expected 1",
-							(size_t)n);
-					}
+			logmsg (0, LOG_ERR,
+				"Initializer encountered an error");
+			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
 
-					close (pipe_fds[1]);
-
-					_exit (EXIT_FAILURE);
-				}
-			}
-
-			/* Done initializing, signal parent. */
-			ssize_t n = write (pipe_fds[1], DAEMON_OK_MSG, 1);
-			close (pipe_fds[1]);
-			if (n == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not write to pipe");
-				_exit (EXIT_FAILURE);
-			}
-			if (n != 1)
-			{
-				logmsg (0, LOG_WARNING,
-					"Wrote %lu bytes, expected 1",
-					(size_t)n);
-			}
-
-			/* Perform taks and exit. */
-			if (action != NULL)
-			{
-				int irc = action (arg);
-				if (irc == -1)
-				{
-					logmsg (0, LOG_ERR,
-						"Action encountered an error");
-					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
-					if (n == -1)
-					{
-						logmsg (errno, LOG_ERR,
-							"Could not write to pipe");
-					}
-					if (n != 1)
-					{
-						logmsg (0, LOG_WARNING,
-							"Wrote %lu bytes, expected 1", (size_t)n);
-					}
-
-					close (pipe_fds[1]);
-
-					_exit (EXIT_FAILURE);
-				}
-			}
-			_exit (EXIT_SUCCESS);
+			_exit (EXIT_FAILURE);
 		}
 	}
+
+	/* Done initializing, signal child #1. */
+	rc = s_send_sig (pipe_fds[1], DAEMON_OK_MSG);
+	if (rc == -1)
+		_exit (EXIT_FAILURE);
+
+	/* Perform task and exit. */
+	if (action != NULL)
+	{
+		rc = action (arg);
+		if (rc == -1)
+		{
+			logmsg (0, LOG_DEBUG,
+				"Action encountered an error");
+
+			_exit (EXIT_FAILURE);
+		}
+	}
+	_exit (EXIT_SUCCESS);
 }

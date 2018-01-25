@@ -15,12 +15,15 @@ typedef int (daemon_fn)(void*);
  * Daemonize process according to SysV specification:
  * https://www.freedesktop.org/software/systemd/man/daemon.html#SysV%20Daemons
  *
- * daemonize_and_init will:
+ * on success (failure) daemonize_and_init will:
  *    close all file descriptors
  *    fork
  *     |--> setsid --> fork
- *     |                |--> init --> signal parent --> return to caller
- *    exit <-----------------------------|
+ *     |                |--> init --> signal first fork --> return to caller (exit)
+ *     |               exit <------------------|
+ *    wait <------------|
+ *     |
+ *    exit (return)
  * 
  * If second fork succeeds, call initializer (unless NULL) passing it arg. If
  * initializer returns 0, parent exits with 0 and the daemon returns 0 to caller.
@@ -41,7 +44,7 @@ int daemonize (const char* pidfile, daemon_fn* initializer,
  * Run a task in a fork and exit. Does not close open descriptors or detach
  * from terminal. Does a double fork, so second child will not be a zombie.
  *   
- * a fork_and_run will:
+ * fork_and_run will:
  *    fork
  *     |---> fork
  *     |      |--> init --> signal first fork --> run action --> exit
