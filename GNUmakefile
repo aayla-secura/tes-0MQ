@@ -2,7 +2,7 @@ PREFIX := /usr/local
 
 LIB_SRC  := $(abspath src/lib)
 BIN_SRC  := $(abspath src/bin)
-TEST_SRC := $(abspath test-apps)
+TEST_SRC := $(abspath examples)
 CPATH    := $(abspath include)
 LIB_DEST := $(abspath lib)
 BIN_DEST := $(abspath bin)
@@ -43,12 +43,14 @@ libs: $(LIBS:%=$(LIB_DEST)/lib%.a) \
 
 $(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c $(HEADERS) \
 	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
+		$(LDLIBS) -o $@
 
 $(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
 	$(TASKS_OBJ) $(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
 	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) $(HDF5LIB) $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
+		$(HDF5LIB) $(LDLIBS) -o $@
 
 $(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o $(HEADERS) \
 	| $(LIB_DEST)
