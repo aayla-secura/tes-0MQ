@@ -11,24 +11,17 @@
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <string.h>
+#include <stdarg.h>
 #include <paths.h>
 #include <dirent.h>
 #include <errno.h>
 
+#define MAX_MSG_LEN 512
+#define LOG_ID_LEN 32
+
 #define DAEMON_OK_MSG  "0"
 #define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000 /* deafault */
-
-#ifdef VERBOSE
-#  define DEBUG(...) \
-	syslog (LOG_DAEMON | LOG_DEBUG, __VA_ARGS__)
-#else
-#  define DEBUG(...)
-#endif
-#define ERROR(...) \
-	syslog (LOG_DAEMON | LOG_ERR, __VA_ARGS__)
-#define WARN(...) \
-	syslog (LOG_DAEMON | LOG_WARNING, __VA_ARGS__)
 
 /*
  * TO DO:
@@ -43,6 +36,10 @@
  *     limit, we run into trouble when running via valgrind. Use the soft limit
  *     instead
  */
+
+static bool is_daemon;
+static bool is_verbose;
+static __thread char log_id[LOG_ID_LEN];
 
 static rlim_t s_get_max_fd (void);
 static void s_close_nonstd_fds (void);
@@ -62,7 +59,8 @@ s_get_max_fd (void)
 
 	if (getrlimit (RLIMIT_NOFILE, &rl) == -1)
 	{
-		DEBUG ("getrlimit returned -1, trying sysconf ()");
+		logmsg (0, LOG_DEBUG,
+			"getrlimit returned -1, trying sysconf ()");
 		return (rlim_t) sysconf (_SC_OPEN_MAX);
 	}
 	else
@@ -87,12 +85,13 @@ s_close_open_fds (rlim_t max_fd)
 	self_fds_dir = opendir ("/dev/fd");
 	if (!self_fds_dir)
 	{
-		DEBUG ("/dev/fd does not exist, trying /proc/self/fd");
+		logmsg (0, LOG_DEBUG,
+			"/dev/fd does not exist, trying /proc/self/fd");
 		self_fds_dir = opendir ("/proc/self/fd");
 	}
 	if (!self_fds_dir)
 	{
-		DEBUG ("/proc/self/fd does not exist");
+		logmsg (0, LOG_DEBUG, "/proc/self/fd does not exist");
 		return -1;
 	}
 
@@ -120,12 +119,13 @@ s_close_open_fds (rlim_t max_fd)
 		if ((rlim_t)dirent_no >= max_fd)
 			break;
 
-		DEBUG ("Closing fd = %d", dirent_no);
+		logmsg (0, LOG_DEBUG,
+			"Closing fd = %d", dirent_no);
 		rc = close (dirent_no);
 		/* Should we return on error? */
 		if (rc == -1) 
 		{
-			DEBUG ("%m");
+			logmsg (errno, LOG_DEBUG, "close ()");
 			/* return -1; */
 		}
 
@@ -134,7 +134,7 @@ s_close_open_fds (rlim_t max_fd)
 
 	if (errno)
 	{
-		DEBUG ("readdir (): %m");
+		logmsg (errno, LOG_DEBUG, "readdir ()");
 		return -1; /* Something went wrong... */
 	}
 
@@ -153,11 +153,14 @@ s_close_nonstd_fds (void)
 	rlim_t cur_fd;
 
 	max_fd = s_get_max_fd ();
-	DEBUG ("s_get_max_fd () returned %li", max_fd);
+	logmsg (0, LOG_DEBUG,
+		"s_get_max_fd () returned %li", max_fd);
 	if (max_fd == 0)
 	{
-		DEBUG ("Using 4096 as the maximum fdno then");
-		WARN ("May not have closed all file descriptors. "
+		logmsg (0, LOG_DEBUG,
+			"Using 4096 as the maximum fdno then");
+		logmsg (0, LOG_WARNING,
+			"May not have closed all file descriptors. "
 			"Could not get limit, so using 4096.");
 		max_fd = 4096; /* Be reasonable */
 	}
@@ -166,7 +169,7 @@ s_close_nonstd_fds (void)
 		return;
 
 	/* A fallback method: try to close all fd numbers up to some maximum */
-	DEBUG ("Using fallback method");
+	logmsg (0, LOG_DEBUG, "Using fallback method");
 	for (cur_fd = 0; cur_fd < max_fd; cur_fd++)
 	{
 		if (cur_fd == STDIN_FILENO)
@@ -176,7 +179,7 @@ s_close_nonstd_fds (void)
 		if (cur_fd == STDERR_FILENO)
 			continue;
 
-		DEBUG ("Closing fd = %li", cur_fd);
+		logmsg (0, LOG_DEBUG, "Closing fd = %li", cur_fd);
 		close (cur_fd);
 	}
 
@@ -187,8 +190,60 @@ s_close_nonstd_fds (void)
 /* ---------------------------------- API ---------------------------------- */
 /* ------------------------------------------------------------------------- */
 
+void
+logmsg (int errnum, int priority, const char* format, ...)
+{
+	if ( ! is_verbose && priority == LOG_DEBUG )
+		return;
+
+	va_list args;
+	va_start (args, format);
+	char msg[MAX_MSG_LEN];
+	memset (msg, 0, MAX_MSG_LEN);
+	int len = vsnprintf (msg, MAX_MSG_LEN, format, args);
+
+	if ( (len < MAX_MSG_LEN - 10)  && errnum != 0 )
+	{
+		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
+		/* Thread-safe version of strerror. */
+		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
+	}
+
+	if (is_daemon)
+		syslog (priority, "%s%s", log_id, msg);
+	else
+	{
+		FILE* outbuf;
+		if (( priority == LOG_DEBUG ) ||
+				( ! is_verbose && priority < 5 ))
+			outbuf = stderr;
+		else
+			outbuf = stdout;
+
+		fprintf (outbuf, "%s%s\n", log_id, msg);
+	}
+	va_end (args);
+}
+
+char*
+set_logid (char* id)
+{
+	if (id != NULL)
+		strncpy (log_id, id, LOG_ID_LEN);
+	return log_id;
+}
+
 int
-daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
+set_verbose (int level)
+{
+	if (level >= 0)
+		is_verbose = (level ? 1 : 0);
+	return is_verbose;
+	
+}
+
+int
+daemonize (const char* pidfile, daemon_fn* initializer,
 		void* arg, int timeout_sec)
 {
 	int rc;
@@ -209,7 +264,8 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		sigaction (sig, &sa, NULL);
 		if (errno)
 		{
-			DEBUG ("signal (%d, SIG_DFL): %m", sig);
+			logmsg (0, LOG_DEBUG,
+				"signal (%d, SIG_DFL)", sig);
 		}
 	}
 
@@ -219,7 +275,8 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 	errno = 0;
 	if ( pipe (pipe_fds) == -1 )
 	{
-		ERROR ("Could not open a pipe to communicate with fork");
+		logmsg (errno, LOG_ERR,
+			"Could not open a pipe to communicate with fork");
 		return -1;
 	}
 
@@ -230,7 +287,7 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 
 	if (pid == -1)
 	{
-		ERROR ("Could not fork");
+		logmsg (errno, LOG_ERR, "Could not fork");
 		return -1;
 	}
 
@@ -255,7 +312,8 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		if (rc == 0)
 		{
 			/* Timed out */
-			ERROR ("Timed out waiting for daemon to initialize");
+			logmsg (0, LOG_ERR,
+				"Timed out waiting for daemon to initialize");
 			close (pipe_fds[0]);
 			return -1;
 		}
@@ -263,7 +321,8 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		{
 			/* Something went wrong, assume daemon is dead or never
 			 * started */
-			ERROR ("Could not read from pipe: %m");
+			logmsg (errno, LOG_ERR,
+				"Could not read from pipe");
 			close (pipe_fds[0]);
 			return -1;
 		}
@@ -273,20 +332,22 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		ssize_t n = read (pipe_fds[0], &msg, 1);
 		if (n == -1)
 		{
-			ERROR ("Could not read from pipe: %m");
+			logmsg (errno, LOG_ERR,
+				"Could not read from pipe");
 			close (pipe_fds[0]);
 			return -1;
 		}
 		if (n != 1)
 		{
-			WARN ("Read %lu bytes, expected 1", (size_t)n);
+			logmsg (0, LOG_WARNING,
+				"Read %lu bytes, expected 1", (size_t)n);
 		}
 
 		close (pipe_fds[0]);
 		if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
 		{
 			/* Second fork didn't happen or failed and exited */
-			DEBUG ("Read an error from pipe");
+			logmsg (0, LOG_DEBUG, "Read an error from pipe");
 			return -1;
 		}
 
@@ -306,15 +367,18 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		if (pid == (pid_t)-1)
 		{
 			/* Something went wrong, tell parent */
-			ERROR ("setsid (): %m");
+			logmsg (errno, LOG_DEBUG, "setsid ()");
 			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 			if (n == -1)
 			{
-				ERROR ("Could not write to pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not write to pipe");
 			}
 			if (n != 1)
 			{
-				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				logmsg (0, LOG_WARNING,
+					"Wrote %lu bytes, expected 1",
+					(size_t)n);
 			}
 
 			close (pipe_fds[1]);
@@ -328,15 +392,19 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 		if (pid == -1)
 		{
 			/* Something went wrong, tell parent */
-			ERROR ("Could not fork a second time");
+			logmsg (errno, LOG_ERR,
+				"Could not fork a second time");
 			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 			if (n == -1)
 			{
-				ERROR ("Could not write to pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not write to pipe");
 			}
 			if (n != 1)
 			{
-				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				logmsg (0, LOG_WARNING,
+					"Wrote %lu bytes, expected 1",
+					(size_t)n);
 			}
 
 			close (pipe_fds[1]);
@@ -365,15 +433,18 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 			if (rc == -1)
 			{
 				/* Something went wrong, tell parent */
-				ERROR ("chdir (\"/\"): %m");
+				logmsg (errno, LOG_DEBUG, "chdir (\"/\")");
 				ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 				if (n == -1)
 				{
-					ERROR ("Could not write to pipe: %m");
+					logmsg (errno, LOG_ERR,
+						"Could not write to pipe");
 				}
 				if (n != 1)
 				{
-					WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+					logmsg (0, LOG_WARNING,
+						"Wrote %lu bytes, expected 1",
+						(size_t)n);
 				}
 
 				close (pipe_fds[1]);
@@ -382,6 +453,7 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 			}
 
 			/* Reopen STDIN, STDOUT and STDERR to /dev/null */
+			is_daemon = 1;
 			rc = 0;
 			if ( freopen (_PATH_DEVNULL, "r", stdin) == NULL )
 				rc = -1;
@@ -392,16 +464,19 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 			if (rc == -1)
 			{
 				/* Something went wrong, tell parent */
-				ERROR ("freopen (%s, ...): %m", _PATH_DEVNULL);
-				ERROR ("Failed to reopen stdin, stdout or stderr");
+				logmsg (errno, LOG_ERR,
+					"Failed to reopen stdin, stdout or stderr");
 				ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 				if (n == -1)
 				{
-					ERROR ("Could not write to pipe: %m");
+					logmsg (errno, LOG_ERR,
+						"Could not write to pipe");
 				}
 				if (n != 1)
 				{
-					WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+					logmsg (0, LOG_WARNING,
+						"Wrote %lu bytes, expected 1",
+						(size_t)n);
 				}
 
 				close (pipe_fds[1]);
@@ -416,16 +491,20 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 					S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 				if (fd == -1)
 				{
-					ERROR ("Failed to open pidfile %s: %m",
+					logmsg (errno, LOG_ERR,
+						"Failed to open pidfile %s",
 						pidfile);
 					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 					if (n == -1)
 					{
-						ERROR ("Could not write to pipe: %m");
+						logmsg (errno, LOG_ERR,
+							"Could not write to pipe");
 					}
 					if (n != 1)
 					{
-						WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+						logmsg (0, LOG_WARNING,
+							"Wrote %lu bytes, expected 1",
+							(size_t)n);
 					}
 
 					close (pipe_fds[1]);
@@ -439,14 +518,18 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 				ssize_t n = write (fd, pid_s, pid_l);
 				if (n == -1)
 				{
-					ERROR ("Could not write to pipe: %m");
+					logmsg (errno, LOG_ERR,
+						"Could not write to pipe");
 				}
 				if ((size_t)n != pid_l)
 				{
-					WARN ("Wrote %lu bytes, expected %lu", (size_t)n, pid_l);
+					logmsg (0, LOG_WARNING,
+						"Wrote %lu bytes, expected %lu",
+						(size_t)n, pid_l);
 				}
 
-				DEBUG ("Wrote pid (%u) to pidfile (%s)",
+				logmsg (0, LOG_DEBUG,
+					"Wrote pid (%u) to pidfile (%s)",
 					pid, pidfile);
 			}
 
@@ -456,15 +539,19 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 				int irc = initializer (arg);
 				if (irc == -1)
 				{
-					ERROR ("Initializer encountered an error");
+					logmsg (0, LOG_ERR,
+						"Initializer encountered an error");
 					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 					if (n == -1)
 					{
-						ERROR ("Could not write to pipe: %m");
+						logmsg (errno, LOG_ERR,
+							"Could not write to pipe");
 					}
 					if (n != 1)
 					{
-						WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+						logmsg (0, LOG_WARNING,
+							"Wrote %lu bytes, expected 1",
+							(size_t)n);
 					}
 
 					close (pipe_fds[1]);
@@ -478,12 +565,15 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 			close (pipe_fds[1]);
 			if (n == -1)
 			{
-				ERROR ("Could not write to pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not write to pipe");
 				_exit (EXIT_FAILURE);
 			}
 			if (n != 1)
 			{
-				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				logmsg (0, LOG_WARNING,
+					"Wrote %lu bytes, expected 1",
+					(size_t)n);
 			}
 
 			closelog ();
@@ -495,13 +585,7 @@ daemonize_and_init (const char* pidfile, daemon_init_fn* initializer,
 }
 
 int
-daemonize (const char* pidfile)
-{
-	return daemonize_and_init (pidfile, NULL, NULL, 0);
-}
-
-int
-fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
+fork_and_run (daemon_fn* initializer, daemon_fn* action,
 		void* arg, int timeout_sec)
 {
 	int rc;
@@ -514,7 +598,7 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 
 	if (pid == -1)
 	{
-		ERROR ("Could not fork");
+		logmsg (errno, LOG_ERR, "Could not fork");
 		return -1;
 	}
 
@@ -542,7 +626,8 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 		int pipe_fds[2];
 		if ( pipe (pipe_fds) == -1 )
 		{
-			ERROR ("Could not open a pipe to communicate with fork: %m");
+			logmsg (errno, LOG_ERR,
+				"Could not open a pipe to communicate with fork");
 			_exit (EXIT_FAILURE);
 		}
 
@@ -552,15 +637,19 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 		if (pid == -1)
 		{
 			/* Something went wrong, tell parent */
-			ERROR ("Could not fork a second time");
+			logmsg (errno, LOG_ERR,
+				"Could not fork a second time");
 			ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 			if (n == -1)
 			{
-				ERROR ("Could not write to pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not write to pipe");
 			}
 			if (n != 1)
 			{
-				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				logmsg (0, LOG_WARNING,
+					"Wrote %lu bytes, expected 1",
+					(size_t)n);
 			}
 
 			close (pipe_fds[1]);
@@ -586,7 +675,8 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 			if (rc == 0)
 			{
 				/* Timed out */
-				ERROR ("Timed out waiting for daemon to initialize");
+				logmsg (0, LOG_ERR,
+					"Timed out waiting for initializer");
 				close (pipe_fds[0]);
 				_exit (EXIT_FAILURE);
 			}
@@ -594,7 +684,8 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 			{
 				/* Something went wrong, assume child is dead or never
 				 * started */
-				ERROR ("Could not read from pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not read from pipe");
 				close (pipe_fds[0]);
 				_exit (EXIT_FAILURE);
 			}
@@ -604,20 +695,23 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 			ssize_t n = read (pipe_fds[0], &msg, 1);
 			if (n == -1)
 			{
-				ERROR ("Could not read from pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not read from pipe");
 				close (pipe_fds[0]);
 				_exit (EXIT_FAILURE);
 			}
 			if (n != 1)
 			{
-				WARN ("Read %lu bytes, expected 1", (size_t)n);
+				logmsg (0, LOG_WARNING,
+					"Read %lu bytes, expected 1",
+					(size_t)n);
 			}
 
 			close (pipe_fds[0]);
 			if ( memcmp (&msg, DAEMON_OK_MSG, 1) != 0 )
 			{
 				/* Second fork didn't happen or failed and exited */
-				DEBUG ("Read an error from pipe");
+				logmsg (0, LOG_DEBUG, "Read an error from pipe");
 				_exit (EXIT_FAILURE);
 			}
 
@@ -638,15 +732,19 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 				int irc = initializer (arg);
 				if (irc == -1)
 				{
-					ERROR ("Initializer encountered an error");
+					logmsg (0, LOG_ERR,
+						"Initializer encountered an error");
 					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 					if (n == -1)
 					{
-						ERROR ("Could not write to pipe: %m");
+						logmsg (errno, LOG_ERR,
+							"Could not write to pipe");
 					}
 					if (n != 1)
 					{
-						WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+						logmsg (0, LOG_WARNING,
+							"Wrote %lu bytes, expected 1",
+							(size_t)n);
 					}
 
 					close (pipe_fds[1]);
@@ -660,12 +758,15 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 			close (pipe_fds[1]);
 			if (n == -1)
 			{
-				ERROR ("Could not write to pipe: %m");
+				logmsg (errno, LOG_ERR,
+					"Could not write to pipe");
 				_exit (EXIT_FAILURE);
 			}
 			if (n != 1)
 			{
-				WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+				logmsg (0, LOG_WARNING,
+					"Wrote %lu bytes, expected 1",
+					(size_t)n);
 			}
 
 			/* Perform taks and exit. */
@@ -674,15 +775,18 @@ fork_and_run (daemon_init_fn* initializer, daemon_init_fn* action,
 				int irc = action (arg);
 				if (irc == -1)
 				{
-					ERROR ("Action encountered an error");
+					logmsg (0, LOG_ERR,
+						"Action encountered an error");
 					ssize_t n = write (pipe_fds[1], DAEMON_ERR_MSG, 1);
 					if (n == -1)
 					{
-						ERROR ("Could not write to pipe: %m");
+						logmsg (errno, LOG_ERR,
+							"Could not write to pipe");
 					}
 					if (n != 1)
 					{
-						WARN ("Wrote %lu bytes, expected 1", (size_t)n);
+						logmsg (0, LOG_WARNING,
+							"Wrote %lu bytes, expected 1", (size_t)n);
 					}
 
 					close (pipe_fds[1]);

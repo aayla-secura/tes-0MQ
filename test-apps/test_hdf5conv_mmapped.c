@@ -1,7 +1,7 @@
 /* TO DO: test with mmapped files, in daemon mode */
 
 #include "hdf5conv.h"
-#include "common.h" /* is_verbose, is_daemon */
+#include "daemon_ng.h"
 #include "sys/types.h"
 #include "sys/stat.h"
 #include "sys/mman.h"
@@ -17,18 +17,17 @@
 #define MEASUREMENT ""
 #define OVRWRT 1
 #define ASYNC 0
+#define DAEMONIZE 0
 
 int main (void)
 {
-	is_daemon = 0;
-	is_verbose = 1;
-
+	set_verbose (1);
 
 	/* Open the data file. */
 	int fd = open (BASEFNAME ".tdat", O_RDONLY);
 	if (fd == -1)
 	{
-		s_msg (errno, LOG_ERR, -1,
+		logmsg (errno, LOG_ERR,
 			"Could not open data file %s.tdat",
 			BASEFNAME);
 		return -1;
@@ -37,7 +36,7 @@ int main (void)
 	off_t fsize = lseek (fd, 0, SEEK_END);
 	if (fsize == (off_t)-1)
 	{
-		s_msg (errno, LOG_ERR, -1,
+		logmsg (errno, LOG_ERR,
 			"Could not seek to end of file %s.tdat",
 			BASEFNAME);
 		close (fd);
@@ -50,7 +49,7 @@ int main (void)
 			PROT_READ, MAP_PRIVATE, fd, 0);
 	if ((void*)data == (void*)-1)
 	{
-		s_msg (errno, LOG_ERR, -1,
+		logmsg (errno, LOG_ERR,
 			"Could not mmap file %s.tdat",
 			BASEFNAME);
 		close (fd);
@@ -83,8 +82,9 @@ int main (void)
 	};
 
 	int rc = 0;
-	if (is_daemon)
-		rc = daemonize (NULL);
+#if DAEMONIZE
+	rc = daemonize (NULL, NULL, NULL, 0);
+#endif
 	if (rc == 0)
 		rc = hdf5_conv (&creq);
 

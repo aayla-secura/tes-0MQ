@@ -12,9 +12,6 @@
 
 int main (void)
 {
-	is_daemon = 1;
-	is_verbose = 1;
-
 	uint8_t num_dsets = 2;
 	struct hdf5_dset_desc_t dsets[] = {
 		{ /* tick stream */
@@ -40,8 +37,7 @@ int main (void)
 	};
 
 	int rc = 0;
-	if (is_daemon)
-		rc = daemonize (NULL);
+	rc = daemonize (NULL, NULL, NULL, 0);
 	if (rc == 0)
 		rc = hdf5_conv (&creq);
 

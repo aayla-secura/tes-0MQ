@@ -175,7 +175,7 @@ s_prepare_if (const char* ifname_full)
 		;
 	if (end <= start)
 	{
-		s_msg (0, LOG_ERR, 0,
+		logmsg (0, LOG_ERR,
 			"Malformed interface name '%s'", ifname_full);
 		return -1;
 	}
@@ -187,7 +187,7 @@ s_prepare_if (const char* ifname_full)
 	int sock = socket (AF_INET, SOCK_DGRAM, htons (IPPROTO_IP));
 	if (sock == -1)
 	{
-		s_msg (errno, LOG_ERR, 0,
+		logmsg (errno, LOG_ERR,
 			"Could not create a raw socket");
 		return -1;
 	}
@@ -199,7 +199,7 @@ s_prepare_if (const char* ifname_full)
 	rc = ioctl (sock, SIOCGIFINDEX, &ifr);
 	if (rc == -1)
 	{
-		s_msg (errno, LOG_ERR, 0,
+		logmsg (errno, LOG_ERR,
 			"Could not get the interface's index");
 		return -1;
 	}
@@ -208,7 +208,7 @@ s_prepare_if (const char* ifname_full)
 	rc = ioctl (sock, SIOCGIFFLAGS, &ifr);
 	if (rc == -1)
 	{
-		s_msg (errno, LOG_ERR, 0,
+		logmsg (errno, LOG_ERR,
 			"Could not get the interface's state");
 		return -1;
 	}
@@ -218,7 +218,7 @@ s_prepare_if (const char* ifname_full)
 		rc = ioctl (sock, SIOCSIFFLAGS, &ifr);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not bring the interface up");
 			return -1;
 		}
@@ -226,18 +226,18 @@ s_prepare_if (const char* ifname_full)
 		rc = ioctl (sock, SIOCGIFFLAGS, &ifr);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not get the interface's state");
 			return -1;
 		}
 		if (! (ifr.ifr_flags & IFF_UP))
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not bring the interface up");
 			return -1;
 		}
 	}
-	s_msg (0, LOG_DEBUG, 0, "Interface is up");
+	logmsg (0, LOG_DEBUG, "Interface is up");
 
 #ifdef NEED_PROMISC
 	/* Put the interface in promiscuous mode. */
@@ -252,7 +252,7 @@ s_prepare_if (const char* ifname_full)
 		rc = ioctl (sock, SIOCSIFFLAGS, &ifr);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not put the interface in promiscuous mode");
 			return -1;
 		}
@@ -260,18 +260,18 @@ s_prepare_if (const char* ifname_full)
 		rc = ioctl (sock, SIOCGIFFLAGS, &ifr);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not get the interface's state");
 			return -1;
 		}
 		if (! (ifr.ifr_flags & IFF_PROMISC))
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not put the interface in promiscuous mode");
 			return -1;
 		}
 	}
-	s_msg (0, LOG_DEBUG, 0, "Interface is in promiscuous mode");
+	logmsg (0, LOG_DEBUG, "Interface is in promiscuous mode");
 #endif /* NEED_PROMISC */
 
 	return 0;
@@ -304,7 +304,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 	
 	if (loop == NULL)
 	{ /* final stats, exiting */
-		s_msg (0, LOG_INFO, 0, 
+		logmsg (0, LOG_INFO, 
 			"received: %10lu   | "
 			"missed: %10lu   | "
 			"polled: %10lu   | "
@@ -317,7 +317,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 	}
 	else
 	{ /* called by zloop's timer */
-		s_msg (0, LOG_INFO, 0, 
+		logmsg (0, LOG_INFO, 
 			// "elapsed: %2.5fs   | "
 			"missed: %10lu   | "
 			"skipped polls: %10lu   | "
@@ -338,11 +338,13 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 	stats->latest.polled   = 0;
 	stats->latest.skipped  = 0;
 
-	if ( ! is_daemon )
+#if 0
+	if ( ! is_daemon () )
 	{
 		fflush (stdout);
 		fflush (stderr);
 	}
+#endif
 
 	return 0;
 }
@@ -364,7 +366,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	int rc = tasks_wakeup ();
 	if (rc)
 	{
-		s_msg (0, LOG_DEBUG, 0,
+		logmsg (0, LOG_DEBUG,
 			"Could not wake up all waiting tasks.");
 		return -1;
 	}
@@ -422,6 +424,10 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 static int
 s_coordinator_body (const char* ifname_full, long int stat_period)
 {
+	char log_id[16];
+	snprintf (log_id, sizeof (log_id), "[Coordinator] ");
+	set_logid (log_id);
+
 	int rc;
 	struct data_t data;
 	memset (&data, 0, sizeof (data));
@@ -439,13 +445,13 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	data.ifd = tes_if_open (ifname_full, NULL, 0, 0);
 	if (data.ifd == NULL)
 	{
-		s_msg (errno, LOG_ERR, 0, "Could not open interface %s",
+		logmsg (errno, LOG_ERR, "Could not open interface %s",
 			ifname_full);
 		return -1;
 	}
 	const char* ifname = tes_if_name (data.ifd);
 	dbg_assert (ifname != NULL);
-	s_msg (0, LOG_INFO, 0, "Opened interface %s", ifname);
+	logmsg (0, LOG_INFO, "Opened interface %s", ifname);
 	dbg_assert (tes_if_rxrings (data.ifd) == NUM_RINGS);
 
 	/* Bring the interface up and put it in promiscuous mode. */
@@ -460,7 +466,7 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	rc = tasks_start (data.ifd, loop);
 	if (rc)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Tasks failed to start");
+		logmsg (0, LOG_DEBUG, "Tasks failed to start");
 		goto cleanup;
 	}
 
@@ -472,7 +478,7 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	rc = zloop_poller (loop, &pitem, s_new_pkts_hn, &data);
 	if (rc == -1)
 	{
-		s_msg (errno, LOG_ERR, 0,
+		logmsg (errno, LOG_ERR,
 			"Could not register the zloop poller");
 		goto cleanup;
 	}
@@ -484,23 +490,23 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 			s_print_stats, &data.stats);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, 0, "Could not set a timer");
+			logmsg (errno, LOG_ERR, "Could not set a timer");
 			goto cleanup;
 		}
-		s_msg (0, LOG_DEBUG, 0, "Will print stats every %d seconds",
+		logmsg (0, LOG_DEBUG, "Will print stats every %d seconds",
 			stat_period);
 	}
 
-	s_msg (0, LOG_DEBUG, 0, "All threads initialized");
+	logmsg (0, LOG_DEBUG, "All threads initialized");
 	rc = zloop_start (loop);
 
 	if (rc)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Terminated by handler");
+		logmsg (0, LOG_DEBUG, "Terminated by handler");
 	}
 	else
 	{
-		s_msg (0, LOG_DEBUG, 0, "Interrupted");
+		logmsg (0, LOG_DEBUG, "Interrupted");
 	}
 
 cleanup:
@@ -520,8 +526,8 @@ main (int argc, char **argv)
 	int rc;
 
 	/* Process command-line options. */
-	is_daemon = 1;
-	is_verbose = 0;
+	bool is_daemon = 1;
+	bool is_verbose = 0;
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
@@ -579,25 +585,26 @@ main (int argc, char **argv)
 	if (is_daemon)
 	{
 		/* Go into background. */
-		rc = daemonize (pidfile);
+		rc = daemonize (pidfile, NULL, NULL, 0);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Failed to go into background");
 			exit (EXIT_FAILURE);
 		}
+		set_verbose (is_verbose);
 
 		/* Start syslog. */
 		openlog ("TES server", 0, LOG_DAEMON);
 
-		s_msg (0, LOG_DEBUG, 0,
+		logmsg (0, LOG_DEBUG,
 			"Wrote pid to file '%s'", pidfile);
 	}
 
 	rc = s_coordinator_body (ifname_full, stat_period);
 
 	/* Should we remove the pidfile? */
-	s_msg (0, LOG_INFO, 0, "Shutting down");
+	logmsg (0, LOG_INFO, "Shutting down");
 
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }

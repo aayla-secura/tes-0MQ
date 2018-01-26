@@ -15,8 +15,6 @@
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */
 
-#define LOGID "[HDF5CONV] "
-
 struct s_creq_data_t
 {
 	struct hdf5_conv_req_t creq;
@@ -38,9 +36,9 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 	htri_t gstat = H5Lexists (l_id, group, H5P_DEFAULT);
 	if (gstat < 0)
 	{
-		s_msg (0, LOG_ERR, -1,
-			"%sCould not check if group %s exists",
-			LOGID, group);
+		logmsg (0, LOG_ERR,
+			"Could not check if group %s exists",
+			group);
 		return -1;
 	}
 	else if (gstat > 0 && ! ovrwt)
@@ -48,8 +46,8 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 		g_id = H5Gopen (l_id, group, H5P_DEFAULT);	
 		if (g_id < 0)
 		{
-			s_msg (0, LOG_ERR, -1,
-				"%sCould not open group %s", LOGID, group);
+			logmsg (0, LOG_ERR,
+				"Could not open group %s", group);
 			return -1;
 		}
 	}
@@ -60,9 +58,9 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 			herr_t err = H5Ldelete (l_id, group, H5P_DEFAULT);	
 			if (err < 0)
 			{
-				s_msg (0, LOG_ERR, -1,
-					"%sCould not delete group %s",
-					LOGID, group);
+				logmsg (0, LOG_ERR,
+					"Could not delete group %s",
+					group);
 				return -1;
 			}
 		}
@@ -71,8 +69,8 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 			H5P_DEFAULT, H5P_DEFAULT);
 		if (g_id < 0)
 		{
-			s_msg (0, LOG_ERR, -1,
-				"%sCould not create group %s", LOGID, group);
+			logmsg (0, LOG_ERR,
+				"Could not create group %s", group);
 			return -1;
 		}
 
@@ -101,18 +99,18 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 	int fd = open (ddesc->filename, O_RDONLY);
 	if (fd == -1)
 	{
-		s_msg (errno, LOG_ERR, -1,
-			"%sCould not open data file %s",
-			LOGID, ddesc->filename);
+		logmsg (errno, LOG_ERR,
+			"Could not open data file %s",
+			ddesc->filename);
 		return -1;
 	}
 
 	off_t fsize = lseek (fd, 0, SEEK_END);
 	if (fsize == (off_t)-1)
 	{
-		s_msg (errno, LOG_ERR, -1,
-			"%sCould not seek to end of file %s",
-			LOGID, ddesc->filename);
+		logmsg (errno, LOG_ERR,
+			"Could not seek to end of file %s",
+			ddesc->filename);
 		close (fd);
 		return -1;
 	}
@@ -136,9 +134,9 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 			PROT_READ, MAP_PRIVATE, fd, 0);
 	if (data == (void*)-1)
 	{
-		s_msg (errno, LOG_ERR, -1,
-			"%sCould not mmap file %s",
-			LOGID, ddesc->filename);
+		logmsg (errno, LOG_ERR,
+			"Could not mmap file %s",
+			ddesc->filename);
 		close (fd);
 		return -1;
 	}
@@ -163,25 +161,25 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 #endif
 	assert (ddesc != NULL);
 	assert (ddesc->length >= 0);
-	s_msg (0, LOG_DEBUG, -1,
-		"%sCreating dataset %s", LOGID, ddesc->dname);
+	logmsg (0, LOG_DEBUG,
+		"Creating dataset %s", ddesc->dname);
 
 	/* Create the datasets. */
 	hsize_t length[1] = {ddesc->length};
 	hid_t dspace = H5Screate_simple (1, length, NULL);
 	if (dspace < 0)
 	{
-		s_msg (0, LOG_ERR, -1,
-			"%sCould not create dataspace", LOGID);
+		logmsg (0, LOG_ERR,
+			"Could not create dataspace");
 		return -1;
 	}
 	hid_t dset = H5Dcreate (g_id, ddesc->dname, DATATYPE,
 		dspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 	if (dset < 0)
 	{
-		s_msg (0, LOG_ERR, -1,
-			"%sCould not create dataset %s",
-			LOGID, ddesc->dname);
+		logmsg (0, LOG_ERR,
+			"Could not create dataset %s",
+			ddesc->dname);
 		H5Sclose (dspace);
 		return -1;
 	}
@@ -201,9 +199,9 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 		H5S_ALL, H5P_DEFAULT, ddesc->buffer + ddesc->offset);
 	if (err < 0)
 	{
-		s_msg (0, LOG_ERR, -1,
-			"%sCould not write to dataset %s",
-			LOGID, ddesc->dname);
+		logmsg (0, LOG_ERR,
+			"Could not write to dataset %s",
+			ddesc->dname);
 		H5Dclose (dset);
 		H5Sclose (dspace);
 		return -1;
@@ -228,9 +226,9 @@ s_hdf5_init (void* creq_data_)
 	int fok = access (creq->filename, F_OK);
 	if (fok == 0 && ! creq->ovrwt)
 	{ /* open it for writing */
-		s_msg (0, LOG_DEBUG, -1,
-			"%sOpening existing hdf5 file: %s",
-			LOGID, creq->filename);
+		logmsg (0, LOG_DEBUG,
+			"Opening existing hdf5 file: %s",
+			creq->filename);
 		f_id = H5Fopen (creq->filename, H5F_ACC_RDWR, H5P_DEFAULT);
 	}
 	else
@@ -238,21 +236,21 @@ s_hdf5_init (void* creq_data_)
 		if (fok == -1 && errno != ENOENT)
 		{ /* the calling process ensures the filepath should be in an
 		   * existing directory (same as the capture files) */
-			s_msg (errno, LOG_ERR, -1,
-			 	"%sUnexpected error accessing hdf5 file %s",
-				LOGID, creq->filename);
+			logmsg (errno, LOG_ERR,
+			 	"Unexpected error accessing hdf5 file %s",
+				creq->filename);
 			return -1;
 		}
-		s_msg (0, LOG_DEBUG, -1,
-			"%s%s hdf5 file: %s", LOGID,
+		logmsg (0, LOG_DEBUG,
+			"%s hdf5 file: %s",
 			(fok ? "Creating" : "Overwriting"), creq->filename);
 		f_id = H5Fcreate (creq->filename, H5F_ACC_TRUNC,
 			H5P_DEFAULT, H5P_DEFAULT);
 	}
 	if (f_id < 0)
 	{
-		s_msg (0, LOG_ERR, -1,
-			"%sCould not %s hdf5 file %s", LOGID,
+		logmsg (0, LOG_ERR,
+			"Could not %s hdf5 file %s",
 			((fok == 0 && ! creq->ovrwt) ? "open" : "create"),
 			creq->filename);
 		return -1;
@@ -294,7 +292,7 @@ s_hdf5_init (void* creq_data_)
 			ddesc->filename == NULL ||
 			(ddesc->offset < 0 && ddesc->length <=0) )
 		{
-			s_msg (0, LOG_ERR, -1, "Invalid request");
+			logmsg (0, LOG_ERR, "Invalid request");
 			H5Gclose (cg_id);
 			H5Fclose (f_id);
 			return -1;
@@ -364,7 +362,7 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 		creq->datasets == NULL ||
 		creq->num_dsets == 0)
 	{
-		s_msg (0, LOG_ERR, -1, "Invalid request");
+		logmsg (0, LOG_ERR, "Invalid request");
 		return -1;
 	}
 

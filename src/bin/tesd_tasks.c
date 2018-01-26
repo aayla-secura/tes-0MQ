@@ -514,15 +514,14 @@ static int   s_task_save_stats_send  (struct s_task_save_data_t* sjob,
 /* Ongoing job helpers */
 static void  s_task_save_flush (struct s_task_save_data_t* sjob);
 static int   s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
-	const char* buf, uint16_t len, int task_id);
+	const char* buf, uint16_t len);
 static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	bool force);
 static char* s_task_save_canonicalize_path (const char* filename,
-	bool checkonly, int task_id);
+	bool checkonly);
 
 #ifdef ENABLE_FULL_DEBUG
-static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob,
-	int task_id);
+static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob);
 #endif
 
 /* --------------------------- PUBLISH HIST TASK --------------------------- */
@@ -644,11 +643,11 @@ tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		s_tasks[t].id = t + 1;
-		s_msg (0, LOG_DEBUG, 0, "Starting task #%d", t + 1);
+		logmsg (0, LOG_DEBUG, "Starting task #%d", t + 1);
 		rc = s_task_start (ifd, &s_tasks[t]);
 		if (rc != 0)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not start tasks");
 			return -1;
 		}
@@ -671,13 +670,13 @@ tasks_read (zloop_t* loop)
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Registering reader for task #%d", t);
+		logmsg (0, LOG_DEBUG, "Registering reader for task #%d", t);
 		task_t* self = &s_tasks[t];
 		rc = zloop_reader (loop, zactor_sock(self->shim),
 			s_die_hn, NULL);
 		if (rc != 0)
 		{
-			s_msg (errno, LOG_ERR, 0,
+			logmsg (errno, LOG_ERR,
 				"Could not register the zloop readers");
 			return -1;
 		}
@@ -694,7 +693,7 @@ tasks_mute (zloop_t* loop)
 	assert (loop != NULL);
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		s_msg (0, LOG_DEBUG, 0,
+		logmsg (0, LOG_DEBUG,
 			"Unregistering reader for task #%d", t);
 		task_t* self = &s_tasks[t];
 		zloop_reader_end (loop, zactor_sock(self->shim));
@@ -715,7 +714,7 @@ tasks_wakeup (void)
 			int rc = zsock_signal (self->shim, SIG_WAKEUP);
 			if (rc != 0)
 			{
-				s_msg (errno, LOG_ERR, 0,
+				logmsg (errno, LOG_ERR,
 					"Could not signal task #%d", t);
 				return -1;
 			}
@@ -732,7 +731,7 @@ tasks_destroy (void)
 {
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Stopping task #%d", t);
+		logmsg (0, LOG_DEBUG, "Stopping task #%d", t);
 		task_t* self = &s_tasks[t];
 		s_task_stop (self);
 	}
@@ -801,7 +800,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
-		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return -1;
 	}
 	int sig = zmsg_signal (msg);
@@ -811,13 +810,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	int sig = zsock_wait (reader);
 	if (sig == -1)
 	{
-		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return -1;
 	}
 #endif
 	if (sig == SIG_STOP)
 	{
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 			"Coordinator thread is terminating us");
 		return -1;
 	}
@@ -831,7 +830,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 #ifdef ENABLE_FULL_DEBUG
 		if (self->dbg_stats.wakeups_inactive == 0)
-			s_msg (0, LOG_DEBUG, self->id,
+			logmsg (0, LOG_DEBUG,
 				"First inactive wakeup");
 		self->dbg_stats.wakeups_inactive++;
 #endif
@@ -904,7 +903,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Receive interrupted");
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return -1;
 	}
 	int sig = zmsg_signal (msg);
@@ -914,14 +913,14 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	int sig = zsock_wait (reader);
 	if (sig == -1)
 	{
-		s_msg (0, LOG_DEBUG, 0, "Receive interrupted");
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return -1;
 	}
 #endif
 
 	if (sig == SIG_DIED)
 	{
-		s_msg (0, LOG_DEBUG, 0,
+		logmsg (0, LOG_DEBUG,
 			"Task thread encountered an error");
 		return -1;
 	}
@@ -942,6 +941,10 @@ s_task_shim (zsock_t* pipe, void* self_)
 	assert (self->pkt_handler != NULL);
 	assert (self->ifd != NULL);
 	assert (self->id > 0);
+
+	char log_id[16];
+	snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
+	set_logid (log_id);
 	
 	zloop_t* loop = zloop_new ();
 	self->loop = loop;
@@ -953,7 +956,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	zloop_ignore_interrupts (loop);
 #endif
 
-	// s_msg (0, LOG_DEBUG, self->id, "Simulating error");
+	// logmsg (0, LOG_DEBUG, "Simulating error");
 	// self->error = 1;
 	// goto cleanup;
 
@@ -963,7 +966,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		self->frontend = zsock_new (self->front_type);
 		if (self->frontend == NULL)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not open the public interface");
 			self->error = 1;
 			goto cleanup;
@@ -971,12 +974,12 @@ s_task_shim (zsock_t* pipe, void* self_)
 		rc = zsock_attach (self->frontend, self->front_addr, 1);
 		if (rc != 0)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not bind the public interface");
 			self->error = 1;
 			goto cleanup;
 		}
-		s_msg (0, LOG_INFO, self->id,
+		logmsg (0, LOG_INFO,
 			"Listening on port(s) %s", self->front_addr);
 	}
 	/* Register the readers */
@@ -993,7 +996,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	}
 	if (rc != 0)
 	{
-		s_msg (errno, LOG_ERR, self->id,
+		logmsg (errno, LOG_ERR,
 			"Could not register the zloop readers");
 		self->error = 1;
 		goto cleanup;
@@ -1005,14 +1008,14 @@ s_task_shim (zsock_t* pipe, void* self_)
 		rc = self->data_init (self);
 		if (rc != 0)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not initialize thread data");
 			self->error = 1;
 			goto cleanup;
 		}
 	}
 
-	s_msg (0, LOG_DEBUG, self->id, "Polling");
+	logmsg (0, LOG_DEBUG, "Polling");
 	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
 	
 	if (self->autoactivate)
@@ -1036,16 +1039,16 @@ cleanup:
 		rc = self->data_fin (self);
 		if (rc != 0)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not cleanup thread data");
 		}
 		dbg_assert (self->data == NULL);
 	}
 	zloop_destroy (&loop);
 	zsock_destroy (&self->frontend);
-	s_msg (0, LOG_DEBUG, self->id, "Done");
+	logmsg (0, LOG_DEBUG, "Done");
 #ifdef ENABLE_FULL_DEBUG
-	s_msg (0, LOG_DEBUG, self->id,
+	logmsg (0, LOG_DEBUG,
 		"Woken up %lu times, %lu when not active, "
 		"%lu when no new packets, dispatched "
 		"%lu rings, %lu packets missed",
@@ -1056,7 +1059,7 @@ cleanup:
 		self->dbg_stats.pkts.missed
 		);
 	for (int r = 0; r < NUM_RINGS; r++)
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 			"Ring %d received: %lu", r, 
 			self->dbg_stats.pkts.rcvd_in[r]);
 #endif
@@ -1085,12 +1088,12 @@ s_task_start (tes_ifdesc* ifd, task_t* self)
 	int rc = zsock_wait (self->shim);
 	if (rc == SIG_DIED)
 	{
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 			"Task thread failed to initialize");
 		return -1;
 	}
 	assert (rc == SIG_INIT);
-	s_msg (0, LOG_DEBUG, self->id, "Task thread initialized");
+	logmsg (0, LOG_DEBUG, "Task thread initialized");
 
 	return 0;
 }
@@ -1105,7 +1108,7 @@ s_task_stop (task_t* self)
 	assert (self != NULL);
 	if (self->shim == NULL)
 	{
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 			"Task had already exited");
 		return;
 	}
@@ -1154,7 +1157,7 @@ s_task_deactivate (task_t* self)
 				self->client_handler, self);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not re-enable the zloop reader");
 			return TASK_ERROR;
 		}
@@ -1258,7 +1261,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
 				rxring, self->heads[ring_id]);
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 				"Dispatching ring %hu: missed %hu at frame %hu",
 				ring_id, missed, tespkt_fseq (pkt));
 	}
@@ -1292,7 +1295,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #ifdef ENABLE_FULL_DEBUG
 		if (err != 0)
 		{
-			s_msg (0, LOG_DEBUG, self->id,
+			logmsg (0, LOG_DEBUG,
 				"Packet invalid, error is 0x%x", err);
 		}
 #endif
@@ -1301,7 +1304,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		if (flen > len)
 		{
 #ifdef ENABLE_FULL_DEBUG
-			s_msg (0, LOG_DEBUG, self->id,
+			logmsg (0, LOG_DEBUG,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
 #endif
@@ -1369,14 +1372,14 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{ /* would also return -1 if picture contained a pointer (p) or a null
 	   * frame (z) but message received did not match this signature; this
 	   * is irrelevant in this case */
-		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return TASK_ERROR;
 	}
 
 	/* Is the request understood? */
 	if (basefname == NULL || sjob->overwrite > 1)
 	{
-		s_msg (0, LOG_INFO, self->id,
+		logmsg (0, LOG_INFO,
 			"Received a malformed request");
 		zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_INV,
 				0, 0, 0, 0, 0, 0, 0);
@@ -1387,13 +1390,13 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	bool checkonly = (sjob->min_ticks == 0);
 	if (checkonly)
 	{
-		s_msg (0, LOG_INFO, self->id,
+		logmsg (0, LOG_INFO,
 			"Received request for status of '%s-%s'",
 			basefname, sjob->measurement);
 	}
 	else
 	{
-		s_msg (0, LOG_INFO, self->id,
+		logmsg (0, LOG_INFO,
 			"Received request to write %lu ticks and "
 			"%lu events to '%s-%s%s'",
 			sjob->min_ticks,
@@ -1405,21 +1408,21 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	/* Check if filename is allowed and get the realpath. */
 	sjob->basefname = s_task_save_canonicalize_path (
-			basefname, checkonly, self->id);
+			basefname, checkonly);
 	zstr_free (&basefname); /* nullifies the pointer */
 
 	if (sjob->basefname == NULL)
 	{
 		if (checkonly)
 		{
-			s_msg (0, LOG_INFO, self->id,
+			logmsg (0, LOG_INFO,
 					"Job not found");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
 					0, 0, 0, 0, 0, 0, 0);
 		}
 		else
 		{
-			s_msg (errno, LOG_INFO, self->id,
+			logmsg (errno, LOG_INFO,
 					"Filename is not valid");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_EPERM,
 					0, 0, 0, 0, 0, 0, 0);
@@ -1440,7 +1443,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		rc = s_task_save_stats_read  (sjob);
 		if (rc != 0)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not read stats");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
 					0, 0, 0, 0, 0, 0, 0);
@@ -1449,7 +1452,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		rc = s_task_save_stats_send  (sjob, self->frontend, TSAVE_REQ_OK);
 		if (rc != 0)
 		{
-			s_msg (0, LOG_NOTICE, self->id,
+			logmsg (0, LOG_NOTICE,
 				"Could not send stats");
 		}
 		return 0;
@@ -1484,7 +1487,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		if (errno != exp_errno)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not open file %s",
 				sjob->basefname);
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
@@ -1492,7 +1495,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		}
 		else
 		{
-			s_msg (0, LOG_INFO, self->id, "Job will not proceed");
+			logmsg (0, LOG_INFO, "Job will not proceed");
 			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
 					0, 0, 0, 0, 0, 0, 0);
 		}
@@ -1500,7 +1503,7 @@ s_task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	s_msg (0, LOG_INFO, self->id,
+	logmsg (0, LOG_INFO,
 		"Opened files %s-%s.* for writing",
 		sjob->basefname, sjob->measurement);
 
@@ -1572,7 +1575,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 			"Missed %hu at frame #%lu",
 			missed, sjob->st.frames - 1);
 #endif
@@ -1607,7 +1610,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
 			jobrc = s_task_save_try_queue_aiobuf (
 					&sjob->aio[TSAVE_DSET_TIDX], (char*)tidx,
-					TSAVE_TIDX_LEN, self->id);
+					TSAVE_TIDX_LEN);
 			if (jobrc < 0)
 				finishing = 1; /* error */
 		}
@@ -1692,7 +1695,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #if 0
 		if (missed == 0)
 		{ /* should only happen in case of FPGA fault */
-			s_msg (0, LOG_NOTICE, self->id,
+			logmsg (0, LOG_NOTICE,
 				"Received a%s %sframe (#%lu) "
 				"while a %s was ongoing",
 				is_mca ? " histogram" : (
@@ -1736,7 +1739,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		{ /* extra bytes */
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-			s_msg (0, LOG_DEBUG, self->id, "Extra %s data "
+			logmsg (0, LOG_DEBUG, "Extra %s data "
 					"at frame #%lu",
 					is_mca ? "histogram" : "trace",
 					sjob->st.frames - 1);
@@ -1766,7 +1769,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 			jobrc = s_task_save_try_queue_aiobuf (aiosidx,
 					(char*)&sjob->cur_stream.idx,
-					TSAVE_SIDX_LEN, self->id);
+					TSAVE_SIDX_LEN);
 			if (jobrc < 0)
 				finishing = 1; /* error */
 		}
@@ -1782,7 +1785,7 @@ s_task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			{
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-				s_msg (0, LOG_DEBUG, self->id,
+				logmsg (0, LOG_DEBUG,
 					"Received a non-header %s frame (#%lu) "
 					"while no stream was ongoing",
 					is_mca ? "histogram" : "trace",
@@ -1811,10 +1814,10 @@ done:
 	/* ********************** Write frame payload. ********************* */
 #ifdef TSAVE_SAVE_HEADERS
 	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt,
-			flen, self->id);
+			flen);
 #else
 	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
-	                 paylen, self->id);
+	                 paylen);
 #endif
 	if (jobrc < 0)
 		finishing = 1; /* error */
@@ -1822,7 +1825,7 @@ done:
 	/* *********************** Write frame index. ********************** */
 
 	jobrc = s_task_save_try_queue_aiobuf (aiofidx, (char*)&fidx,
-			TSAVE_FIDX_LEN, self->id);
+			TSAVE_FIDX_LEN);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
@@ -1837,11 +1840,11 @@ done:
 		/* Flush all buffers. */
 		s_task_save_flush (sjob);
 
-		s_msg (0, LOG_INFO, self->id,
+		logmsg (0, LOG_INFO,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
-		s_task_save_dbg_stats (sjob, self->id);
+		s_task_save_dbg_stats (sjob);
 #endif
 		/* Close stream and index files. */
 		s_task_save_close (sjob);
@@ -1855,7 +1858,7 @@ done:
 		if (rc != 0)
 		{
 			status = TSAVE_REQ_EWRT;
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not write stats");
 		}
 
@@ -1864,7 +1867,7 @@ done:
 		if (rc != 0)
 		{
 			status = TSAVE_REQ_ECONV;
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Could not convert data to hdf5");
 		}
 
@@ -1929,7 +1932,7 @@ s_task_save_init (task_t* self)
 	}
 	if (rc != 0)
 	{
-		s_msg (errno, LOG_ERR, self->id,
+		logmsg (errno, LOG_ERR,
 			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
 		return -1;
 	}
@@ -2268,7 +2271,7 @@ s_task_save_flush (struct s_task_save_data_t* sjob)
  */
 static int
 s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
-	const char* buf, uint16_t len, int task_id)
+	const char* buf, uint16_t len)
 {
 	dbg_assert (aiobuf != NULL);
 	dbg_assert (aiobuf->aios.aio_fildes != -1);
@@ -2343,18 +2346,18 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	if (jobrc == -1)
 	{
 		/* TO DO: how to handle errors */
-		s_msg (errno, LOG_ERR, task_id, "Could not write to file");
+		logmsg (errno, LOG_ERR, "Could not write to file");
 	}
 	else if (jobrc == -2)
 	{
 		/* TO DO: how to handle errors */
 #ifdef ENABLE_FULL_DEBUG
-		s_msg (0, LOG_ERR, task_id,
+		logmsg (0, LOG_ERR,
 			"Queued %lu bytes, wrote %lu",
 			aiobuf->bufzone.enqueued,
 			aiobuf->bufzone.st.last_written);
 #else /* ENABLE_FULL_DEBUG */
-		s_msg (0, LOG_ERR, task_id,
+		logmsg (0, LOG_ERR,
 			"Wrote unexpected number of bytes");
 #endif /* ENABLE_FULL_DEBUG */
 	}
@@ -2510,7 +2513,7 @@ queue_as_is:
  * of TSAVE_ROOT or ends with a slash) errno should be 0.
  */
 static char*
-s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id)
+s_task_save_canonicalize_path (const char* filename, bool checkonly)
 {
 	assert (filename != NULL);
 
@@ -2518,14 +2521,14 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	size_t len = strlen (filename);
 	if (len == 0)
 	{
-		s_msg (0, LOG_DEBUG, task_id, "Filename is empty");
+		logmsg (0, LOG_DEBUG, "Filename is empty");
 		return NULL;
 	}
 
 #ifdef TSAVE_REQUIRE_FILENAME
 	if (filename[len - 1] == '/')
 	{
-		s_msg (0, LOG_DEBUG, task_id,
+		logmsg (0, LOG_DEBUG,
 			"Filename ends with /");
 		return NULL;
 	}
@@ -2547,7 +2550,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 		assert (rs == finalpath);
 		if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
 		{
-			s_msg (0, LOG_DEBUG, task_id,
+			logmsg (0, LOG_DEBUG,
 				"Resolved to %s, outside of root",
 				finalpath);
 			return NULL; /* outside of root */
@@ -2556,7 +2559,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	}
 	if (checkonly)
 	{
-		s_msg (0, LOG_DEBUG, task_id,
+		logmsg (0, LOG_DEBUG,
 			"File doesn't exist");
 		return NULL;
 	}
@@ -2592,7 +2595,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 		assert (len < PATH_MAX);
 		if (len + next_seg - cur_seg + 1 >= PATH_MAX)
 		{
-			s_msg (0, LOG_DEBUG, task_id,
+			logmsg (0, LOG_DEBUG,
 				"Filename too long");
 			return NULL;
 		}
@@ -2623,7 +2626,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	len = strlen (finalpath);
 	if (strlen (cur_seg) + len >= PATH_MAX)
 	{
-		s_msg (0, LOG_DEBUG, task_id,
+		logmsg (0, LOG_DEBUG,
 				"Filename too long");
 		return NULL;
 	}
@@ -2632,7 +2635,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 	errno = 0;
 	if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
 	{
-		s_msg (0, LOG_DEBUG, task_id,
+		logmsg (0, LOG_DEBUG,
 				"Resolved to %s, outside of root",
 				finalpath);
 		return NULL; /* outside of root */
@@ -2643,18 +2646,18 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly, int task_id
 
 #ifdef ENABLE_FULL_DEBUG
 static void
-s_task_save_dbg_stats (struct s_task_save_data_t* sjob, int task_id)
+s_task_save_dbg_stats (struct s_task_save_data_t* sjob)
 {
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
-		s_msg (0, LOG_DEBUG, task_id,
+		logmsg (0, LOG_DEBUG,
 			"Dataset %s: ", aiobuf->dataset); 
 		uint64_t batches_tot = 0,
 			 steps = TSAVE_BUFSIZE / (TSAVE_HISTBINS - 1);
 		for (int b = 0 ; b < TSAVE_HISTBINS ; b++)
 		{
-			s_msg (0, LOG_DEBUG, task_id,
+			logmsg (0, LOG_DEBUG,
 				"     %lu B to %lu B: %lu batches",
 				b*steps,
 				(b+1)*steps,
@@ -2662,7 +2665,7 @@ s_task_save_dbg_stats (struct s_task_save_data_t* sjob, int task_id)
 			batches_tot += aiobuf->bufzone.st.batches[b];
 		}
 
-		s_msg (0, LOG_DEBUG, task_id,
+		logmsg (0, LOG_DEBUG,
 			"     Wrote %lu batches (%lu repeated, "
 			"%lu skipped, %lu blocked)",
 			batches_tot,
@@ -2691,21 +2694,21 @@ s_task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{ /* would also return -1 if picture contained a pointer (p) or a null
 	   * frame (z) but message received did not match this signature; this
 	   * is irrelevant in this case */
-		s_msg (0, LOG_DEBUG, self->id, "Receive interrupted");
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return TASK_ERROR;
 	}
 
 	/* Check timeout. */
 	if (timeout == 0)
 	{
-		s_msg (0, LOG_INFO, self->id,
+		logmsg (0, LOG_INFO,
 			"Received a malformed request");
 		zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
 				TAVGTR_REQ_INV);
 		return 0;
 	}
 
-	s_msg (0, LOG_INFO, self->id,
+	logmsg (0, LOG_INFO,
 		"Received request for a trace in the next %u seconds",
 		timeout);
 
@@ -2714,7 +2717,7 @@ s_task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		s_task_avgtr_timeout_hn, self);
 	if (tid == -1)
 	{
-		s_msg (errno, LOG_ERR, self->id,
+		logmsg (errno, LOG_ERR,
 			"Could not set a timer");
 		return TASK_ERROR;
 	}
@@ -2762,7 +2765,7 @@ s_task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (err)
 	{
 #ifdef ENABLE_FULL_DEBUG
-		s_msg (0, LOG_DEBUG, self->id,
+		logmsg (0, LOG_DEBUG,
 			"Bad frame, error is %d", err);
 #endif
 		rep = TAVGTR_REQ_ERR;
@@ -2776,7 +2779,7 @@ s_task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if ((uint16_t)(cur_pseq - self->prev_pseq_tr) != 1)
 		{ /* missed frames */
 #ifdef ENABLE_FULL_DEBUG
-			s_msg (0, LOG_DEBUG, self->id,
+			logmsg (0, LOG_DEBUG,
 				"Mismatch in protocol sequence after byte %hu",
 				trace->cur_size);
 #endif
@@ -2808,13 +2811,13 @@ done:
 	switch (rep)
 	{
 		case TAVGTR_REQ_ERR:
-			s_msg (0, LOG_INFO, self->id,
+			logmsg (0, LOG_INFO,
 				"Discarded average trace");
 			zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
 					TAVGTR_REQ_ERR);
 			break;
 		case TAVGTR_REQ_OK:
-			s_msg (0, LOG_INFO, self->id,
+			logmsg (0, LOG_INFO,
 				"Average trace complete");
 			zsock_send (self->frontend, TAVGTR_REP_PIC_OK,
 					TAVGTR_REQ_OK, &trace->buf,
@@ -2850,7 +2853,7 @@ s_task_avgtr_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 	s_task_deactivate (self);
 	
 	/* Send a timeout error to the client. */
-	s_msg (0, LOG_INFO, self->id,
+	logmsg (0, LOG_INFO,
 		"Average trace timed out");
 	zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
 			TAVGTR_REQ_TOUT);
@@ -2911,7 +2914,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t cur_pseq = tespkt_pseq (pkt);
 		if ((uint16_t)(cur_pseq - self->prev_pseq_mca) != 1)
 		{
-			s_msg (0, LOG_INFO, self->id,
+			logmsg (0, LOG_INFO,
 				"Frame out of protocol sequence: %hu -> %hu",
 				self->prev_pseq_mca, cur_pseq);
 			hist->discard = 1;
@@ -2922,7 +2925,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 		if (hist->cur_nbins > 0)
 		{
-			s_msg (0, LOG_WARNING, self->id,
+			logmsg (0, LOG_WARNING,
 				"Received new header frame while waiting for "
 				"%d more bins", hist->nbins - hist->cur_nbins);
 			hist->discard = 1;
@@ -2938,7 +2941,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			hist->discard = 0;
 #ifdef ENABLE_FULL_DEBUG
 			hist->dropped++;
-			s_msg (0, LOG_DEBUG, self->id,
+			logmsg (0, LOG_DEBUG,
 				"Discarded %lu out of %lu histograms so far",
 				hist->dropped, hist->dropped + hist->published);
 #endif
@@ -2959,7 +2962,7 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	hist->cur_nbins += tespkt_mca_nbins (pkt);
 	if (hist->cur_nbins > hist->nbins)
 	{
-		s_msg (0, LOG_WARNING, self->id,
+		logmsg (0, LOG_WARNING,
 			"Received extra bins: expected %d, so far got %d",
 			hist->nbins, hist->cur_nbins);
 		hist->discard = 1;
@@ -2981,20 +2984,20 @@ s_task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		/* Send the histogram */
 #ifdef ENABLE_FULL_DEBUG
 		hist->published++;
-		// s_msg (0, LOG_DEBUG, self->id,
+		// logmsg (0, LOG_DEBUG,
 		//         "Publishing an %u-byte long histogram",
 		//         hist->cur_size);
 		int rc = zmq_send (zsock_resolve (self->frontend),
 			hist->buf, hist->cur_size, 0);
 		if (rc == -1)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Cannot send the histogram");
 			return TASK_ERROR;
 		}
 		if ((unsigned int)rc != hist->cur_size)
 		{
-			s_msg (errno, LOG_ERR, self->id,
+			logmsg (errno, LOG_ERR,
 				"Histogram is %lu bytes long, sent %u",
 				hist->cur_size, rc);
 			return TASK_ERROR;

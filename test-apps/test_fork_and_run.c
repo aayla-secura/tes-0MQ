@@ -6,25 +6,26 @@
 
 int foo (void* arg)
 {
-	syslog(LOG_DAEMON | LOG_INFO, "foo here");
-	sleep(4);
-	syslog(LOG_DAEMON | LOG_INFO, "foo done");
+	logmsg (0, LOG_INFO, "foo here %d", getpid());
+	sleep (5);
+	logmsg (0, LOG_INFO, "foo done");
 	return 0;
 }
 
 /* Check the system logger to confirm all is ok */
-int main(void)
+int main (void)
 {
-	int rc = fork_and_run(foo, foo, NULL, 5);
+	set_verbose (1);
+	int rc = fork_and_run (foo, foo, NULL, 5);
 	if (rc != 0)
 	{
-		puts("Couldn't fork");
+		logmsg (0, LOG_ERR, "Couldn't fork");
 		if (errno)
-			perror("");
+			perror ("");
 		return -1;
 	}
-	syslog(LOG_DAEMON | LOG_INFO, "main here");
-	sleep(8);
-	syslog(LOG_DAEMON | LOG_INFO, "main done");
+	logmsg (0, LOG_INFO, "main here %d", getpid());
+	sleep (10);
+	logmsg (0, LOG_INFO, "main done");
 	return 0;
 }

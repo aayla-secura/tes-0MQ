@@ -6,25 +6,26 @@
 
 int foo (void* arg)
 {
-	syslog(LOG_DAEMON | LOG_INFO, "foo here");
-	sleep(2);
-	syslog(LOG_DAEMON | LOG_INFO, "foo done");
+	logmsg (0, LOG_INFO, "foo here %d", getpid());
+	sleep (2);
+	logmsg (0, LOG_INFO, "foo done");
 	return 0;
 }
 
 /* Check the system logger to confirm all is ok */
-int main(void)
+int main (void)
 {
-	int rc = daemonize_and_init("/tmp/test.pid", foo, NULL, 5);
+	set_verbose (1);
+	int rc = daemonize ("/tmp/test.pid", foo, NULL, 5);
 	if (rc != 0)
 	{
-		puts("Couldn't go into background");
+		logmsg (0, LOG_ERR, "Couldn't go into background");
 		if (errno)
-			perror("");
+			perror ("");
 		return -1;
 	}
-	syslog(LOG_DAEMON | LOG_INFO, "main here");
-	sleep(2);
-	syslog(LOG_DAEMON | LOG_INFO, "main done");
+	logmsg (0, LOG_INFO, "main here %d", getpid());
+	sleep (2);
+	logmsg (0, LOG_INFO, "main done");
 	return 0;
 }
