@@ -301,7 +301,13 @@ s_hdf5_init (void* creq_data_)
 		}
 		if (ddesc->length == 0 ||
 			ddesc->offset < 0)
+		{
+			/* if length is 0, offset doesn't matter; */
+			/* if copying from buffer (offset < 0), offset should
+			 * be reset to 0 */
+			ddesc->offset = 0;
 			continue;
+		}
 
 		int rc = s_map_file (ddesc, cg_id);
 		if (rc != 0)
