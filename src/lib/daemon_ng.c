@@ -1,3 +1,17 @@
+/*
+ * TO DO:
+ *   - use BSD's closefrom () if available 
+ *   - method for finding highest fd number is not portable, see
+ *     https://stackoverflow.com/questions/899038/getting-the-highest-allocated-file-descriptor/918469#918469
+ *   - implement optional dropping of privileges
+ * 
+ * NOTES:
+ *   - valgrind temporarily increases the current soft limit and opens some file
+ *     descriptors, then brings it back down. If we iterate up to the hard
+ *     limit, we run into trouble when running via valgrind. Use the soft limit
+ *     instead
+ */
+
 #include "daemon_ng.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,30 +31,17 @@
 #include <errno.h>
 #include <assert.h>
 
-#define MAX_MSG_LEN 512
-#define LOG_ID_LEN 32
+#define MAX_MSG_LEN    512
+#define MIN_ERR_LEN     10 // no point in printing the error if less space
+#define MAX_LOG_ID_LEN  32
 
 #define DAEMON_OK_MSG  "0"
 #define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000 /* deafault */
 
-/*
- * TO DO:
- *   - use BSD's closefrom () if available 
- *   - method for finding highest fd number is not portable, see
- *     https://stackoverflow.com/questions/899038/getting-the-highest-allocated-file-descriptor/918469#918469
- *   - implement optional dropping of privileges
- * 
- * NOTES:
- *   - valgrind temporarily increases the current soft limit and opens some file
- *     descriptors, then brings it back down. If we iterate up to the hard
- *     limit, we run into trouble when running via valgrind. Use the soft limit
- *     instead
- */
-
 static bool is_daemon;
 static bool is_verbose;
-static __thread char log_id[LOG_ID_LEN];
+static __thread char log_id[MAX_LOG_ID_LEN];
 
 static rlim_t s_get_max_fd (void);
 static void s_close_nonstd_fds (void);
@@ -281,7 +282,10 @@ logmsg (int errnum, int priority, const char* format, ...)
 	memset (msg, 0, MAX_MSG_LEN);
 	int len = vsnprintf (msg, MAX_MSG_LEN, format, args);
 
-	if ( (len < MAX_MSG_LEN - 10)  && errnum != 0 )
+	if (len < 0)
+		return;
+
+	if ( (len < MAX_MSG_LEN - 2 - MIN_ERR_LEN)  && errnum != 0 )
 	{
 		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
 		/* Thread-safe version of strerror. */
@@ -309,11 +313,11 @@ char*
 set_logid (char* id)
 {
 	if (id != NULL)
-		strncpy (log_id, id, LOG_ID_LEN);
+		strncpy (log_id, id, MAX_LOG_ID_LEN);
 	return log_id;
 }
 
-int
+bool
 set_verbose (int level)
 {
 	if (level >= 0)
@@ -327,9 +331,8 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		void* arg, int timeout_sec)
 {
 	int rc;
-	pid_t pid;
 
-	/* Close all file descriptors except STDIN, STDOUT and STDERR */
+	/* Close all file descriptors except STDIN, STDOUT and STDERR. */
 	s_close_nonstd_fds ();
 
 	/* Reset signal handlers and masks. */
@@ -349,7 +352,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	/* We do not sanitize environment, that is the job of the caller. */
 
 	/* Fork for the first time. */
-	pid = fork ();
+	pid_t pid = fork ();
 
 	if (pid == -1)
 	{
@@ -387,7 +390,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		_exit (EXIT_FAILURE);
 	}
 
-	/* Detach from controlling TTY */
+	/* Detach from controlling TTY. */
 	pid = setsid ();
 	if (pid == (pid_t)-1)
 	{
@@ -395,7 +398,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		_exit (EXIT_FAILURE);
 	}
 	
-	/* Fork again to prevent daemon from obtaining a TTY */
+	/* Fork again to prevent daemon from obtaining a TTY. */
 	pid = fork ();
 
 	if (pid == -1)
@@ -475,7 +478,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		ssize_t n = write (fd, pid_s, pid_l);
 		if (n == -1)
 		{
-			logmsg (errno, LOG_ERR,
+			logmsg (errno, LOG_WARNING,
 				"Could not write to pidfile");
 		}
 		if ((size_t)n != pid_l)
@@ -520,10 +523,9 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 		void* arg, int timeout_sec)
 {
 	int rc;
-	pid_t pid;
 
 	/* Fork for the first time. */
-	pid = fork ();
+	pid_t pid = fork ();
 
 	if (pid == -1)
 	{

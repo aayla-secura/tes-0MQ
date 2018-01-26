@@ -1,3 +1,22 @@
+/*
+ * Create an hdf5 file with the following structure:
+ *
+ * /capture
+ * {
+ *         /<measurement>
+ *         {
+ *                 /<dataset>
+ *                 /<dataset>
+ *                 /<dataset>
+ *                 ...
+ *         }
+ * }
+ *
+ * Each dataset corresponds to a file (or part of a file).
+ * Measurement group and dataset files and names are given in a struct
+ * hdf5_conv_req_t.
+ */
+
 #ifndef __HDF5CONV_H__INCLUDED__
 #define __HDF5CONV_H__INCLUDED__
 
@@ -39,6 +58,12 @@ struct hdf5_conv_req_t
 			    * convert in background */
 };
 
+/*
+ * Open/create creq->filename, create/overwrite group
+ * <root_group>/creq->group. For each dataset mmap the file.
+ * <root_group> is currently "capture".
+ * Returns 0 on success, -1 on error.
+ */
 int hdf5_conv (const struct hdf5_conv_req_t* creq);
 
 #endif

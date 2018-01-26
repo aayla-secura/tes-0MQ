@@ -1,6 +1,8 @@
 #ifndef __DAEMON_NG_H_INCLUDED__
 #define __DAEMON_NG_H_INCLUDED__
 
+#include <czmq_prelude.h> // bool type
+
 /*
  * Forking and logging functions.
  *
@@ -28,14 +30,14 @@ typedef int (daemon_fn)(void*);
  * If second fork succeeds, call initializer (unless NULL) passing it arg. If
  * initializer returns 0, parent exits with 0 and the daemon returns 0 to caller.
 
- * If we fail before calling initializer, or if initializer fails, we return -1
- * from the parent (i.e. in foreground) to the caller.
+ * If we fail before calling initializer, or if initializer fails, the daemon
+ * exits and the parent returns with -1.
  *
  * The parent will wait for the initializer up to timeout seconds.
  * If timeout is 0, it defaults to 3 seconds.
  * If timeout is < 0, parent waits forever.
  * 
- * If pidfile != NULL, write pid there.
+ * If pidfile != NULL, write daemon pid there.
  */
 int daemonize (const char* pidfile, daemon_fn* initializer,
 		void* arg, int timeout);
@@ -54,11 +56,11 @@ int daemonize (const char* pidfile, daemon_fn* initializer,
  *    return to caller
  *
  * If second fork succeeds, call initializer (unless NULL) passing it arg. If
- * initializer returns 0, parent returns with 0, the child executes action,
+ * initializer returns 0, the parent returns with 0, the child executes action,
  * passing it same arg, and exits.
  *
- * If we fail before calling initializer, or if initializer fails, we return -1
- * from the parent to the caller.
+ * If we fail before calling initializer, or if initializer fails, child exits
+ * and parent returns with -1.
  *
  * The parent will wait for the initializer up to timeout seconds.
  * If timeout is 0, it defaults to 3 seconds.
@@ -100,10 +102,10 @@ void logmsg (int errnum, int priority, const char* format, ...);
 char* set_logid (char* id);
 
 /*
- * If is_verbose < 0 the current value is returned.
+ * If is_verbose < 0,  the current value is returned.
  * If is_verbose == 0, debugging messages are suppressed, 0 is returned.
- * If be_verbose > 0, they will be printed, 1 is returned.
+ * If be_verbose > 0,  they will be printed, 1 is returned.
  */
-int set_verbose (int be_verbose);
+bool set_verbose (int be_verbose);
 
 #endif

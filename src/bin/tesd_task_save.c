@@ -242,7 +242,7 @@ struct s_task_save_data_t
 	bool     recording;   // wait for a tick before starting capture
 };
 
-/* Task initializer and finalizer */
+/* Task initializer and finalizer. */
 static int   s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
 static void  s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
 
@@ -252,7 +252,7 @@ static void  s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
  * s_task_save_stats_send should be called at the very end (after
  * processing is done.
  */
-/* Job initializer and finalizer */
+/* Job initializer and finalizer. */
 static int   s_task_save_open  (struct s_task_save_data_t* sjob, mode_t fmode);
 static void  s_task_save_close (struct s_task_save_data_t* sjob);
 static int   s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
@@ -266,7 +266,7 @@ static int   s_task_save_stats_write (struct s_task_save_data_t* sjob);
 static int   s_task_save_stats_send  (struct s_task_save_data_t* sjob,
 	zsock_t* frontend, uint8_t status);
 
-/* Ongoing job helpers */
+/* Ongoing job helpers. */
 static void  s_task_save_flush (struct s_task_save_data_t* sjob);
 static int   s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len);
@@ -280,636 +280,7 @@ static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob);
 #endif
 
 /* ------------------------------------------------------------------------- */
-
-/*
- * Called when a client sends a request on the REP socket. For valid requests
- * of status, opens the file and send the reply. For valid requests to save,
- * opens the file and marks the task as active.
- */
-int
-task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
-{
-	dbg_assert (self_ != NULL);
-
-	task_t* self = (task_t*) self_;
-
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
-	dbg_assert ( ! sjob->recording );
-
-
-	char* basefname;
-	int rc = zsock_recv (reader, TSAVE_REQ_PIC,
-			&basefname,
-			&sjob->measurement,
-			&sjob->min_ticks,
-			&sjob->min_events,
-			&sjob->overwrite,
-			&sjob->async);
-	if (rc == -1)
-	{ /* would also return -1 if picture contained a pointer (p) or a null
-	   * frame (z) but message received did not match this signature; this
-	   * is irrelevant in this case */
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return TASK_ERROR;
-	}
-
-	/* Is the request understood? */
-	if (basefname == NULL || sjob->overwrite > 1)
-	{
-		logmsg (0, LOG_INFO,
-			"Received a malformed request");
-		zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_INV,
-				0, 0, 0, 0, 0, 0, 0);
-		return 0;
-	}
-
-	/* Is it only a status query? */
-	bool checkonly = (sjob->min_ticks == 0);
-	if (checkonly)
-	{
-		logmsg (0, LOG_INFO,
-			"Received request for status of '%s-%s'",
-			basefname, sjob->measurement);
-	}
-	else
-	{
-		logmsg (0, LOG_INFO,
-			"Received request to write %lu ticks and "
-			"%lu events to '%s-%s%s'",
-			sjob->min_ticks,
-			sjob->min_events,
-			basefname,
-			sjob->measurement,
-			sjob->async ? ". Convering asynchronously" : "");
-	}
-
-	/* Check if filename is allowed and get the realpath. */
-	sjob->basefname = s_task_save_canonicalize_path (
-			basefname, checkonly);
-	zstr_free (&basefname); /* nullifies the pointer */
-
-	if (sjob->basefname == NULL)
-	{
-		if (checkonly)
-		{
-			logmsg (0, LOG_INFO,
-					"Job not found");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
-					0, 0, 0, 0, 0, 0, 0);
-		}
-		else
-		{
-			logmsg (errno, LOG_INFO,
-					"Filename is not valid");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_EPERM,
-					0, 0, 0, 0, 0, 0, 0);
-		}
-
-		return 0;
-	}
-
-	dbg_assert (sjob->basefname != NULL);
-
-	/*
-	 * *****************************************************************
-	 * ************************** Status query. ************************
-	 * *****************************************************************
-	 */
-	if (checkonly)
-	{ /* just read in stats and send reply */
-		rc = s_task_save_stats_read  (sjob);
-		if (rc != 0)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not read stats");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
-					0, 0, 0, 0, 0, 0, 0);
-			return 0;
-		}
-		rc = s_task_save_stats_send  (sjob, self->frontend, TSAVE_REQ_OK);
-		if (rc != 0)
-		{
-			logmsg (0, LOG_NOTICE,
-				"Could not send stats");
-		}
-		return 0;
-	}
-
-	/*
-	 * *****************************************************************
-	 * ************************* Write request. ************************
-	 * *****************************************************************
-	 */
-	/*
-	 * Set the file open mode and act according to the return status of
-	 * open and errno (print a warning of errno is unexpected)
-	 * Request is for:
-	 *   create: create if non-existing
-	 *           - if successful, enable save
-	 *           - if failed, send reply (expect errno == EEXIST)
-	 *   create: create or overwrite
-	 *           - if successful, enable save
-	 *           - if failed, send reply (this shouldn't happen)
-	 */
-	int exp_errno = 0;
-	mode_t fmode = O_RDWR | O_CREAT;
-	if ( ! sjob->overwrite )
-	{ /* do not overwrite */
-		fmode |= O_EXCL;
-		exp_errno = EEXIST;
-	}
-
-	rc = s_task_save_open (sjob, fmode);
-	if (rc == -1)
-	{
-		if (errno != exp_errno)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not open file %s",
-				sjob->basefname);
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
-					0, 0, 0, 0, 0, 0, 0);
-		}
-		else
-		{
-			logmsg (0, LOG_INFO, "Job will not proceed");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
-					0, 0, 0, 0, 0, 0, 0);
-		}
-		s_task_save_close (sjob);
-		return 0;
-	}
-
-	logmsg (0, LOG_INFO,
-		"Opened files %s-%s.* for writing",
-		sjob->basefname, sjob->measurement);
-
-	/* Disable polling on the reader until the job is done. Wakeup packet
-	 * handler. */
-	task_activate (self);
-
-	return 0;
-}
-
-/*
- * Saves packet payloads to corresponding file(s) and writes index files.
- */
-int
-task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
-		uint16_t missed, int err, task_t* self)
-{
-	dbg_assert (self != NULL);
-
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
-
-	bool is_tick = tespkt_is_tick (pkt);
-	if ( ! sjob->recording && is_tick )
-		sjob->recording = 1; /* start the capture */
-
-	if ( ! sjob->recording )
-		return 0;
-
-	if (err)
-	{
-#ifdef TSAVE_NO_BAD_FRAMES
-		/* drop bad frames */
-		sjob->st.frames_dropped++;
-		return 0;
-#endif
-	}
-
-	sjob->st.frames++;
-	sjob->st.frames_lost += missed;
-
-	uint16_t esize = tespkt_esize (pkt);
-	esize = htofs (esize); /* in FPGA byte-order */
-	uint16_t paylen = flen - TES_HDR_LEN;
-
-	bool is_header = tespkt_is_header (pkt);
-	bool is_mca = tespkt_is_mca (pkt);
-	bool is_trace = ( tespkt_is_trace (pkt) &&
-			! tespkt_is_trace_dp (pkt) );
-
-	/* **** Update tick and frame indices and choose the data file. **** */
-	struct s_task_save_aiobuf_t* aiofidx = &sjob->aio[TSAVE_DSET_FIDX];
-#ifdef TSAVE_SINGLE_FILE
-	struct s_task_save_aiobuf_t* aiodat = &sjob->aio[TSAVE_DSET_ADAT];
-#else
-	struct s_task_save_aiobuf_t* aiodat = NULL; /* set later */
-#endif
-	struct s_task_save_fidx_t fidx;
-	fidx.length = paylen;
-	fidx.esize = esize;
-	fidx.changed = 0;
-	fidx.ftype.SEQ = 0;
-
-	bool finishing = 0;
-	int jobrc;
-
-	/* Check for sequence error. */
-	if (missed > 0)
-	{
-#ifdef ENABLE_FULL_DEBUG
-#if 0
-		logmsg (0, LOG_DEBUG,
-			"Missed %hu at frame #%lu",
-			missed, sjob->st.frames - 1);
-#endif
-#endif
-		fidx.ftype.SEQ = 1;
-	}
-
-	/* Check packet type. */
-	if (err)
-	{
-		fidx.ftype.PT = TSAVE_FTYPE_BAD;
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_BDAT];
-#endif
-	}
-	else if (is_mca)
-	{
-		fidx.ftype.PT = TSAVE_FTYPE_MCA;
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_MDAT];
-#endif
-	}
-	else if (is_tick)
-	{
-		fidx.ftype.PT = TSAVE_FTYPE_TICK;
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_TDAT];
-#endif
-
-		if (sjob->st.ticks > 0)
-		{
-			struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-			jobrc = s_task_save_try_queue_aiobuf (
-					&sjob->aio[TSAVE_DSET_TIDX], (char*)tidx,
-					TSAVE_TIDX_LEN);
-			if (jobrc < 0)
-				finishing = 1; /* error */
-		}
-
-		sjob->cur_tick.nframes = 0;
-		/* no need to zero the index */
-	}
-	else
-	{
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_EDAT];
-#endif
-
-		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-		const struct tespkt_event_type* etype = tespkt_etype (pkt);
-		uint8_t pt = linear_etype (etype->PKT, etype->TR);
-		fidx.ftype.PT = pt;
-		if ( sjob->st.frames > 1 && 
-			( sjob->prev_etype != pt || sjob->prev_esize != esize ) )
-		{
-			fidx.changed = 1;
-		}
-		sjob->prev_esize = esize;
-		sjob->prev_etype = pt;
-
-		if (sjob->cur_tick.nframes == 0)
-		{ /* first non-tick event frame after a tick */
-			tidx->start_frame = sjob->st.frames - 1;
-		}
-		else
-		{ /* in case it's the last event before a tick */
-			tidx->stop_frame = sjob->st.frames - 1;
-		}
-		sjob->cur_tick.nframes++;
-	}
-
-	fidx.start = aiodat->size +
-		aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
-
-	/*
-	 * *************** Update statistics and stream index. *************
-	 * Check if there is an ongoing stream (trace or MCA). If so, update
-	 * index if necessary. If this is the last frame of a stream, queue
-	 * the index for writing and reset cur_stream's size and cur_size.
-	 * size and cur_size would also be reset if an error (e.g. missed
-	 * frames) occurs. idx and is_event are set when receiving the header
-	 * of a new stream.
-	 */
-
-	/* Skip if frame is bad */
-	if (err)
-		goto done;
-
-	if (sjob->cur_stream.size > 0)
-	{
-		dbg_assert (sjob->cur_stream.cur_size > 0);
-		dbg_assert (sjob->cur_stream.cur_size < sjob->cur_stream.size);
-		dbg_assert ( ! sjob->cur_stream.discard );
-
-	}
-	else
-		dbg_assert (sjob->cur_stream.cur_size == 0);
-
-	bool continues_stream = ( ( (is_trace && sjob->cur_stream.is_event) ||
-				    (is_mca && ! sjob->cur_stream.is_event) ) &&
-			sjob->cur_stream.size > 0 && ! is_header && missed == 0 );
-	bool starts_stream = ( (is_trace || is_mca) && is_header &&
-			sjob->cur_stream.size == 0 );
-	bool interrupts_stream = ( ! continues_stream &&
-			sjob->cur_stream.size > 0 );
-
-	if (interrupts_stream) 
-	{ /* unexpected or first missed frames during an ongoing stream */
-		sjob->cur_stream.discard = 1;
-		sjob->cur_stream.size = 0;
-		sjob->cur_stream.cur_size = 0;
-
-		dbg_assert ( is_header || missed > 0 ||
-			(is_trace && ! sjob->cur_stream.is_event) ||
-			(is_mca && sjob->cur_stream.is_event) ||
-			( ! is_trace && ! is_mca ) );
-#if 0
-		if (missed == 0)
-		{ /* should only happen in case of FPGA fault */
-			logmsg (0, LOG_NOTICE,
-				"Received a%s %sframe (#%lu) "
-				"while a %s was ongoing",
-				is_mca ? " histogram" : (
-					is_trace ? " trace" : (
-						is_tick ? " tick" :
-						"n event" ) ),
-				is_header ? "header " : "",
-				sjob->st.frames - 1,
-				sjob->cur_stream.is_event ?
-				"trace" : "histogram");
-		}
-#endif
-	}
-
-	if (starts_stream || continues_stream)
-	{
-		if (starts_stream)
-		{ /* start a new stream */
-			if (is_trace)
-			{
-				sjob->cur_stream.size = tespkt_trace_size (pkt);
-				sjob->cur_stream.is_event = 1;
-			}
-			else
-			{
-				sjob->cur_stream.size = tespkt_mca_size (pkt);
-				sjob->cur_stream.is_event = 0;
-			}
-			sjob->cur_stream.discard = 0;
-
-			sjob->cur_stream.idx.start = aiodat->size +
-				aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
-		}
-		else
-		{ /* ongoing multi-frame stream */
-			dbg_assert ( ! sjob->cur_stream.discard && missed == 0);
-		}
-
-		sjob->cur_stream.cur_size += paylen;
-		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
-		{ /* extra bytes */
-#ifdef ENABLE_FULL_DEBUG
-#if 0
-			logmsg (0, LOG_DEBUG, "Extra %s data "
-					"at frame #%lu",
-					is_mca ? "histogram" : "trace",
-					sjob->st.frames - 1);
-#endif
-#endif
-			sjob->cur_stream.size = 0;
-			sjob->cur_stream.cur_size = 0;
-			sjob->cur_stream.discard = 1;
-		}
-		else if (sjob->cur_stream.cur_size == sjob->cur_stream.size)
-		{ /* done, record the event */
-			struct s_task_save_aiobuf_t* aiosidx = NULL;
-			if (is_trace)
-			{
-				aiosidx = &sjob->aio[TSAVE_DSET_RIDX];
-				sjob->st.events++;
-				sjob->st.traces++;
-			}
-			else
-			{
-				aiosidx = &sjob->aio[TSAVE_DSET_MIDX];
-				sjob->st.hists++;
-			}
-			sjob->cur_stream.idx.length = sjob->cur_stream.size;
-			sjob->cur_stream.size = 0;
-			sjob->cur_stream.cur_size = 0;
-
-			jobrc = s_task_save_try_queue_aiobuf (aiosidx,
-					(char*)&sjob->cur_stream.idx,
-					TSAVE_SIDX_LEN);
-			if (jobrc < 0)
-				finishing = 1; /* error */
-		}
-	}
-	else if (is_mca || is_trace)
-	{ /* missed beginning of a stream or in the process of discarding */
-		if ( ! interrupts_stream )
-		{
-			dbg_assert ( ! is_header );
-			dbg_assert (sjob->cur_stream.size == 0);
-
-			if ( ! sjob->cur_stream.discard )
-			{
-#ifdef ENABLE_FULL_DEBUG
-#if 0
-				logmsg (0, LOG_DEBUG,
-					"Received a non-header %s frame (#%lu) "
-					"while no stream was ongoing",
-					is_mca ? "histogram" : "trace",
-					sjob->st.frames - 1);
-#endif
-#endif
-				sjob->cur_stream.discard = 1;
-			}
-		}
-	}
-	else if (is_tick)
-	{ /* tick */
-		sjob->st.ticks++;
-		/* Ticks should be > min_ticks cause we count the
-		 * starting one too. */
-		if (sjob->st.ticks > sjob->min_ticks &&
-				sjob->st.events >= sjob->min_events)
-			finishing = 1; /* DONE */
-	}
-	else
-	{ /* short event */
-		sjob->st.events += tespkt_event_nums (pkt);
-	}
-
-done:
-	/* ********************** Write frame payload. ********************* */
-#ifdef TSAVE_SAVE_HEADERS
-	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt,
-			flen);
-#else
-	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
-	                 paylen);
-#endif
-	if (jobrc < 0)
-		finishing = 1; /* error */
-
-	/* *********************** Write frame index. ********************** */
-
-	jobrc = s_task_save_try_queue_aiobuf (aiofidx, (char*)&fidx,
-			TSAVE_FIDX_LEN);
-	if (jobrc < 0)
-		finishing = 1; /* error */
-
-	dbg_assert ( sjob->st.frames * TSAVE_FIDX_LEN ==
-			aiofidx->size +
-			aiofidx->bufzone.waiting +
-			aiofidx->bufzone.enqueued );
-
-	/* ********************** Check if done. *************************** */
-	if (finishing)
-	{
-		/* Flush all buffers. */
-		s_task_save_flush (sjob);
-
-		logmsg (0, LOG_INFO,
-			"Finished writing %lu ticks and %lu events",
-			sjob->st.ticks, sjob->st.events);
-#ifdef ENABLE_FULL_DEBUG
-		s_task_save_dbg_stats (sjob);
-#endif
-		/* Close stream and index files. */
-		s_task_save_close (sjob);
-
-		uint8_t status = ( ( sjob->min_ticks > sjob->st.ticks ||
-			 sjob->min_events > sjob->st.events ) ?
-			TSAVE_REQ_EWRT : TSAVE_REQ_OK );
-
-		/* Write stats. */
-		int rc = s_task_save_stats_write (sjob);
-		if (rc != 0)
-		{
-			status = TSAVE_REQ_EWRT;
-			logmsg (errno, LOG_ERR,
-				"Could not write stats");
-		}
-
-		/* Convert them to hdf5. */
-		rc = s_task_save_conv_data (sjob);
-		if (rc != 0)
-		{
-			status = TSAVE_REQ_ECONV;
-			logmsg (errno, LOG_ERR,
-				"Could not convert data to hdf5");
-		}
-
-		/* Send reply. */
-		s_task_save_stats_send (sjob, self->frontend, status);
-
-		/* Enable polling on the reader and deactivate packet
-		 * handler. */
-		return TASK_SLEEP;
-	}
-
-	return 0;
-}
-
-/*
- * Perform checks and statically allocate the data struct.
- * mmap data for stream and index files.
- * Returns 0 on success, -1 on error.
- */
-int
-task_save_init (task_t* self)
-{
-	assert (self != NULL);
-	assert (*(TSAVE_ROOT + strlen (TSAVE_ROOT) - 1) == '/');
-	assert (sizeof (struct s_task_save_stats_t) == TSAVE_STAT_LEN);
-	assert (sizeof (struct s_task_save_fidx_t) == TSAVE_FIDX_LEN);
-	assert (sizeof (struct s_task_save_tidx_t) == TSAVE_TIDX_LEN);
-	assert (sizeof (struct s_task_save_sidx_t) == TSAVE_SIDX_LEN);
-	assert (sizeof (s_task_save_dsets) ==
-			TSAVE_NUM_DSETS * sizeof (struct s_task_save_dset_t));
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_FIDX].extension,
-				"fidx", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_MIDX].extension,
-				"midx", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_TIDX].extension,
-				"tidx", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_RIDX].extension,
-				"ridx", 4) == 0);
-#ifdef TSAVE_SINGLE_FILE
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_ADAT].extension,
-				"adat", 4) == 0);
-#else
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_BDAT].extension,
-				"bdat", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_MDAT].extension,
-				"mdat", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_TDAT].extension,
-				"tdat", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_EDAT].extension,
-				"edat", 4) == 0);
-#endif
-
-	static struct s_task_save_data_t sjob;
-	sjob.fd = -1;
-
-	int rc = 0;
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
-	{
-		rc = s_task_save_init_aiobuf (&sjob.aio[s]);
-		if (rc != 0)
-			break;
-	}
-	if (rc != 0)
-	{
-		logmsg (errno, LOG_ERR,
-			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
-		return -1;
-	}
-
-	self->data = &sjob;
-	return 0;
-}
-
-/*
- * Send off stats for any ongoing job. Close all files.
- * Unmap data for stream and index files.
- * Returns 0 on success, -1 if job status could not be sent or written.
- */
-int
-task_save_fin (task_t* self)
-{
-	assert (self != NULL);
-
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
-	assert (sjob != NULL);
-
-	int rc = 0;
-	if (sjob->basefname != NULL)
-	{ /* A job is in progress. _stats_send nullifies this. */
-		s_task_save_flush (sjob);
-		s_task_save_close (sjob);
-		rc  = s_task_save_stats_write (sjob);
-		rc |= s_task_save_stats_send  (sjob,
-				self->frontend, TSAVE_REQ_EWRT);
-	}
-
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
-		s_task_save_fin_aiobuf (&sjob->aio[s]);
-
-	self->data = NULL;
-	return (rc ? -1 : 0);
-}
-
+/* -------------------------------- HELPERS -------------------------------- */
 /* ------------------------------------------------------------------------- */
 
 /*
@@ -1615,3 +986,633 @@ s_task_save_dbg_stats (struct s_task_save_data_t* sjob)
 	}
 }
 #endif
+
+/* ------------------------------------------------------------------------- */
+/* ---------------------------------- API ---------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Called when a client sends a request on the REP socket. For valid requests
+ * of status, opens the file and send the reply. For valid requests to save,
+ * opens the file and marks the task as active.
+ */
+int
+task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
+{
+	dbg_assert (self_ != NULL);
+
+	task_t* self = (task_t*) self_;
+
+	struct s_task_save_data_t* sjob =
+		(struct s_task_save_data_t*) self->data;
+	dbg_assert ( ! sjob->recording );
+
+
+	char* basefname;
+	int rc = zsock_recv (reader, TSAVE_REQ_PIC,
+			&basefname,
+			&sjob->measurement,
+			&sjob->min_ticks,
+			&sjob->min_events,
+			&sjob->overwrite,
+			&sjob->async);
+	if (rc == -1)
+	{ /* would also return -1 if picture contained a pointer (p) or a null
+	   * frame (z) but message received did not match this signature; this
+	   * is irrelevant in this case */
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
+		return TASK_ERROR;
+	}
+
+	/* Is the request understood? */
+	if (basefname == NULL || sjob->overwrite > 1)
+	{
+		logmsg (0, LOG_INFO,
+			"Received a malformed request");
+		zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_INV,
+				0, 0, 0, 0, 0, 0, 0);
+		return 0;
+	}
+
+	/* Is it only a status query? */
+	bool checkonly = (sjob->min_ticks == 0);
+	if (checkonly)
+	{
+		logmsg (0, LOG_INFO,
+			"Received request for status of '%s-%s'",
+			basefname, sjob->measurement);
+	}
+	else
+	{
+		logmsg (0, LOG_INFO,
+			"Received request to write %lu ticks and "
+			"%lu events to '%s-%s%s'",
+			sjob->min_ticks,
+			sjob->min_events,
+			basefname,
+			sjob->measurement,
+			sjob->async ? ". Convering asynchronously" : "");
+	}
+
+	/* Check if filename is allowed and get the realpath. */
+	sjob->basefname = s_task_save_canonicalize_path (
+			basefname, checkonly);
+	zstr_free (&basefname); /* nullifies the pointer */
+
+	if (sjob->basefname == NULL)
+	{
+		if (checkonly)
+		{
+			logmsg (0, LOG_INFO,
+					"Job not found");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
+					0, 0, 0, 0, 0, 0, 0);
+		}
+		else
+		{
+			logmsg (errno, LOG_INFO,
+					"Filename is not valid");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_EPERM,
+					0, 0, 0, 0, 0, 0, 0);
+		}
+
+		return 0;
+	}
+
+	dbg_assert (sjob->basefname != NULL);
+
+	/* -------------------------------------------------- */
+	/*                    Status query.                   */
+	/* -------------------------------------------------- */
+	if (checkonly)
+	{ /* just read in stats and send reply */
+		rc = s_task_save_stats_read  (sjob);
+		if (rc != 0)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not read stats");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
+					0, 0, 0, 0, 0, 0, 0);
+			return 0;
+		}
+		rc = s_task_save_stats_send  (sjob, self->frontend, TSAVE_REQ_OK);
+		if (rc != 0)
+		{
+			logmsg (0, LOG_NOTICE,
+				"Could not send stats");
+		}
+		return 0;
+	}
+
+	/* -------------------------------------------------- */
+	/*                    Write query.                    */
+	/* -------------------------------------------------- */
+	/*
+	 * Set the file open mode and act according to the return status of
+	 * open and errno (print a warning of errno is unexpected)
+	 * Request is for:
+	 *   create: create if non-existing
+	 *           - if successful, enable save
+	 *           - if failed, send reply (expect errno == EEXIST)
+	 *   create: create or overwrite
+	 *           - if successful, enable save
+	 *           - if failed, send reply (this shouldn't happen)
+	 */
+	int exp_errno = 0;
+	mode_t fmode = O_RDWR | O_CREAT;
+	if ( ! sjob->overwrite )
+	{ /* do not overwrite */
+		fmode |= O_EXCL;
+		exp_errno = EEXIST;
+	}
+
+	rc = s_task_save_open (sjob, fmode);
+	if (rc == -1)
+	{
+		if (errno != exp_errno)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not open file %s",
+				sjob->basefname);
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
+					0, 0, 0, 0, 0, 0, 0);
+		}
+		else
+		{
+			logmsg (0, LOG_INFO, "Job will not proceed");
+			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
+					0, 0, 0, 0, 0, 0, 0);
+		}
+		s_task_save_close (sjob);
+		return 0;
+	}
+
+	logmsg (0, LOG_INFO,
+		"Opened files %s-%s.* for writing",
+		sjob->basefname, sjob->measurement);
+
+	/* Disable polling on the reader until the job is done. Wakeup packet
+	 * handler. */
+	task_activate (self);
+
+	return 0;
+}
+
+/*
+ * Saves packet payloads to corresponding file(s) and writes index files.
+ */
+int
+task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
+		uint16_t missed, int err, task_t* self)
+{
+	dbg_assert (self != NULL);
+
+	struct s_task_save_data_t* sjob =
+		(struct s_task_save_data_t*) self->data;
+
+	bool is_tick = tespkt_is_tick (pkt);
+	if ( ! sjob->recording && is_tick )
+		sjob->recording = 1; /* start the capture */
+
+	if ( ! sjob->recording )
+		return 0;
+
+	if (err)
+	{
+#ifdef TSAVE_NO_BAD_FRAMES
+		/* drop bad frames */
+		sjob->st.frames_dropped++;
+		return 0;
+#endif
+	}
+
+	sjob->st.frames++;
+	sjob->st.frames_lost += missed;
+
+	uint16_t esize = tespkt_esize (pkt);
+	esize = htofs (esize); /* in FPGA byte-order */
+	uint16_t paylen = flen - TES_HDR_LEN;
+
+	bool is_header = tespkt_is_header (pkt);
+	bool is_mca = tespkt_is_mca (pkt);
+	bool is_trace = ( tespkt_is_trace (pkt) &&
+			! tespkt_is_trace_dp (pkt) );
+
+	/* **** Update tick and frame indices and choose the data file. **** */
+	struct s_task_save_aiobuf_t* aiofidx = &sjob->aio[TSAVE_DSET_FIDX];
+#ifdef TSAVE_SINGLE_FILE
+	struct s_task_save_aiobuf_t* aiodat = &sjob->aio[TSAVE_DSET_ADAT];
+#else
+	struct s_task_save_aiobuf_t* aiodat = NULL; /* set later */
+#endif
+	struct s_task_save_fidx_t fidx;
+	fidx.length = paylen;
+	fidx.esize = esize;
+	fidx.changed = 0;
+	fidx.ftype.SEQ = 0;
+
+	bool finishing = 0;
+	int jobrc;
+
+	/* Check for sequence error. */
+	if (missed > 0)
+	{
+#ifdef ENABLE_FULL_DEBUG
+#if 0
+		logmsg (0, LOG_DEBUG,
+			"Missed %hu at frame #%lu",
+			missed, sjob->st.frames - 1);
+#endif
+#endif
+		fidx.ftype.SEQ = 1;
+	}
+
+	/* Check packet type. */
+	if (err)
+	{
+		fidx.ftype.PT = TSAVE_FTYPE_BAD;
+#ifndef TSAVE_SINGLE_FILE
+		aiodat = &sjob->aio[TSAVE_DSET_BDAT];
+#endif
+	}
+	else if (is_mca)
+	{
+		fidx.ftype.PT = TSAVE_FTYPE_MCA;
+#ifndef TSAVE_SINGLE_FILE
+		aiodat = &sjob->aio[TSAVE_DSET_MDAT];
+#endif
+	}
+	else if (is_tick)
+	{
+		fidx.ftype.PT = TSAVE_FTYPE_TICK;
+#ifndef TSAVE_SINGLE_FILE
+		aiodat = &sjob->aio[TSAVE_DSET_TDAT];
+#endif
+
+		if (sjob->st.ticks > 0)
+		{
+			struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
+			jobrc = s_task_save_try_queue_aiobuf (
+					&sjob->aio[TSAVE_DSET_TIDX], (char*)tidx,
+					TSAVE_TIDX_LEN);
+			if (jobrc < 0)
+				finishing = 1; /* error */
+		}
+
+		sjob->cur_tick.nframes = 0;
+		/* no need to zero the index */
+	}
+	else
+	{
+#ifndef TSAVE_SINGLE_FILE
+		aiodat = &sjob->aio[TSAVE_DSET_EDAT];
+#endif
+
+		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
+		const struct tespkt_event_type* etype = tespkt_etype (pkt);
+		uint8_t pt = linear_etype (etype->PKT, etype->TR);
+		fidx.ftype.PT = pt;
+		if ( sjob->st.frames > 1 && 
+			( sjob->prev_etype != pt || sjob->prev_esize != esize ) )
+		{
+			fidx.changed = 1;
+		}
+		sjob->prev_esize = esize;
+		sjob->prev_etype = pt;
+
+		if (sjob->cur_tick.nframes == 0)
+		{ /* first non-tick event frame after a tick */
+			tidx->start_frame = sjob->st.frames - 1;
+		}
+		else
+		{ /* in case it's the last event before a tick */
+			tidx->stop_frame = sjob->st.frames - 1;
+		}
+		sjob->cur_tick.nframes++;
+	}
+
+	fidx.start = aiodat->size +
+		aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
+
+	/*
+	 * *************** Update statistics and stream index. *************
+	 *
+	 * Check if there is an ongoing stream (trace or MCA). If so, update
+	 * index if necessary. If this is the last frame of a stream, queue
+	 * the index for writing and reset cur_stream's size and cur_size.
+	 * size and cur_size would also be reset if an error (e.g. missed
+	 * frames) occurs. idx and is_event are set when receiving the header
+	 * of a new stream.
+	 */
+
+	/* Skip if frame is bad */
+	if (err)
+		goto done;
+
+	if (sjob->cur_stream.size > 0)
+	{
+		dbg_assert (sjob->cur_stream.cur_size > 0);
+		dbg_assert (sjob->cur_stream.cur_size < sjob->cur_stream.size);
+		dbg_assert ( ! sjob->cur_stream.discard );
+
+	}
+	else
+		dbg_assert (sjob->cur_stream.cur_size == 0);
+
+	bool continues_stream = ( ( (is_trace && sjob->cur_stream.is_event) ||
+				    (is_mca && ! sjob->cur_stream.is_event) ) &&
+			sjob->cur_stream.size > 0 && ! is_header && missed == 0 );
+	bool starts_stream = ( (is_trace || is_mca) && is_header &&
+			sjob->cur_stream.size == 0 );
+	bool interrupts_stream = ( ! continues_stream &&
+			sjob->cur_stream.size > 0 );
+
+	if (interrupts_stream) 
+	{ /* unexpected or first missed frames during an ongoing stream */
+		sjob->cur_stream.discard = 1;
+		sjob->cur_stream.size = 0;
+		sjob->cur_stream.cur_size = 0;
+
+		dbg_assert ( is_header || missed > 0 ||
+			(is_trace && ! sjob->cur_stream.is_event) ||
+			(is_mca && sjob->cur_stream.is_event) ||
+			( ! is_trace && ! is_mca ) );
+#if 0
+		if (missed == 0)
+		{ /* should only happen in case of FPGA fault */
+			logmsg (0, LOG_NOTICE,
+				"Received a%s %sframe (#%lu) "
+				"while a %s was ongoing",
+				is_mca ? " histogram" : (
+					is_trace ? " trace" : (
+						is_tick ? " tick" :
+						"n event" ) ),
+				is_header ? "header " : "",
+				sjob->st.frames - 1,
+				sjob->cur_stream.is_event ?
+				"trace" : "histogram");
+		}
+#endif
+	}
+
+	if (starts_stream || continues_stream)
+	{
+		if (starts_stream)
+		{ /* start a new stream */
+			if (is_trace)
+			{
+				sjob->cur_stream.size = tespkt_trace_size (pkt);
+				sjob->cur_stream.is_event = 1;
+			}
+			else
+			{
+				sjob->cur_stream.size = tespkt_mca_size (pkt);
+				sjob->cur_stream.is_event = 0;
+			}
+			sjob->cur_stream.discard = 0;
+
+			sjob->cur_stream.idx.start = aiodat->size +
+				aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
+		}
+		else
+		{ /* ongoing multi-frame stream */
+			dbg_assert ( ! sjob->cur_stream.discard && missed == 0);
+		}
+
+		sjob->cur_stream.cur_size += paylen;
+		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
+		{ /* extra bytes */
+#ifdef ENABLE_FULL_DEBUG
+#if 0
+			logmsg (0, LOG_DEBUG, "Extra %s data "
+					"at frame #%lu",
+					is_mca ? "histogram" : "trace",
+					sjob->st.frames - 1);
+#endif
+#endif
+			sjob->cur_stream.size = 0;
+			sjob->cur_stream.cur_size = 0;
+			sjob->cur_stream.discard = 1;
+		}
+		else if (sjob->cur_stream.cur_size == sjob->cur_stream.size)
+		{ /* done, record the event */
+			struct s_task_save_aiobuf_t* aiosidx = NULL;
+			if (is_trace)
+			{
+				aiosidx = &sjob->aio[TSAVE_DSET_RIDX];
+				sjob->st.events++;
+				sjob->st.traces++;
+			}
+			else
+			{
+				aiosidx = &sjob->aio[TSAVE_DSET_MIDX];
+				sjob->st.hists++;
+			}
+			sjob->cur_stream.idx.length = sjob->cur_stream.size;
+			sjob->cur_stream.size = 0;
+			sjob->cur_stream.cur_size = 0;
+
+			jobrc = s_task_save_try_queue_aiobuf (aiosidx,
+					(char*)&sjob->cur_stream.idx,
+					TSAVE_SIDX_LEN);
+			if (jobrc < 0)
+				finishing = 1; /* error */
+		}
+	}
+	else if (is_mca || is_trace)
+	{ /* missed beginning of a stream or in the process of discarding */
+		if ( ! interrupts_stream )
+		{
+			dbg_assert ( ! is_header );
+			dbg_assert (sjob->cur_stream.size == 0);
+
+			if ( ! sjob->cur_stream.discard )
+			{
+#ifdef ENABLE_FULL_DEBUG
+#if 0
+				logmsg (0, LOG_DEBUG,
+					"Received a non-header %s frame (#%lu) "
+					"while no stream was ongoing",
+					is_mca ? "histogram" : "trace",
+					sjob->st.frames - 1);
+#endif
+#endif
+				sjob->cur_stream.discard = 1;
+			}
+		}
+	}
+	else if (is_tick)
+	{ /* tick */
+		sjob->st.ticks++;
+		/* Ticks should be > min_ticks cause we count the
+		 * starting one too. */
+		if (sjob->st.ticks > sjob->min_ticks &&
+				sjob->st.events >= sjob->min_events)
+			finishing = 1; /* DONE */
+	}
+	else
+	{ /* short event */
+		sjob->st.events += tespkt_event_nums (pkt);
+	}
+
+done:
+	/* ********************** Write frame payload. ********************* */
+#ifdef TSAVE_SAVE_HEADERS
+	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt,
+			flen);
+#else
+	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt + TES_HDR_LEN,
+	                 paylen);
+#endif
+	if (jobrc < 0)
+		finishing = 1; /* error */
+
+	/* *********************** Write frame index. ********************** */
+
+	jobrc = s_task_save_try_queue_aiobuf (aiofidx, (char*)&fidx,
+			TSAVE_FIDX_LEN);
+	if (jobrc < 0)
+		finishing = 1; /* error */
+
+	dbg_assert ( sjob->st.frames * TSAVE_FIDX_LEN ==
+			aiofidx->size +
+			aiofidx->bufzone.waiting +
+			aiofidx->bufzone.enqueued );
+
+	/* ********************** Check if done. *************************** */
+	if (finishing)
+	{
+		/* Flush all buffers. */
+		s_task_save_flush (sjob);
+
+		logmsg (0, LOG_INFO,
+			"Finished writing %lu ticks and %lu events",
+			sjob->st.ticks, sjob->st.events);
+#ifdef ENABLE_FULL_DEBUG
+		s_task_save_dbg_stats (sjob);
+#endif
+		/* Close stream and index files. */
+		s_task_save_close (sjob);
+
+		uint8_t status = ( ( sjob->min_ticks > sjob->st.ticks ||
+			 sjob->min_events > sjob->st.events ) ?
+			TSAVE_REQ_EWRT : TSAVE_REQ_OK );
+
+		/* Write stats. */
+		int rc = s_task_save_stats_write (sjob);
+		if (rc != 0)
+		{
+			status = TSAVE_REQ_EWRT;
+			logmsg (errno, LOG_ERR,
+				"Could not write stats");
+		}
+
+		/* Convert them to hdf5. */
+		rc = s_task_save_conv_data (sjob);
+		if (rc != 0)
+		{
+			status = TSAVE_REQ_ECONV;
+			logmsg (errno, LOG_ERR,
+				"Could not convert data to hdf5");
+		}
+
+		/* Send reply. */
+		s_task_save_stats_send (sjob, self->frontend, status);
+
+		/* Enable polling on the reader and deactivate packet
+		 * handler. */
+		return TASK_SLEEP;
+	}
+
+	return 0;
+}
+
+/*
+ * Perform checks and statically allocate the data struct.
+ * mmap data for stream and index files.
+ * Returns 0 on success, -1 on error.
+ */
+int
+task_save_init (task_t* self)
+{
+	assert (self != NULL);
+	assert (*(TSAVE_ROOT + strlen (TSAVE_ROOT) - 1) == '/');
+	assert (sizeof (struct s_task_save_stats_t) == TSAVE_STAT_LEN);
+	assert (sizeof (struct s_task_save_fidx_t) == TSAVE_FIDX_LEN);
+	assert (sizeof (struct s_task_save_tidx_t) == TSAVE_TIDX_LEN);
+	assert (sizeof (struct s_task_save_sidx_t) == TSAVE_SIDX_LEN);
+	assert (sizeof (s_task_save_dsets) ==
+			TSAVE_NUM_DSETS * sizeof (struct s_task_save_dset_t));
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_FIDX].extension,
+				"fidx", 4) == 0);
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_MIDX].extension,
+				"midx", 4) == 0);
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_TIDX].extension,
+				"tidx", 4) == 0);
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_RIDX].extension,
+				"ridx", 4) == 0);
+#ifdef TSAVE_SINGLE_FILE
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_ADAT].extension,
+				"adat", 4) == 0);
+#else
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_BDAT].extension,
+				"bdat", 4) == 0);
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_MDAT].extension,
+				"mdat", 4) == 0);
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_TDAT].extension,
+				"tdat", 4) == 0);
+	assert (memcmp (s_task_save_dsets[TSAVE_DSET_EDAT].extension,
+				"edat", 4) == 0);
+#endif
+
+	static struct s_task_save_data_t sjob;
+	sjob.fd = -1;
+
+	int rc = 0;
+	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	{
+		rc = s_task_save_init_aiobuf (&sjob.aio[s]);
+		if (rc != 0)
+			break;
+	}
+	if (rc != 0)
+	{
+		logmsg (errno, LOG_ERR,
+			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
+		return -1;
+	}
+
+	self->data = &sjob;
+	return 0;
+}
+
+/*
+ * Send off stats for any ongoing job. Close all files.
+ * Unmap data for stream and index files.
+ * Returns 0 on success, -1 if job status could not be sent or written.
+ */
+int
+task_save_fin (task_t* self)
+{
+	assert (self != NULL);
+
+	struct s_task_save_data_t* sjob =
+		(struct s_task_save_data_t*) self->data;
+	assert (sjob != NULL);
+
+	int rc = 0;
+	if (sjob->basefname != NULL)
+	{ /* A job is in progress. _stats_send nullifies this. */
+		s_task_save_flush (sjob);
+		s_task_save_close (sjob);
+		rc  = s_task_save_stats_write (sjob);
+		rc |= s_task_save_stats_send  (sjob,
+				self->frontend, TSAVE_REQ_EWRT);
+	}
+
+	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+		s_task_save_fin_aiobuf (&sjob->aio[s]);
+
+	self->data = NULL;
+	return (rc ? -1 : 0);
+}

@@ -15,40 +15,11 @@
  *
  * Tasks are largely similar, so we pass the same handler, s_task_shim, to
  * zactor_new. It is responsible for doing most of the work.
- * Tasks are described by the following structure:
- * struct _task_t
- * {
- *         zloop_reader_fn* client_handler;
- *         zloop_t*         loop;
- *         task_pkt_fn*     pkt_handler;
- *         task_data_fn*    data_init; // initialize data
- *         task_data_fn*    data_fin;  // cleanup data
- *         void*       data;           // task-specific
- *         zactor_t*   shim;           // coordinator's end of the pipe, signals
- *                                     // sent on behalf of coordinator go here
- *         zsock_t*    frontend;       // clients
- *         const char* front_addr;     // the socket addresses, comma separated
- *         const int   front_type;     // one of ZMQ_*
- *         int         id;             // the task ID
- *         tes_ifdesc* ifd;            // netmap interface
- *         uint32_t    heads[NUM_RINGS]; // per-ring task's head
- *         uint16_t    nrings;         // number of rings <= NUM_RINGS
- *         uint16_t    prev_fseq;      // previous frame sequence
- *         uint16_t    prev_pseq_mca;  // previous MCA protocol sequence
- *         uint16_t    prev_pseq_tr;   // previous trace protocol sequence
- *         bool        automute;       // s_task_(de)activate will enable/disable
- *                                     // client_handler
- *         bool        autoactivate;   // s_task_shim will activate task
- *         bool        just_activated; // first packet dispatch after activation
- *         bool        error;          // see below
- *         bool        busy;           // see below
- *         bool        active;         // see below
- * };
+ * Tasks are described by a struct _task_t (see tesd_tasks.h).
  *
  * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
  * from the coordinator. Upon SIG_STOP s_sig_hn exits, upon SIG_WAKEUP it calls
- * calls the task's specific packet handler for each packet in each ring (TO
- * DO). 
+ * calls the task's specific packet handler for each packet in each ring.
  * It keeps track of the previous frame and protocol sequences (the task's
  * packet handler can make use of those as well, e.g. to track lost frames).
  * For convenience the number of missed frames (difference between previous and
@@ -150,8 +121,8 @@
  * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
  */
 
-#include "tesd_tasks_coordinator.h" // declarations of non-static definitions here
-#include "tesd_tasks.h" // common to all tasks
+#include "tesd_tasks_coordinator.h"
+#include "tesd_tasks.h"
 
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
@@ -199,11 +170,6 @@ static task_t s_tasks[] = {
 /* ---------------------------- COORDINATOR API ---------------------------- */
 /* ------------------------------------------------------------------------- */
 
-/*
- * Start the tasks and if c_loop is not NULL, register a generic reader for
- * each task.
- * Returns 0 on success, -1 on error.
- */
 int
 tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 {
@@ -228,11 +194,6 @@ tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
 	return 0;
 }
 
-/*
- * Register a generic reader with the loop. The reader will listen to all tasks
- * and terminate the loop when a task dies. This is called by tasks_start if
- * a non-NULL zloop_t* is passed.
- */
 int
 tasks_read (zloop_t* loop)
 {
@@ -254,9 +215,6 @@ tasks_read (zloop_t* loop)
 	return 0;
 }
 
-/*
- * Deregister the reader of each task with the loop.
- */
 void
 tasks_mute (zloop_t* loop)
 {
@@ -270,9 +228,6 @@ tasks_mute (zloop_t* loop)
 	}
 }
 
-/*
- * Sends a wake up signal to all tasks waiting for more packets.
- */
 int
 tasks_wakeup (void)
 {
@@ -293,9 +248,6 @@ tasks_wakeup (void)
 	return 0;
 }
 
-/*
- * Asks each task to terminate and cleans up.
- */
 void
 tasks_destroy (void)
 {
@@ -307,10 +259,6 @@ tasks_destroy (void)
 	}
 }
 
-/*
- * For each ring, returns the head of the slowest active task.
- * If no active tasks, returns NULL.
- */
 uint32_t*
 tasks_get_heads (void)
 {
@@ -351,11 +299,6 @@ tasks_get_heads (void)
 /* ------------------------------- TASKS API ------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-/*
- * Synchronizes the task's head with the ring's head and sets active to true.
- * If the task handles one client at a time, disables reading the
- * client_handler.
- */
 void
 task_activate (task_t* self)
 {
@@ -373,11 +316,6 @@ task_activate (task_t* self)
 	self->just_activated = 1;
 }
 
-/*
- * Deactivates the task and, if the task handles one client at a time, enables
- * reading the client_handler.
- * Returns 0 on success, TASK_ERROR on error.
- */
 int
 task_deactivate (task_t* self)
 {

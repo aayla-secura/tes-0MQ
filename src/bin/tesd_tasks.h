@@ -1,3 +1,9 @@
+/*
+ * Type definitions common to all tasks.
+ * Declarations of task related actions used by all tasks. Definitions are in
+ * tesd_tasks.c
+ */
+
 #ifndef __TESD_TASKS_H__INCLUDED__
 #define __TESD_TASKS_H__INCLUDED__
 
@@ -55,9 +61,9 @@ struct _task_t
 	                            // client_handler
 	bool        autoactivate;   // s_task_shim will activate task
 	bool        just_activated; // first packet dispatch after activation
-	bool        error;          // see DEV NOTES
-	bool        busy;           // see DEV NOTES
-	bool        active;         // see DEV NOTES
+	bool        error;          // internal, see DEV NOTES in tesd_tasks.c
+	bool        busy;           // internal, see DEV NOTES in tesd_tasks.c
+	bool        active;         // internal, see DEV NOTES in tesd_tasks.c
 #ifdef ENABLE_FULL_DEBUG
 	struct
 	{
@@ -88,23 +94,23 @@ void task_activate (task_t* self);
  */
 int  task_deactivate (task_t* self);
 
-/* ***************************** TASK HANDLERS ***************************** */
+/* ----------------------------- TASK HANDLERS ----------------------------- */
 
 /* Save to file */
 zloop_reader_fn task_save_req_hn;
-task_pkt_fn        task_save_pkt_hn;
-task_data_fn       task_save_init;
-task_data_fn       task_save_fin;
+task_pkt_fn     task_save_pkt_hn;
+task_data_fn    task_save_init;
+task_data_fn    task_save_fin;
 
 /* Average trace */
 zloop_reader_fn task_avgtr_req_hn;
-task_pkt_fn        task_avgtr_pkt_hn;
-task_data_fn       task_avgtr_init;
-task_data_fn       task_avgtr_fin;
+task_pkt_fn     task_avgtr_pkt_hn;
+task_data_fn    task_avgtr_init;
+task_data_fn    task_avgtr_fin;
 
 /* Publish histogram */
-task_pkt_fn        task_hist_pkt_hn;
-task_data_fn       task_hist_init;
-task_data_fn       task_hist_fin;
+task_pkt_fn     task_hist_pkt_hn;
+task_data_fn    task_hist_init;
+task_data_fn    task_hist_fin;
 
 #endif

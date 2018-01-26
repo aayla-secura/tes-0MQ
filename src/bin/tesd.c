@@ -63,8 +63,8 @@
  * - chroot and drop privileges.
  */
 
-#include "tesd.h" // common to tasks and coordinator
-#include "tesd_tasks_coordinator.h" // declarations of external task-related functions
+#include "tesd.h"
+#include "tesd_tasks_coordinator.h"
 #include "net/tesif_manager.h"
 #include <sys/time.h>
 #include <syslog.h>

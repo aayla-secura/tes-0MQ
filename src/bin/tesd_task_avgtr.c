@@ -24,6 +24,36 @@ struct s_task_avgtr_data_t
 static zloop_timer_fn  s_task_avgtr_timeout_hn;
 
 /* ------------------------------------------------------------------------- */
+/* -------------------------------- HELPERS -------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Deactivates the task, enables polling on the client reader, sends
+ * timeout error to the client.
+ */
+static int
+s_task_avgtr_timeout_hn (zloop_t* loop, int timer_id, void* self_)
+{
+	dbg_assert (self_ != NULL);
+
+	task_t* self = (task_t*) self_;
+
+	/* Enable polling on the reader and deactivate packet
+	 * handler. */
+	task_deactivate (self);
+	
+	/* Send a timeout error to the client. */
+	logmsg (0, LOG_INFO,
+		"Average trace timed out");
+	zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
+			TAVGTR_REQ_TOUT);
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------------- */
+/* ---------------------------------- API ---------------------------------- */
+/* ------------------------------------------------------------------------- */
 
 int
 task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
@@ -199,29 +229,5 @@ task_avgtr_fin (task_t* self)
 	assert (self != NULL);
 
 	self->data = NULL;
-	return 0;
-}
-
-/*
- * Deactivates the task, enables polling on the client reader, sends
- * timeout error to the client.
- */
-static int
-s_task_avgtr_timeout_hn (zloop_t* loop, int timer_id, void* self_)
-{
-	dbg_assert (self_ != NULL);
-
-	task_t* self = (task_t*) self_;
-
-	/* Enable polling on the reader and deactivate packet
-	 * handler. */
-	task_deactivate (self);
-	
-	/* Send a timeout error to the client. */
-	logmsg (0, LOG_INFO,
-		"Average trace timed out");
-	zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-			TAVGTR_REQ_TOUT);
-
 	return 0;
 }

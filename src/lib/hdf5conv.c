@@ -1,6 +1,5 @@
 /*
  * TO DO:
- *  - open all data files at once, and if async is false, send message then
  *  - delete data files after conversion
  */
 
@@ -32,6 +31,10 @@ struct s_creq_data_t
 	hid_t file_id;
 };
 
+/* ------------------------------------------------------------------------- */
+/* -------------------------------- HELPERS -------------------------------- */
+/* ------------------------------------------------------------------------- */
+
 /*
  * Open or create <group> relative to l_id. If ovrwt is true and group
  * exists, it is deleted first.
@@ -54,12 +57,6 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 	else if (gstat > 0 && ! ovrwt)
 	{ /* open the group */
 		g_id = H5Gopen (l_id, group, H5P_DEFAULT);	
-		if (g_id < 0)
-		{
-			logmsg (0, LOG_ERR,
-				"Could not open group %s", group);
-			return -1;
-		}
 	}
 	else
 	{ /* create the group */
@@ -77,13 +74,15 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 
 		g_id = H5Gcreate (l_id, group, H5P_DEFAULT,
 			H5P_DEFAULT, H5P_DEFAULT);
-		if (g_id < 0)
-		{
-			logmsg (0, LOG_ERR,
-				"Could not create group %s", group);
-			return -1;
-		}
 
+	}
+	if (g_id < 0)
+	{
+		logmsg (0, LOG_ERR,
+			"Could not %s group %s",
+			(gstat > 0 && ! ovrwt) ? "open" : "create",
+			group);
+		return -1;
 	}
 
 	return g_id;
@@ -212,15 +211,12 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 		logmsg (0, LOG_ERR,
 			"Could not write to dataset %s",
 			ddesc->dname);
-		H5Dclose (dset);
-		H5Sclose (dspace);
-		return -1;
 	}
 
 	H5Dclose (dset);
 	H5Sclose (dspace);
 
-	return 0;
+	return (err < 0 ? -1 : 0);
 }
 
 static int
@@ -261,7 +257,7 @@ s_hdf5_init (void* creq_data_)
 	{
 		logmsg (0, LOG_ERR,
 			"Could not %s hdf5 file %s",
-			((fok == 0 && ! creq->ovrwt) ? "open" : "create"),
+			(fok == 0 && ! creq->ovrwt) ? "open" : "create",
 			creq->filename);
 		return -1;
 	}
@@ -338,6 +334,7 @@ s_hdf5_write (void* creq_data_)
 	assert (creq_data_ != NULL);
 
 	struct s_creq_data_t* creq_data = (struct s_creq_data_t*)creq_data_;
+
 	/* Create the datasets. */
 	int rc = 0;
 	for (int d = 0; d < creq_data->creq.num_dsets; d++)
@@ -356,12 +353,10 @@ s_hdf5_write (void* creq_data_)
 	return rc;
 }
 
-/*
- * Open/create creq->filename, create/overwrite group
- * ROOT_GROUP/creq->group; for each dataset mmap the file if needed and
- * call s_create_dset.
- * Returns 0 on success, -1 on error.
- */
+/* ------------------------------------------------------------------------- */
+/* ---------------------------------- API ---------------------------------- */
+/* ------------------------------------------------------------------------- */
+
 int
 hdf5_conv (const struct hdf5_conv_req_t* creq)
 {
