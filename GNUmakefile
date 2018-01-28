@@ -14,7 +14,7 @@ TEST_PROGS := $(patsubst %.c,%,$(notdir $(wildcard $(TEST_SRC)/*.c)))
 TASKS_OBJ  := $(patsubst %.c,%.o,$(wildcard $(BIN_SRC)/tesd_task_*.c))
 
 CC      := gcc
-CFLAGS  += -I$(CPATH) -fPIC -Wall -Wextra \
+CFLAGS  += -I$(CPATH) -O1 -fPIC -Wall -Wextra \
 	   -Wno-unused-parameter -Wno-unused-function
 LDLIBS  := -lzmq -lczmq -lrt
 UNAME := $(shell uname -o)
