@@ -289,8 +289,15 @@ logmsg (int errnum, int priority, const char* format, ...)
 	{
 		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
 		/* Thread-safe version of strerror. */
-		/* FIX: XSI compliant or GNU version. */
+#if (_POSIX_C_SOURCE >= 200112L) && !  _GNU_SOURCE
+		/* POSIX compliant, saves it in msg */
 		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
+#else
+		/* GNU version, returns it and MAY save it in msg */
+		char* err = strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
+		if (err != NULL && err != msg + len)
+			strncpy (msg + len, err, MAX_MSG_LEN - len);
+#endif
 	}
 
 	if (is_daemon)
