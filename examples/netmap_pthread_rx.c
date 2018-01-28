@@ -267,12 +267,12 @@ main_body (void* arg)
 	/* Get the ring (we only use one) */
 	assert (data.nmd->first_rx_ring == data.nmd->last_rx_ring);
 	struct netmap_ring* rxring = NETMAP_RXRING (
-			data.nmd->nifp, data.nmd->first_rx_ring);
+		data.nmd->nifp, data.nmd->first_rx_ring);
 
 #ifdef SAVE_FILE
 	/* Open the file */
 	data.save_fd = open (SAVE_FILE, O_CREAT | O_RDWR,
-			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (data.save_fd == -1)
 	{
 		ERROR ("Could not open %s\n", SAVE_FILE);

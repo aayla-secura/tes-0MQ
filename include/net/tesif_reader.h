@@ -1,6 +1,6 @@
 /*
- * An opaque class for reading the ring structure. At the moment it's just
- * a wrapper around netmap.
+ * An opaque class for reading the ring structure. At the moment
+ * it's just a wrapper around netmap.
  */
 
 #ifndef __NET_TESIF_READER_H_INCLUDED__
@@ -14,7 +14,7 @@ typedef struct tes_ifreq  tes_ifreq;
 typedef struct tes_ifhdr  tes_ifhdr;
 
 typedef void (tes_ifpkt_hn)(unsigned char *, const tes_ifhdr*,
-	const unsigned char *buf);
+		const unsigned char *buf);
 
 /*
  * Get the number of tx or rx rings.
@@ -23,8 +23,8 @@ uint16_t tes_if_txrings (tes_ifdesc* ifd);
 uint16_t tes_if_rxrings (tes_ifdesc* ifd);
 
 /*
- * Get the first, current, <idx>, preceding <idx>, following <idx> or last tx
- * or rx ring. It is not done in a circular fashion.
+ * Get the first, current, <idx>, preceding <idx>, following <idx>
+ * or last tx or rx ring. It is not done in a circular fashion.
  * Returns NULL for rings beyond the last one.
  */
 tes_ifring* tes_if_first_txring (tes_ifdesc* ifd);
@@ -60,22 +60,26 @@ uint32_t tes_ifring_buf_size (tes_ifring* ring);
 
 /*
  * Compare slots mod num_slots taking into accout the ring's head.
- * Returns -1 or 1 if ida is closer or farther from the head than idb.
+ * Returns -1 or 1 if ida is closer or farther from the head than
+ * idb.
  * Returns 0 if they are equal.
  */
-int tes_ifring_compare_ids (tes_ifring* ring, uint32_t ida, uint32_t idb);
+int tes_ifring_compare_ids (tes_ifring* ring,
+		uint32_t ida, uint32_t idb);
 
 /*
  * Compare slots mod num_slots taking into accout the ring's head.
- * Returns the buf id that is closer (smaller) or farther (larger) to the
- * ring's head in a forward direction.
+ * Returns the buf id that is closer (smaller) or farther (larger)
+ * to the ring's head in a forward direction.
  */
-uint32_t tes_ifring_earlier_id (tes_ifring* ring, uint32_t ida, uint32_t idb);
-uint32_t tes_ifring_later_id (tes_ifring* ring, uint32_t ida, uint32_t idb);
+uint32_t tes_ifring_earlier_id (tes_ifring* ring,
+		uint32_t ida, uint32_t idb);
+uint32_t tes_ifring_later_id (tes_ifring* ring,
+		uint32_t ida, uint32_t idb);
 
 /*
- * Get the head, current, preceding <idx>, following <idx> or tail buffer id of
- * a ring. Wraps around.
+ * Get the head, current, preceding <idx>, following <idx> or tail
+ * buffer id of a ring. Wraps around.
  */
 uint32_t tes_ifring_head (tes_ifring* ring);
 uint32_t tes_ifring_cur (tes_ifring* ring);
@@ -90,9 +94,10 @@ char* tes_if_cur_txbuf (tes_ifdesc* ifd);
 char* tes_if_cur_rxbuf (tes_ifdesc* ifd);
 
 /*
- * Get the head, current, <idx>, preceding <idx>, following <idx> or tail
- * buffer of a ring. Wraps around.
- * preceding and following return NULL when reaching the head-1 or tail.
+ * Get the head, current, <idx>, preceding <idx>, following <idx> or
+ * tail buffer of a ring. Wraps around.
+ * preceding and following return NULL when reaching the head-1 or
+ * tail.
  */
 char* tes_ifring_head_buf (tes_ifring* ring);
 char* tes_ifring_cur_buf (tes_ifring* ring);

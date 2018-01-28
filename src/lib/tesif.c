@@ -1,37 +1,40 @@
 /*
- * This is an API for setting and getting the fields of ring structures in an
- * opaque way (clients should only deal with pointers to them and pass them to
- * the methods declared in the header files). This is to ensure that clients
- * including only tesif_reader.h cannot modify the data.
+ * This is an API for setting and getting the fields of ring
+ * structures in an opaque way (clients should only deal with
+ * pointers to them and pass them to the methods declared in the
+ * header files). This is to ensure that clients including only
+ * tesif_reader.h cannot modify the data.
  *
- * ----------------------------------------------------------------------------
- * -------------------------------- DEV NOTES ---------------------------------
- * ----------------------------------------------------------------------------
- * For now this is just a wrapper around netmap. We define our structures to
- * include a single member that is the corresponding netmap structure.
+ * -----------------------------------------------------------------
+ * --------------------------- DEV NOTES --------------------------- 
+ * -----------------------------------------------------------------
+ * For now this is just a wrapper around netmap. We define our
+ * structures to include a single member that is the corresponding
+ * netmap structure.
  *
- * Netmap uses two user-driven constructs---a head and a cursor. The head tells
- * it which slots it can safely free, while the cursor tells it when to unblock
- * a poll call. When the head lags behind the tail, the cursor must never be
- * set to a slot index in the range head+1 ... tail because the poll would
- * block forever (the tail will reach the head before it reaches the cursor).
- * Hence we name 'done' packets in the range head ... cur-1 and 'pending' packets
- * in the range cur ... tail-1.
+ * Netmap uses two user-driven constructs---a head and a cursor. The
+ * head tells it which slots it can safely free, while the cursor
+ * tells it when to unblock a poll call. When the head lags behind
+ * the tail, the cursor must never be set to a slot index in the
+ * range head+1 ... tail because the poll would block forever (the
+ * tail will reach the head before it reaches the cursor). Hence we
+ * name 'done' packets in the range head ... cur-1 and 'pending'
+ * packets in the range cur ... tail-1.
  *
- * Naming conventions: we use 'next', 'previous', 'rewind', 'goto' when
- * changing tha cursor (manager), and use 'following', 'preceding', 'first',
- * 'last' when we simply return the corresponding object associated with the id
- * (reader).
+ * Naming conventions: we use 'next', 'previous', 'rewind', 'goto'
+ * when changing tha cursor (manager), and use 'following',
+ * 'preceding', 'first', 'last' when we simply return the
+ * corresponding object associated with the id (reader).
  *
- * ----------------------------------------------------------------------------
- * ---------------------------------- TO DO -----------------------------------
- * ----------------------------------------------------------------------------
- * - More rigorous checks when setting head or cursor. In particular, ensure
- *   cursor never ends up between head and tail since netmap poll will block
- *   forever.
+ * -----------------------------------------------------------------
+ * ----------------------------- TO DO -----------------------------
+ * -----------------------------------------------------------------
+ * - More rigorous checks when setting head or cursor. In
+ *   particular, ensure cursor never ends up between head and tail
+ *   since netmap poll will block forever.
  * - Provide a way to build an tes_ifreq object.
- * - Subtract netmap's first ring ID from all ring IDs returned, so user is
- *   ensured IDs start at 0.
+ * - Subtract netmap's first ring ID from all ring IDs returned, so
+ *   user is ensured IDs start at 0.
  * - Wrappers around the following for multiple rings:
  *   -- tes_ifring_release_*
  * - Get the current tx or rx ring id.
@@ -62,9 +65,9 @@ struct tes_ifhdr
 	struct nm_pkthdr n;
 };
 
-/* ------------------------------------------------------------------------- */
-/* -------------------------------- HELPERS -------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* --------------------------- HELPERS -------------------------- */
+/* -------------------------------------------------------------- */
 
 static inline uint32_t
 s_ring_preceding (tes_ifring* ring, uint32_t idx)
@@ -96,9 +99,9 @@ s_rxring (tes_ifdesc* ifd, uint16_t idx)
 	return (tes_ifring*)NETMAP_RXRING (ifd->n.nifp, idx);
 }
 
-/* ------------------------------------------------------------------------- */
-/* ------------------------------ MANAGER API ------------------------------ */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ------------------------- MANAGER API ------------------------ */
+/* -------------------------------------------------------------- */
 
 tes_ifdesc*
 tes_if_open (const char *name, const tes_ifreq *req,
@@ -108,8 +111,8 @@ tes_if_open (const char *name, const tes_ifreq *req,
 }
 int
 tes_if_close (tes_ifdesc* ifd)
-{ /* to keep the signature of nm_close we don't take a double pointer, so
-   * caller should nullify it */
+{ /* to keep the signature of nm_close we don't take a double
+   * pointer, so caller should nullify it */
 	return nm_close (&ifd->n);
 }
 
@@ -274,14 +277,15 @@ int
 tes_if_dispatch (tes_ifdesc* ifd, int cnt, tes_ifpkt_hn handler,
 	unsigned char* arg)
 {
-	/* The cast to nm_cb_t suppresses the GCC warning, due to tes_ifpkt_hn
-	 * accepting an tes_ifhdr* rather than (the equivalent) struct nm_pkthdr* */
+	/* The cast to nm_cb_t suppresses the GCC warning, due to
+	 * tes_ifpkt_hn accepting an tes_ifhdr* rather than (the
+	 * equivalent) struct nm_pkthdr* */
 	return nm_dispatch (&ifd->n, cnt, (nm_cb_t)handler, arg);
 }
 
-/* ------------------------------------------------------------------------- */
-/* ------------------------------ READER API ------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ------------------------- READER API ------------------------- */
+/* -------------------------------------------------------------- */
 
 uint16_t
 tes_if_txrings (tes_ifdesc* ifd)
@@ -413,14 +417,15 @@ tes_ifring_buf_size (tes_ifring* ring)
 }
 
 int
-tes_ifring_compare_ids (tes_ifring* ring, uint32_t ida, uint32_t idb)
+tes_ifring_compare_ids (tes_ifring* ring,
+		uint32_t ida, uint32_t idb)
 {
 	if (unlikely (ida == idb))
 		return 0;
 
-	/* If both are in the same region of the ring (i.e. numerically both
-	 * are < or both are > head, then the numerically smaller is first,
-	 * otherwise, the numerically larger is first. */
+	/* If both are in the same region of the ring (i.e. numerically
+	 * both are < or both are > head, then the numerically smaller
+	 * is first, otherwise, the numerically larger is first. */
 	if ( (ring->n.head <= ida && ring->n.head <= idb) ||
 		(ring->n.head > ida && ring->n.head > idb) )
 		return (ida < idb) ? -1 : 1;

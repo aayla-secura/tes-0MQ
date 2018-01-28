@@ -190,9 +190,9 @@ rx_handler (u_char* arg, const struct nm_pkthdr* hdr, const u_char* buf)
 	assert (gobj.nmd->cur_rx_ring <= gobj.nmd->last_rx_ring);
 #ifdef VERBOSE
 	INFO ("Packet in ring %hu, pending in ring %u\n",
-			gobj.nmd->cur_rx_ring,
+		gobj.nmd->cur_rx_ring,
 			nm_ring_space (NETMAP_RXRING (
-					gobj.nmd->nifp,
+				gobj.nmd->nifp,
 					gobj.nmd->cur_rx_ring)));
 #endif
 #define LIMIT_RATE
@@ -273,7 +273,7 @@ main (void)
 
 	/* Open the interface */
 	gobj.nmd = nm_open(NMIF NMRING, NULL,
-			NETMAP_NO_TX_POLL, NULL);
+		NETMAP_NO_TX_POLL, NULL);
 	if (gobj.nmd == NULL)
 	{
 		perror ("Could not open interface");

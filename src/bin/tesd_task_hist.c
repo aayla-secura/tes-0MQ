@@ -1,7 +1,7 @@
 #include "tesd_tasks.h"
 
 #ifndef TES_MCASIZE_BUG
-#define THIST_MAXSIZE 65528U // highest 16-bit number that is a multiple of 8 bytes
+#define THIST_MAXSIZE 65528U // highest 16-bit number multiple of 8
 #else
 #define THIST_MAXSIZE 65576U
 #endif
@@ -24,18 +24,19 @@ struct s_task_hist_data_t
 	uint32_t      size;      // size of histogram including header
 	uint32_t      cur_size;  // number of received bytes so far
 #endif
-	bool          discard;   // discard all frames until the next header
+	bool          discard;   // discard all frames until next header
 	unsigned char buf[THIST_MAXSIZE];
 };
 
-/* ------------------------------------------------------------------------- */
-/* ---------------------------------- API ---------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ----------------------------- API ---------------------------- */
+/* -------------------------------------------------------------- */
 
 /*
- * Accumulates MCA frames and sends them out as soon as the last one is
- * received. It aborts the whole histogram if an MCA frame is lost or if extra
- * frames are received (i.e. the size field appears to small).
+ * Accumulates MCA frames and sends them out as soon as the last one
+ * is received. It aborts the whole histogram if an MCA frame is
+ * lost or if extra frames are received (i.e. the size field appears
+ * to small).
  */
 int
 task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
@@ -131,9 +132,6 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		/* Send the histogram */
 #ifdef ENABLE_FULL_DEBUG
 		hist->published++;
-		// logmsg (0, LOG_DEBUG,
-		//         "Publishing an %u-byte long histogram",
-		//         hist->cur_size);
 		int rc = zmq_send (zsock_resolve (self->frontend),
 			hist->buf, hist->cur_size, 0);
 		if (rc == -1)

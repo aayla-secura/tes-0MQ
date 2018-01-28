@@ -1,124 +1,142 @@
 /*
- * ----------------------------------------------------------------------------
- * -------------------------------- DEV NOTES ---------------------------------
- * ----------------------------------------------------------------------------
+ * -----------------------------------------------------------------
+ * --------------------------- DEV NOTES ---------------------------
+ * -----------------------------------------------------------------
  * There is a separate thread for each "task". Threads are zactors.
  * Currently there are two tasks:
- * 1) Listen on a REP socket and save all frames to file (until a requested
- *    number of ticks pass).
+ * 1) Listen on a REP socket and save all frames to file (until
+ *    a requested number of ticks pass).
  * 2) Collate MCA frames for publishing via a PUB socket.
  *
- * Tasks have read-only access to rings (they cannot modify the cursor or head)
- * and each task keeps its own head (for each ring), which is visible by the
- * coordinator (tesd.c). For each ring, the coordinator sets the true head
- * to the per-task head which lags behind all others.
+ * Tasks have read-only access to rings (they cannot modify the
+ * cursor or head) and each task keeps its own head (for each ring),
+ * which is visible by the coordinator (tesd.c). For each ring, the
+ * coordinator sets the true head to the per-task head which lags
+ * behind all others.
  *
- * Tasks are largely similar, so we pass the same handler, s_task_shim, to
- * zactor_new. It is responsible for doing most of the work.
- * Tasks are described by a struct _task_t (see tesd_tasks.h).
+ * Tasks are largely similar, so we pass the same handler,
+ * s_task_shim, to zactor_new. It is responsible for doing most of
+ * the work. Tasks are described by a struct _task_t (see
+ * tesd_tasks.h).
  *
- * s_task_shim registers a generic reader, s_sig_hn, for handling the signals
- * from the coordinator. Upon SIG_STOP s_sig_hn exits, upon SIG_WAKEUP it calls
- * calls the task's specific packet handler for each packet in each ring.
- * It keeps track of the previous frame and protocol sequences (the task's
- * packet handler can make use of those as well, e.g. to track lost frames).
- * For convenience the number of missed frames (difference between previous and
+ * s_task_shim registers a generic reader, s_sig_hn, for handling
+ * the signals from the coordinator. Upon SIG_STOP s_sig_hn exits,
+ * upon SIG_WAKEUP it calls calls the task's specific packet handler
+ * for each packet in each ring. It keeps track of the previous
+ * frame and protocol sequences (the task's packet handler can make
+ * use of those as well, e.g. to track lost frames). For convenience
+ * the number of missed frames (difference between previous and
  * current frame sequences mod 2^16) is passed to the pkt_handler.
  * s_sig_hn also takes care of updating the task's head.
  *
- * If the task defines a public interface address, s_task_shim will open the
- * socket, and if it defines a client handler, it will register it with the
- * task's loop. Each task has a pointer for its own data.
+ * If the task defines a public interface address, s_task_shim will
+ * open the socket, and if it defines a client handler, it will
+ * register it with the task's loop. Each task has a pointer for its
+ * own data.
  *
- * Before entering the loop, s_task_shim will call the task initializer, if it
- * is set. So it can allocate the pointer to its data and do anything else it
- * wishes (talk to clients, etc).
+ * Before entering the loop, s_task_shim will call the task
+ * initializer, if it is set. So it can allocate the pointer to its
+ * data and do anything else it wishes (talk to clients, etc).
  *
- * Tasks defined with the autoactivate flag on are activated before entering
- * the loop. Otherwise the task should activate itself from within its
- * initializer or in its client frontend handler.
+ * Tasks defined with the autoactivate flag on are activated before
+ * entering the loop. Otherwise the task should activate itself from
+ * within its initializer or in its client frontend handler.
  *
- * Tasks defined with the automute flag must have a client_handler. The handler
- * will then be deregistered from the loop upon task activation, and registered
- * again upon deactivation.
+ * Tasks defined with the automute flag must have a client_handler.
+ * The handler will then be deregistered from the loop upon task
+ * activation, and registered again upon deactivation.
  *
- * Right after the loop terminates, s_task_shim will call the task finalizer,
- * so it can cleanup its data and possibly send final messages to clients.
+ * Right after the loop terminates, s_task_shim will call the task
+ * finalizer, so it can cleanup its data and possibly send final
+ * messages to clients.
  *
  * The actual task is done inside client_handler and pkt_handler.
  *
- *   client_handler processes messages on the public socket. If front_addr is
- *   not set, the task has no public interface.
+ *   client_handler processes messages on the public socket. If
+ *   front_addr is not set, the task has no public interface.
  *
- *   pkt_handler is called by the generic socket reader for each packet in each
- *   ring and does whatever.
+ *   pkt_handler is called by the generic socket reader for each
+ *   packet in each ring and does whatever.
  *
- * Both handlers have access to the zloop so they can enable or disable readers
- * (e.g. the client_handler can disable itself after receiving a job and the
- * pkt_handler can re-enable it when done).
+ * Both handlers have access to the zloop so they can enable or
+ * disable readers (e.g. the client_handler can disable itself after
+ * receiving a job and the pkt_handler can re-enable it when done).
  *
- * If either handler encounters a fatal error, it returns with TASK_ERROR.
+ * If either handler encounters a fatal error, it returns with
+ * TASK_ERROR.
  *
- * If the task wants to deactivate itself, it should call s_task_deactivate.
- * Alternatively it can return with TASK_SLEEP from within the pkt_handler.
- * The task then won't be receiving SIG_WAKEUP and its heads won't be
- * synchronized with the real heads.
+ * If the task wants to deactivate itself, it should call
+ * s_task_deactivate. Alternatively it can return with TASK_SLEEP
+ * from within the pkt_handler. The task then won't be receiving
+ * SIG_WAKEUP and its heads won't be synchronized with the real
+ * heads.
  *
  * After talking to a client, if it needs to process packets again,
- * the task must reactivate via s_task_activate. Note that tasks which do not
- * talk to clients have no way of reactivating themselves, so their pkt_handler
- * should never return with TASK_SLEEP.
+ * the task must reactivate via s_task_activate. Note that tasks
+ * which do not talk to clients have no way of reactivating
+ * themselves, so their pkt_handler should never return with
+ * TASK_SLEEP.
  *
- * The error, busy and active flags are handled by s_sig_hn and s_task_shim.
- * Tasks' handlers should only make use of s_task_activate, s_task_deactivate
- * and return codes (0, TASK_SLEEP or TASK_ERROR).
+ * The error, busy and active flags are handled by s_sig_hn and
+ * s_task_shim. Tasks' handlers should only make use of
+ * s_task_activate, s_task_deactivate and return codes (0,
+ * TASK_SLEEP or TASK_ERROR).
  *
  * Tasks are defined in a static global array, see THE TASK LIST.
  *
  * Note on zactor:
- * We start the task threads using zactor high-level class, which on UNIX
- * systems is a wrapper around pthread_create. zactor_new creates two PAIR zmq
- * sockets and creates a detached thread caliing a wrapper (s_thread_shim)
- * around the hanlder of our choice. It starts the actual handler (which we
- * pass to zactor_new), passing it its end of the pipe (a PAIR socket) as well
- * as a void* argument of our choice (again, given to zactor_new). The handler
- * must signal down the pipe using zsock_signal (doesn't matter the byte
- * status), since zactor_new will be waiting for this before it returns. The
- * handler must listen on the pipe for a terminating signal, which is sent by
- * the actor's destructor (called by zactor_destroy). Upon receiving this
- * signal the handler must return. It returns into s_thread_shim which signals
- * down the pipe before destroying that end of the pipe. The destructor must
- * wait for this signal before returning into zactor_destroy, which destroys
- * the other end of the pipe and returns to the caller. Hence zactor_destroy
- * acts analogously to pthread_cancel + pthread_join (for joinable threads).
- * The default destructor sends a single-frame message from the string "$TERM".
- * zactor_set_destructor, which can set a custom destructor is a DRAFT method
- * only available in latest commits, so we stick to the default one for now.
- * But since we want to deal with integer signals, and not string messages, we
- * define s_task_stop as a wrapper around zactor_destroy, which sends SIG_STOP
- * and then calls zactor_destroy to wait for the handler to return.
+ * We start the task threads using zactor high-level class, which on
+ * UNIX systems is a wrapper around pthread_create. zactor_new
+ * creates two PAIR zmq sockets and creates a detached thread
+ * caliing a wrapper (s_thread_shim) around the hanlder of our
+ * choice. It starts the actual handler (which we pass to
+ * zactor_new), passing it its end of the pipe (a PAIR socket) as
+ * well as a void* argument of our choice (again, given to
+ * zactor_new). The handler must signal down the pipe using
+ * zsock_signal (doesn't matter the byte status), since zactor_new
+ * will be waiting for this before it returns. The handler must
+ * listen on the pipe for a terminating signal, which is sent by the
+ * actor's destructor (called by zactor_destroy). Upon receiving
+ * this signal the handler must return. It returns into
+ * s_thread_shim which signals down the pipe before destroying that
+ * end of the pipe. The destructor must wait for this signal before
+ * returning into zactor_destroy, which destroys the other end of
+ * the pipe and returns to the caller. Hence zactor_destroy acts
+ * analogously to pthread_cancel + pthread_join (for joinable
+ * threads). The default destructor sends a single-frame message
+ * from the string "$TERM". zactor_set_destructor, which can set
+ * a custom destructor is a DRAFT method only available in latest
+ * commits, so we stick to the default one for now. But since we
+ * want to deal with integer signals, and not string messages, we
+ * define s_task_stop as a wrapper around zactor_destroy, which
+ * sends SIG_STOP and then calls zactor_destroy to wait for the
+ * handler to return.
  *
- * ----------------------------------------------------------------------------
- * ---------------------------------- TO DO -----------------------------------
- * ----------------------------------------------------------------------------
- * - Test with using more than one of the rings: how to get the NIC to fill the rest.
+ * -----------------------------------------------------------------
+ ------------------------------- TO DO -----------------------------
+ * -----------------------------------------------------------------
+ * - Test with using more than one of the rings: how to get the NIC
+ *   to fill the rest.
  * - Set CPU affinity for each task.
  * - Save-to-file:
- *   -- FIX: check if all filenames (-measurement.*) are valid (i.e. if
- *      symlink, point inside ROOT).
+ *   -- FIX: check if all filenames (-measurement.*) are valid (i.e.
+ *      if symlink, point inside ROOT).
  *   -- Set umask.
  *   -- Check filename for non-printable and non-ASCII characters.
  *   -- Return a string error in case of a failed request or job?
- *   -- FIX: why does the task count more missed packets than coordinator?
- *   -- Log REQ jobs in a global database such that it can be looked up by
- *      filename, client IP or time frame.
+ *   -- FIX: why does the task count more missed packets than
+ *      coordinator?
+ *   -- Log REQ jobs in a global database such that it can be looked
+ *      up by filename, client IP or time frame.
  *   -- Save the statistics as attributes in the hdf5 file.
  *   -- Generate a filename is none is given.
- * - For REQ/REP sockets: check what happens if client drops out before
- *   reply is sent (will the socket block)?
- * - Why does writing to file fail with "unhandled syscall" when running under
- *   valgrind? A: https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
- * - Print debugging stats every UPDATE_INTERVAL via the coordinator.
+ * - For REQ/REP sockets: check what happens if client drops out
+ *   before reply is sent (will the socket block)?
+ * - Why does writing to file fail with "unhandled syscall" when
+ *   running under valgrind? A:
+ *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
+ * - Print debugging stats every UPDATE_INTERVAL via the
+ *   coordinator.
  */
 
 #include "tesd_tasks_coordinator.h"
@@ -134,7 +152,7 @@ static int  s_task_next_ring (task_t* self, uint16_t* missed_p);
 static int  s_task_dispatch (task_t* self, zloop_t* loop,
 		uint16_t ring_id, uint16_t missed);
 
-/* ----------------------------- THE TASK LIST ----------------------------- */
+/* ------------------------ THE TASK LIST ----------------------- */
 
 #define NUM_TASKS 3
 static task_t s_tasks[] = {
@@ -166,9 +184,9 @@ static task_t s_tasks[] = {
 	}
 };
 
-/* ------------------------------------------------------------------------- */
-/* ---------------------------- COORDINATOR API ---------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ----------------------- COORDINATOR API ---------------------- */
+/* -------------------------------------------------------------- */
 
 int
 tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
@@ -278,7 +296,8 @@ tasks_get_heads (void)
 			{
 				for (int r = 0; r < NUM_RINGS; r++)
 				{
-					tes_ifring* rxring = tes_if_rxring (self->ifd, r);
+					tes_ifring* rxring =
+						tes_if_rxring (self->ifd, r);
 					heads[r] = tes_ifring_earlier_id (
 							rxring, heads[r],
 							self->heads[r]);
@@ -295,9 +314,9 @@ tasks_get_heads (void)
 	return (updated ? heads : NULL);
 }
 
-/* ------------------------------------------------------------------------- */
-/* ------------------------------- TASKS API ------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* -------------------------- TASKS API ------------------------- */
+/* -------------------------------------------------------------- */
 
 void
 task_activate (task_t* self)
@@ -322,7 +341,7 @@ task_deactivate (task_t* self)
 	if (self->automute)
 	{
 		int rc = zloop_reader (self->loop, self->frontend,
-				self->client_handler, self);
+			self->client_handler, self);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
@@ -336,14 +355,15 @@ task_deactivate (task_t* self)
 	return 0;
 }
 
-/* ------------------------------------------------------------------------- */
-/* -------------------------------- INTERNAL ------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* -------------------------- INTERNAL -------------------------- */
+/* -------------------------------------------------------------- */
 
 /*
- * Registered with each task's loop. Receives signals sent on behalf of the
- * coordinator (via tasks_wakeup or tasks_stop). On SIG_WAKEUP calls the task's
- * packet handler. On SIG_STOP terminates the task's loop. 
+ * Registered with each task's loop. Receives signals sent on behalf
+ * of the coordinator (via tasks_wakeup or tasks_stop). On
+ * SIG_WAKEUP calls the task's packet handler. On SIG_STOP
+ * terminates the task's loop. 
  */
 static int
 s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
@@ -353,8 +373,9 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	task_t* self = (task_t*) self_;
 	
 #ifdef ENABLE_FULL_DEBUG
-	/* Catch bugs by receiving a message and asserting it's a signal.
-	 * zsock_wait discards messages until a signal arrives. */
+	/* Catch bugs by receiving a message and asserting it's
+	 * a signal. zsock_wait discards messages until a signal
+	 * arrives. */
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
@@ -381,9 +402,9 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert (sig == SIG_WAKEUP);
 	dbg_assert ( ! self->busy );
 
-	/* We should never have received a WAKEUP if we are not active, but we
-	 * do, after a job is done. Signals must be queueing in the PAIR socket
-	 * and coming with a slight delay. */
+	/* We should never have received a WAKEUP if we are not active,
+	 * but we do, after a job is done. Signals must be queueing in
+	 * the PAIR socket and coming with a slight delay. */
 	if ( ! self->active )
 	{
 #ifdef ENABLE_FULL_DEBUG
@@ -409,8 +430,8 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		int next_ring_id = s_task_next_ring (self, &missed);
 
 		/*
-		 * We should never have received a WAKEUP if there are no new
-		 * packets, but sometimes we do, why?
+		 * We should never have received a WAKEUP if there are no
+		 * new packets, but sometimes we do, why?
 		 */
 		if (next_ring_id < 0)
 		{
@@ -425,13 +446,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 #endif
 
 		int rc = s_task_dispatch (self, loop, next_ring_id, missed);
-		/* In case packet hanlder or dispatcher need to know that it's the
-		 * first time after activation. */
+		/* In case packet hanlder or dispatcher need to know that
+		 * it's the first time after activation. */
 		self->just_activated = 0;
 
 		if (rc == TASK_SLEEP)
 		{
-			rc = task_deactivate (self); /* will return TASK_ERROR on error */
+			rc = task_deactivate (self);
 			break;
 		}
 
@@ -447,8 +468,8 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 }
 
 /*
- * Registered with the coordinator's loop. Receives SIG_DIED sent by a task and
- * terminates the coordinator's loop. 
+ * Registered with the coordinator's loop. Receives SIG_DIED sent by
+ * a task and terminates the coordinator's loop. 
  */
 static int
 s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
@@ -456,8 +477,9 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	dbg_assert (ignored == NULL);
 
 #ifdef ENABLE_FULL_DEBUG
-	/* Catch bugs by receiving a message and asserting it's a signal.
-	 * zsock_wait discards messages until a signal arrives. */
+	/* Catch bugs by receiving a message and asserting it's
+	 * a signal. zsock_wait discards messages until a signal
+	 * arrives. */
 	zmsg_t* msg = zmsg_recv (reader);
 	if (msg == NULL)
 	{
@@ -506,8 +528,8 @@ s_task_shim (zsock_t* pipe, void* self_)
 	
 	zloop_t* loop = zloop_new ();
 	self->loop = loop;
-	/* Only the coordinator thread should get interrupted, we wait for
-	 * SIG_STOP. */
+	/* Only the coordinator thread should get interrupted, we wait
+	 * for SIG_STOP. */
 #if (CZMQ_VERSION_MAJOR > 3)
 	zloop_set_nonstop (loop, 1);
 #else
@@ -543,14 +565,14 @@ s_task_shim (zsock_t* pipe, void* self_)
 	/* Register the readers */
 	if (self->automute)
 		assert (self->frontend != NULL &&
-				self->client_handler != NULL);
+			self->client_handler != NULL);
 
 	rc = zloop_reader (loop, pipe, s_sig_hn, self);
 	if (self->client_handler != NULL)
 	{
 		assert (self->frontend != NULL);
 		rc |= zloop_reader (loop, self->frontend,
-				self->client_handler, self);
+			self->client_handler, self);
 	}
 	if (rc != 0)
 	{
@@ -585,9 +607,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 cleanup:
 	/*
 	 * zactor_destroy waits for a signal from s_thread_shim (see DEV
-	 * NOTES). To avoid returning from zactor_destroy prematurely, we only
-	 * send SIG_DIED if we exited due to an error on our part (in one of
-	 * the handlers).
+	 * NOTES). To avoid returning from zactor_destroy prematurely,
+	 * we only send SIG_DIED if we exited due to an error on our
+	 * part (in one of the handlers).
 	 */
 	if (self->error)
 		zsock_signal (pipe, SIG_DIED);
@@ -625,7 +647,8 @@ cleanup:
 
 /*
  * Initializes a task_t and starts a new thread using zactor_new.
- * Registers the task's back end of the pipe with the coordinator's loop.
+ * Registers the task's back end of the pipe with the coordinator's
+ * loop.
  * Returns 0 on success, -1 on error.
  */
 static int
@@ -640,9 +663,10 @@ s_task_start (tes_ifdesc* ifd, task_t* self)
 	/* Start the thread, will block until the handler signals */
 	self->shim = zactor_new (s_task_shim, self);
 	assert (self->shim != NULL);
-	/* zactor_new does not check the signal, so no way to know if there was
-	 * an error. As a workaroung the task thread will send a second signal
-	 * when it is ready (or when it fails) and we wait for it here. */
+	/* zactor_new does not check the signal, so no way to know if
+	 * there was an error. As a workaroung the task thread will send
+	 * a second signal when it is ready (or when it fails) and we
+	 * wait for it here. */
 	int rc = zsock_wait (self->shim);
 	if (rc == SIG_DIED)
 	{
@@ -657,8 +681,8 @@ s_task_start (tes_ifdesc* ifd, task_t* self)
 }
 
 /*
- * This is to be used instead of zactor_destroy, as a workaround for not
- * setting a custom destructor.
+ * This is to be used instead of zactor_destroy, as a workaround for
+ * not setting a custom destructor.
  */
 static void
 s_task_stop (task_t* self)
@@ -693,8 +717,9 @@ static int s_task_next_ring (task_t* self, uint16_t* missed_p)
 		/*
 		 * If first time after activation, set the previous sequence
 		 * and choose the ring by comparing the heads of all rings.
-		 * Find the "smallest" frame sequence among the heads. Treat
-		 * seq. no. A as after seq. no.  B if B - A is > UINT16_MAX/2.
+		 * Find the "smallest" frame sequence among the heads.
+		 * Treat seq. no. A as ahead of seq. no. B if B - A
+		 * is > UINT16_MAX/2.
 		 */
 		uint16_t thres_gap = (uint16_t)~0 >> 1;
 		for (int r = 0; r < NUM_RINGS; r++)
@@ -703,7 +728,7 @@ static int s_task_next_ring (task_t* self, uint16_t* missed_p)
 			if (tes_ifring_tail (rxring) == self->heads[r])
 				continue;
 			tespkt* pkt = (tespkt*) tes_ifring_buf (
-					rxring, self->heads[r]);
+				rxring, self->heads[r]);
 			uint16_t cur_fseq = tespkt_fseq (pkt);
 			if (r == 0 || cur_fseq - self->prev_fseq > thres_gap)
 			{
@@ -717,20 +742,20 @@ static int s_task_next_ring (task_t* self, uint16_t* missed_p)
 	else
 	{
 		/*
-		 * Otherwise, choose the ring based on prev_seq. Allowing for
-		 * lost frames, simply take the ring for which the task's head
-		 * packet is closest in sequence to the last seen frame
-		 * sequence.
+		 * Otherwise, choose the ring based on prev_seq. Allowing
+		 * for lost frames, simply take the ring for which the
+		 * task's head packet is closest in sequence to the last
+		 * seen frame sequence.
 		 */
 		uint16_t missed = ~0;  /* will hold the jump in frame seq,
-					* initialize to UINT16_MAX */
+		                        * initialize to UINT16_MAX */
 		for (int r = 0; r < NUM_RINGS; r++)
 		{
 			tes_ifring* rxring = tes_if_rxring (self->ifd, r);
 			if (tes_ifring_tail (rxring) == self->heads[r])
 				continue;
 			tespkt* pkt = (tespkt*) tes_ifring_buf (
-					rxring, self->heads[r]);
+				rxring, self->heads[r]);
 			uint16_t cur_fseq = tespkt_fseq (pkt);
 			uint16_t fseq_gap = cur_fseq - self->prev_fseq - 1;
 			if (fseq_gap <= missed)
@@ -749,9 +774,9 @@ static int s_task_next_ring (task_t* self, uint16_t* missed_p)
 }
 
 /*
- * Loops over the given ring until either reaching the tail or seeing
- * a discontinuity in frame sequence. For each buffer calls the task's
- * pkt_handler.
+ * Loops over the given ring until either reaching the tail or
+ * seeing a discontinuity in frame sequence. For each buffer calls
+ * the task's pkt_handler.
  * Returns 0 if all packets until the tail are processed.
  * Returns TASK_SLEEP or TASK_ERR if pkt_handler does so.
  * Returns ?? if a jump in frame sequence is seen (TO DO).
@@ -771,10 +796,10 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	if (missed)
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
-				rxring, self->heads[ring_id]);
+			rxring, self->heads[ring_id]);
 		logmsg (0, LOG_DEBUG,
-				"Dispatching ring %hu: missed %hu at frame %hu",
-				ring_id, missed, tespkt_fseq (pkt));
+			"Dispatching ring %hu: missed %hu at frame %hu",
+			ring_id, missed, tespkt_fseq (pkt));
 	}
 #endif
 #endif
@@ -789,7 +814,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #endif
 	for ( ; self->heads[ring_id] != tes_ifring_tail (rxring);
 		self->heads[ring_id] = tes_ifring_following (
-				rxring, self->heads[ring_id]) )
+			rxring, self->heads[ring_id]) )
 	{
 		/* FIX: TO DO: return code for a jump in fseq */
 		// if (fseq_gap > 0)
@@ -810,7 +835,8 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 				"Packet invalid, error is 0x%x", err);
 		}
 #endif
-		uint16_t len = tes_ifring_len (rxring, self->heads[ring_id]);
+		uint16_t len =
+			tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t flen = tespkt_flen (pkt);
 		if (flen > len)
 		{
@@ -834,13 +860,13 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		self->dbg_stats.pkts.missed += fseq_gap;
 #endif
 
-		int rc = self->pkt_handler (loop, pkt, flen, fseq_gap, err, self);
+		int rc = self->pkt_handler (loop,
+			pkt, flen, fseq_gap, err, self);
 
 		self->prev_fseq = cur_fseq;
 		if (tespkt_is_mca (pkt))
 			self->prev_pseq_mca = tespkt_pseq (pkt);
-		else if (tespkt_is_trace (pkt) &&
-				! tespkt_is_trace_dp (pkt))
+		else if (tespkt_is_trace (pkt) && ! tespkt_is_trace_dp (pkt))
 			self->prev_pseq_tr = tespkt_pseq (pkt);
 
 		if (rc != 0)

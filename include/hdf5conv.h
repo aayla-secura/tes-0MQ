@@ -13,8 +13,8 @@
  * }
  *
  * Each dataset corresponds to a file (or part of a file).
- * Measurement group and dataset files and names are given in a struct
- * hdf5_conv_req_t.
+ * Measurement group and dataset files and names are given in
+ * a struct hdf5_conv_req_t.
  */
 
 #ifndef __HDF5CONV_H__INCLUDED__
@@ -29,11 +29,12 @@
  * 1) If filename is NULL, copy directly from buffer.
  *    Length and offset must then be non-negative.
  *
- * 2) If buffer is NULL, open filename and mmap it. Will close the file,
- *    unmap and nullify buffer at the end.
+ * 2) If buffer is NULL, open filename and mmap it. Will close the
+ *    file, unmap and nullify buffer at the end.
  *    If offset < 0 it is takes with respect to EOF.
  *    If length < 0 or extends beyond EOF, copy until EOF.
- *    If length == 0 or offset extends beyond EOF, the dataset will be empty.
+ *    If length == 0 or offset extends beyond EOF, the dataset will
+ *    be empty.
  *    The value of offset and length after the call is unspecified.
  */
 struct hdf5_dset_desc_t
@@ -53,7 +54,7 @@ struct hdf5_conv_req_t
 	uint8_t num_dsets; /* how many elements in datasets array */
 	bool    ovrwt;     /* overwrite entire hdf5 file */
 	bool    async;     /* return after opening files,
-			    * convert in background */
+	                    * convert in background */
 };
 
 /*

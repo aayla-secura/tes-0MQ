@@ -1,6 +1,6 @@
 /*
- * Actions on all tasks used by coordinator (tesd.c). Definitions are in
- * tesd_tasks.c
+ * Actions on all tasks used by coordinator (tesd.c). Definitions
+ * are in tesd_tasks.c
  */
 
 #ifndef __TESD_TASKS_COORDINATOR_H__INCLUDED__
@@ -11,16 +11,16 @@
 #include <czmq.h>
 
 /*
- * Start the tasks and if c_loop is not NULL, register a generic reader for
- * each task.
+ * Start the tasks and if c_loop is not NULL, register a generic
+ * reader for each task.
  * Returns 0 on success, -1 on error.
  */
 int  tasks_start (tes_ifdesc* ifd, zloop_t* c_loop);
 
 /*
- * Register a generic reader with the loop. The reader will listen to all tasks
- * and terminate the loop when a task dies. This is called by tasks_start if
- * a non-NULL zloop_t* is passed.
+ * Register a generic reader with the loop. The reader will listen
+ * to all tasks and terminate the loop when a task dies. This is
+ * called by tasks_start if a non-NULL zloop_t* is passed.
  */
 int  tasks_read (zloop_t* loop);
 

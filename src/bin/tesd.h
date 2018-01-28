@@ -33,7 +33,7 @@
 #  define dbg_assert(...)
 #endif
 
-#define TES_MCASIZE_BUG /* FIX: overflow bug, last_bin is too large */
+#define TES_MCASIZE_BUG /* overflow bug, last_bin is too large */
 
 #include "net/tespkt.h"
 

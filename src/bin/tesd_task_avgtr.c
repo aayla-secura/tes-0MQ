@@ -7,7 +7,7 @@
 #define TAVGTR_REQ_PIC       "4"
 #define TAVGTR_REP_PIC_OK   "1b"
 #define TAVGTR_REP_PIC_FAIL  "1"
-#define TAVGTR_MAXSIZE 65528U // highest 16-bit number that is a multiple of 8 bytes
+#define TAVGTR_MAXSIZE 65528U // highest 16-bit number multiple of 8
 
 /*
  * Data for currently built average trace.
@@ -17,15 +17,15 @@ struct s_task_avgtr_data_t
 	int           timer;     // returned by zloop_timer
 	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_size;  // number of received bytes so far
-	bool          recording; // discard all frames until the first header
+	bool          recording; // discard all frames until next header
 	unsigned char buf[TAVGTR_MAXSIZE];
 };
 
 static zloop_timer_fn  s_task_avgtr_timeout_hn;
 
-/* ------------------------------------------------------------------------- */
-/* -------------------------------- HELPERS -------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* --------------------------- HELPERS -------------------------- */
+/* -------------------------------------------------------------- */
 
 /*
  * Deactivates the task, enables polling on the client reader, sends
@@ -46,14 +46,14 @@ s_task_avgtr_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 	logmsg (0, LOG_INFO,
 		"Average trace timed out");
 	zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-			TAVGTR_REQ_TOUT);
+		TAVGTR_REQ_TOUT);
 
 	return 0;
 }
 
-/* ------------------------------------------------------------------------- */
-/* ---------------------------------- API ---------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ----------------------------- API ---------------------------- */
+/* -------------------------------------------------------------- */
 
 int
 task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
@@ -62,13 +62,13 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	task_t* self = (task_t*) self_;
 
-	uint32_t timeout;	
+	uint32_t timeout;    
 
 	int rc = zsock_recv (reader, TAVGTR_REQ_PIC, &timeout);
 	if (rc == -1)
-	{ /* would also return -1 if picture contained a pointer (p) or a null
-	   * frame (z) but message received did not match this signature; this
-	   * is irrelevant in this case */
+	{ /* would also return -1 if picture contained a pointer (p) or
+	   * a null frame (z) but message received did not match this
+	   * signature; this is irrelevant in this case */
 		logmsg (0, LOG_DEBUG, "Receive interrupted");
 		return TASK_ERROR;
 	}
@@ -79,7 +79,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
 		zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-				TAVGTR_REQ_INV);
+			TAVGTR_REQ_INV);
 		return 0;
 	}
 
@@ -101,8 +101,8 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert ( ! trace->recording );
 	trace->timer = tid;
 
-	/* Disable polling on the reader until the job is done. Wakeup packet
-	 * handler. */
+	/* Disable polling on the reader until the job is done. Wakeup
+	 * packet handler. */
 	task_activate (self);
 
 	return 0;
@@ -110,9 +110,9 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 /*
  * Accumulates average trace frames. As soon as a complete trace is
- * recorded, it is sent to the client, polling on the client reader is
- * re-enabled and the timer is canceled. It aborts the whole trace if
- * a relevant frame is lost, and waits for the next one.
+ * recorded, it is sent to the client, polling on the client reader
+ * is re-enabled and the timer is canceled. It aborts the whole
+ * trace if a relevant frame is lost, and waits for the next one.
  */
 int
 task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
@@ -172,7 +172,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	trace->cur_size += paylen;
 	if (trace->cur_size == trace->size)
 	{
-	       	rep = TAVGTR_REQ_OK;
+		rep = TAVGTR_REQ_OK;
 		goto done;
 	}
 
@@ -189,14 +189,14 @@ done:
 			logmsg (0, LOG_INFO,
 				"Discarded average trace");
 			zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-					TAVGTR_REQ_ERR);
+				TAVGTR_REQ_ERR);
 			break;
 		case TAVGTR_REQ_OK:
 			logmsg (0, LOG_INFO,
 				"Average trace complete");
 			zsock_send (self->frontend, TAVGTR_REP_PIC_OK,
-					TAVGTR_REQ_OK, &trace->buf,
-					trace->size);
+				TAVGTR_REQ_OK, &trace->buf,
+				trace->size);
 			break;
 		default:
 			assert (0);

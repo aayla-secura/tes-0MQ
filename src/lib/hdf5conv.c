@@ -24,11 +24,12 @@
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */
 
-static hid_t s_get_grp  (hid_t l_id, const char* group, bool ovrwt);
-static int   s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id);
-static int   s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id);
-static int   s_hdf5_init   (void* creq_data_);
-static int   s_hdf5_write  (void* creq_data_);
+static hid_t s_get_grp (hid_t l_id, const char* group, bool ovrwt);
+static int s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id);
+static int s_create_dset (const struct hdf5_dset_desc_t* ddesc,
+		hid_t g_id);
+static int s_hdf5_init   (void* creq_data_);
+static int s_hdf5_write  (void* creq_data_);
 
 struct s_creq_data_t
 {
@@ -37,13 +38,13 @@ struct s_creq_data_t
 	hid_t file_id;
 };
 
-/* ------------------------------------------------------------------------- */
-/* -------------------------------- HELPERS -------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* --------------------------- HELPERS -------------------------- */
+/* -------------------------------------------------------------- */
 
 /*
- * Open or create <group> relative to l_id. If ovrwt is true and group
- * exists, it is deleted first.
+ * Open or create <group> relative to l_id. If ovrwt is true and
+ * group exists, it is deleted first.
  * Returns group id on success, -1 on error.
  */
 static hid_t
@@ -62,13 +63,13 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 	}
 	else if (gstat > 0 && ! ovrwt)
 	{ /* open the group */
-		g_id = H5Gopen (l_id, group, H5P_DEFAULT);	
+		g_id = H5Gopen (l_id, group, H5P_DEFAULT);    
 	}
 	else
 	{ /* create the group */
 		if (gstat > 0)
 		{ /* delete it first */
-			herr_t err = H5Ldelete (l_id, group, H5P_DEFAULT);	
+			herr_t err = H5Ldelete (l_id, group, H5P_DEFAULT);    
 			if (err < 0)
 			{
 				logmsg (0, LOG_ERR,
@@ -97,15 +98,15 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 /*
  * Open dataset file, mmap it and close the file descriptor.
  * Saves the address of the mapping in ddesc->buffer.
- * If ddesc->offset < 0 (refers to EOF), recalculates offset w.r.t. BOF
- * and saves it.
+ * If ddesc->offset < 0 (refers to EOF), recalculates offset w.r.t.
+ * BOF and saves it.
  * If ddesc->length < 0 or extends beyond EOF, calculates length and
  * saves it.
- * If length == 0 or offset extends beyond EOF, ddesc->buffer will be
- * NULL.
- * On success buffer may be NULL if dataset should be empty, in which case
- * length is ensured to be 0. Otherwise length is ensured to be positive and
- * offset---to be non-negative.
+ * If length == 0 or offset extends beyond EOF, ddesc->buffer will
+ * be NULL.
+ * On success buffer may be NULL if dataset should be empty, in
+ * which case length is ensured to be 0. Otherwise length is ensured
+ * to be positive and offset---to be non-negative.
  * Returns 0 on success, -1 on error.
  */
 static int
@@ -159,11 +160,11 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 	if (ddesc->length < 0 || ddesc->length > maxlength)
 		ddesc->length = maxlength;
 
-	/* mmap from BOF, since mmap requires the offset be a multiple of
-	 * page size. */
+	/* mmap from BOF, since mmap requires the offset be a multiple
+	 * of page size. */
 	assert (ddesc->length > 0);
 	void* data = mmap (NULL, ddesc->offset + ddesc->length,
-			PROT_READ, MAP_PRIVATE, fd, 0);
+		PROT_READ, MAP_PRIVATE, fd, 0);
 	close (fd);
 	if (data == (void*)-1)
 	{
@@ -231,7 +232,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 
 	/* Write the data. */
 	assert (ddesc->buffer != NULL);
- 	assert (ddesc->offset >= 0);
+	 assert (ddesc->offset >= 0);
 	herr_t err = H5Dwrite (dset, DATATYPE, H5S_ALL,
 		H5S_ALL, H5P_DEFAULT, ddesc->buffer + ddesc->offset);
 	if (err < 0)
@@ -258,7 +259,8 @@ s_hdf5_init (void* creq_data_)
 {
 	assert (creq_data_ != NULL);
 
-	struct s_creq_data_t* creq_data = (struct s_creq_data_t*)creq_data_;
+	struct s_creq_data_t* creq_data =
+		(struct s_creq_data_t*)creq_data_;
 	struct hdf5_conv_req_t* creq = creq_data->creq;
 
 	/* Check if hdf5 file exists. */
@@ -274,10 +276,10 @@ s_hdf5_init (void* creq_data_)
 	else
 	{ /* create it */
 		if (fok == -1 && errno != ENOENT)
-		{ /* the calling process ensures the filepath should be in an
-		   * existing directory (same as the capture files) */
+		{ /* the calling process ensures the filepath should be in
+		   * an existing directory (same as the capture files) */
 			logmsg (errno, LOG_ERR,
-			 	"Unexpected error accessing hdf5 file %s",
+				 "Unexpected error accessing hdf5 file %s",
 				creq->filename);
 			return -1;
 		}
@@ -353,7 +355,8 @@ s_hdf5_write (void* creq_data_)
 {
 	assert (creq_data_ != NULL);
 
-	struct s_creq_data_t* creq_data = (struct s_creq_data_t*)creq_data_;
+	struct s_creq_data_t* creq_data =
+		(struct s_creq_data_t*)creq_data_;
 
 	/* Create the datasets. */
 	int rc = 0;
@@ -373,9 +376,9 @@ s_hdf5_write (void* creq_data_)
 	return rc;
 }
 
-/* ------------------------------------------------------------------------- */
-/* ---------------------------------- API ---------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ----------------------------- API ---------------------------- */
+/* -------------------------------------------------------------- */
 
 int
 hdf5_conv (struct hdf5_conv_req_t* creq)
@@ -421,7 +424,7 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 	if (creq->async)
 	{
 		rc = fork_and_run (s_hdf5_init, s_hdf5_write,
-				&creq_data, INIT_TIMEOUT);
+			&creq_data, INIT_TIMEOUT);
 	}
 	else
 	{
@@ -439,7 +442,7 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 			if (ddesc->buffer != NULL)
 			{
 				munmap (ddesc->buffer,
-						ddesc->offset + ddesc->length);
+					ddesc->offset + ddesc->length);
 				ddesc->buffer = NULL;
 			}
 		}

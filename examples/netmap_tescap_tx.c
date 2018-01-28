@@ -108,8 +108,8 @@ main (int argc, char** argv)
 	int looped = 0;
 	uint64_t p = 0;
 	uint64_t mcas = 0, ticks = 0, peaks = 0, areas = 0, pulses = 0,
-		     traces = 0, trace_sgls = 0, trace_avgs = 0, trace_dps = 0,
-		     trace_dp_trs = 0;
+		 traces = 0, trace_sgls = 0, trace_avgs = 0, trace_dps = 0,
+		 trace_dp_trs = 0;
 	uint64_t missed = 0, invalid = 0;
 	uint16_t prev_fseq, mca_n = 0, trace_n = 0;
 
@@ -190,7 +190,7 @@ main (int argc, char** argv)
 		assert (len <= MAX_TES_FRAME_LEN);
 		assert (len > TES_HDR_LEN);
 		rc = read (capfd, (char*)&pkt + TES_HDR_LEN,
-				len - TES_HDR_LEN);
+			len - TES_HDR_LEN);
 		if (rc == -1)
 		{
 			perror ("Could not read in payload");
@@ -218,8 +218,8 @@ main (int argc, char** argv)
 		rc = nm_inject (nmd, &pkt, len);
 		if (!rc)
 		{
-		        fprintf (stderr, "Cannot inject packet\n");
-		        break;
+			fprintf (stderr, "Cannot inject packet\n");
+			break;
 		}
 
 		if (looped > 0)
@@ -294,9 +294,9 @@ main (int argc, char** argv)
 #ifndef QUIET
 				off_t pos = lseek (capfd, 0, SEEK_CUR);
 				printf ("Packet no. %lu (ends at offset 0x%lx): "
-						"new event stream for type %s, "
-						"previous count was %hu\n",
-						p, pos, ptype, *prev_n);
+					"new event stream for type %s, "
+					"previous count was %hu\n",
+					p, pos, ptype, *prev_n);
 #endif
 				*prev_n = 0;
 			}

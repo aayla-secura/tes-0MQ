@@ -238,12 +238,12 @@ main (void)
 	/* Get the ring (we only use one) */
 	assert (gobj.nmd->first_rx_ring == gobj.nmd->last_rx_ring);
 	struct netmap_ring* rxring = NETMAP_RXRING (
-			gobj.nmd->nifp, gobj.nmd->cur_rx_ring);
+		gobj.nmd->nifp, gobj.nmd->cur_rx_ring);
 
 #ifdef SAVE_FILE
 	/* Open the file */
 	gobj.save_fd = open (SAVE_FILE, O_CREAT | O_RDWR,
-			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (gobj.save_fd == -1)
 		raise (SIGTERM);
 	rc = posix_fallocate (gobj.save_fd, 0, MAX_FSIZE);

@@ -6,10 +6,10 @@
  *   - implement optional dropping of privileges
  * 
  * NOTES:
- *   - valgrind temporarily increases the current soft limit and opens some file
- *     descriptors, then brings it back down. If we iterate up to the hard
- *     limit, we run into trouble when running via valgrind. Use the soft limit
- *     instead
+ *   - valgrind temporarily increases the current soft limit and
+ *     opens some file descriptors, then brings it back down. If we
+ *     iterate up to the hard limit, we run into trouble when
+ *     running via valgrind. Use the soft limit instead
  */
 
 #include "daemon_ng.h"
@@ -32,7 +32,7 @@
 #include <assert.h>
 
 #define MAX_MSG_LEN    512
-#define MIN_ERR_LEN     10 // no point in printing the error if less space
+#define MIN_ERR_LEN     10
 #define MAX_LOG_ID_LEN  32
 
 #define DAEMON_OK_MSG  "0"
@@ -49,9 +49,9 @@ static int s_close_open_fds (rlim_t max_fd);
 static int s_wait_sig (int pipe_fd, int timeout_sec);
 static int s_send_sig (int pipe_fd, char* sig);
 
-/* ------------------------------------------------------------------------- */
-/* -------------------------------- HELPERS -------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* --------------------------- HELPERS -------------------------- */
+/* -------------------------------------------------------------- */
 
 /*
  * Try to get the soft limit on fd numbers.
@@ -74,8 +74,8 @@ s_get_max_fd (void)
 }
 
 /*
- * Attempt to find and close all open file descriptors (except stdin, stdout,
- * stderr) up to the soft limit.
+ * Attempt to find and close all open file descriptors (except
+ * stdin, stdout, stderr) up to the soft limit.
  * Returns 0 on success, -1 on error.
  */
 static int
@@ -87,8 +87,8 @@ s_close_open_fds (rlim_t max_fd)
 	int dirent_no;
 	int rc;
 
-	/* /dev/fd should exist on both Linux and FreeBSD, otherwise check if
-	 * procfs is enabled and provides it. */
+	/* /dev/fd should exist on both Linux and FreeBSD, otherwise
+	 * check if procfs is enabled and provides it. */
 	self_fds_dir = opendir ("/dev/fd");
 	if (!self_fds_dir)
 	{
@@ -102,8 +102,8 @@ s_close_open_fds (rlim_t max_fd)
 		return -1;
 	}
 
-	/* Iterate through all fds in the directory and close all but stdin,
-	 * stdout, stderr and the directory's fd. */
+	/* Iterate through all fds in the directory and close all but
+	 * stdin, stdout, stderr and the directory's fd. */
 	dir_no = dirfd (self_fds_dir);
 	errno = 0; /* reset for readdir */
 
@@ -151,8 +151,8 @@ s_close_open_fds (rlim_t max_fd)
 }
 
 /*
- * Closes all file descriptors (except stdin, stdout, stderr) up to the soft
- * limit. Calls s_close_open_fds.
+ * Closes all file descriptors (except stdin, stdout, stderr) up to
+ * the soft limit. Calls s_close_open_fds.
  */
 static void
 s_close_nonstd_fds (void)
@@ -174,7 +174,8 @@ s_close_nonstd_fds (void)
 	if (s_close_open_fds (max_fd) == 0)
 		return;
 
-	/* A fallback method: try to close all fd numbers up to some maximum. */
+	/* A fallback method: try to close all fd numbers up to some
+	 * maximum. */
 	logmsg (0, LOG_DEBUG, "Using fallback method");
 	for (cur_fd = 0; cur_fd < max_fd; cur_fd++)
 	{
@@ -266,9 +267,9 @@ s_send_sig (int pipe_fd, char* sig)
 	return ((n == 1) ? 0 : -1);
 }
 
-/* ------------------------------------------------------------------------- */
-/* ---------------------------------- API ---------------------------------- */
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
+/* ----------------------------- API ---------------------------- */
+/* -------------------------------------------------------------- */
 
 void
 logmsg (int errnum, int priority, const char* format, ...)
@@ -294,7 +295,8 @@ logmsg (int errnum, int priority, const char* format, ...)
 		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
 #else
 		/* GNU version, returns it and MAY save it in msg */
-		char* err = strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
+		char* err = strerror_r (errnum,
+			msg + len, MAX_MSG_LEN - len);
 		if (err != NULL && err != msg + len)
 			strncpy (msg + len, err, MAX_MSG_LEN - len);
 #endif
@@ -305,8 +307,7 @@ logmsg (int errnum, int priority, const char* format, ...)
 	else
 	{
 		FILE* outbuf;
-		if (( priority == LOG_DEBUG ) ||
-				( ! is_verbose && priority < 5 ))
+		if ((priority == LOG_DEBUG) || (! is_verbose && priority < 5))
 			outbuf = stderr;
 		else
 			outbuf = stdout;
@@ -356,7 +357,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 				"signal (%d, SIG_DFL)", sig);
 	}
 
-	/* We do not sanitize environment, that is the job of the caller. */
+	/* Do not sanitize environment, that is the job of the caller. */
 
 	/* Fork for the first time. */
 	pid_t pid = fork ();

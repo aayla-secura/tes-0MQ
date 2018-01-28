@@ -25,41 +25,44 @@
  * 
  * 
  *
- * ----------------------------------------------------------------------------
- * -------------------------------- DEV NOTES ---------------------------------
- * ----------------------------------------------------------------------------
- * When debugging we use assert throughout to catch bugs. Normally these
- * statements should never be reached regardless of user input. Other errors
- * are handled gracefully with messages to clients and/or syslog or stderr/out.
- * dbg_assert is used in functions which are called very often (e.g. handlers)
- * and is a no-op unless ENABLE_DEBUG is defined.
+ * -----------------------------------------------------------------
+ * --------------------------- DEV NOTES ---------------------------
+ * -----------------------------------------------------------------
+ * When debugging we use assert throughout to catch bugs. Normally
+ * these statements should never be reached regardless of user
+ * input. Other errors are handled gracefully with messages to
+ * clients and/or syslog or stderr/out. dbg_assert is used in
+ * functions which are called very often (e.g. handlers) and is
+ * a no-op unless ENABLE_DEBUG is defined.
  *
- * There is a separate thread for each "task" (see tesd_tasks.c). Tasks are
- * started with tasks_start. Each task has read-only access to rings (they
- * cannot modify the cursor or head) and each task keeps its own head, which is
- * visible by the coordinator (tesd.c).
+ * There is a separate thread for each "task" (see tesd_tasks.c).
+ * Tasks are started with tasks_start. Each task has read-only
+ * access to rings (they cannot modify the cursor or head) and each
+ * task keeps its own head, which is visible by the coordinator
+ * (tesd.c).
  *
- * After receiving new packets, the coordinator sets the true cursor and head
- * to the per-task head which lags behind all others (tasks_head).
- * Then, to each task which is waiting for more packets it sends a SIG_WAKEUP
- * (tasks_wakeup). 
+ * After receiving new packets, the coordinator sets the true cursor
+ * and head to the per-task head which lags behind all others
+ * (tasks_head). Then, to each task which is waiting for more
+ * packets it sends a SIG_WAKEUP (tasks_wakeup). 
  *
- * Tasks receiving SIG_WAKEUP must process packets, advancing their head until
- * there are no more packets or until they are no longer interested (in which
- * case they set an 'active' boolean to false and will no longer receive
- * SIG_WAKEUP).
+ * Tasks receiving SIG_WAKEUP must process packets, advancing their
+ * head until there are no more packets or until they are no longer
+ * interested (in which case they set an 'active' boolean to false
+ * and will no longer receive SIG_WAKEUP).
  *
- * The coordinator must register a generic task reader with its zloop, so that
- * when tasks encounter an error the coordinator's loop is terminated. The
- * signal handler is generic, internal to tesd_tasks. Coordinator simply passes
- * the loop to tasks_start and after exiting from its loop (for whatever reason)
- * calls tasks_stop to shutdown all tasks cleanly.
+ * The coordinator must register a generic task reader with its
+ * zloop, so that when tasks encounter an error the coordinator's
+ * loop is terminated. The signal handler is generic, internal to
+ * tesd_tasks. Coordinator simply passes the loop to tasks_start and
+ * after exiting from its loop (for whatever reason) calls
+ * tasks_stop to shutdown all tasks cleanly.
  *
  * Note: bool type and true/false macros are ensured by CZMQ.
  *
- * ----------------------------------------------------------------------------
- * ---------------------------------- TO DO -----------------------------------
- * ----------------------------------------------------------------------------
+ * -----------------------------------------------------------------
+ * ----------------------------- TO DO -----------------------------
+ * -----------------------------------------------------------------
  * - chroot and drop privileges.
  */
 
@@ -121,12 +124,14 @@ struct data_t
 };
 
 static void s_usage (const char* self);
-static int  s_prepare_if (const char* ifname_full);
-static int  s_print_stats (zloop_t* loop, int timer_id, void* stats_);
-static int  s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_);
-static int  s_coordinator_body (const char* ifname, long int stat_period);
+static int s_prepare_if (const char* ifname_full);
+static int s_print_stats (zloop_t* loop, int timer_id, void* stats_);
+static int s_new_pkts_hn (zloop_t* loop,
+		zmq_pollitem_t* pitem, void* data_);
+static int s_coordinator_body (const char* ifname,
+		long int stat_period);
 
-/* ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- */
 
 static void
 s_usage (const char* self)
@@ -134,16 +139,16 @@ s_usage (const char* self)
 	fprintf (stderr,
 		"Usage: %s [options]\n\n"
 		"Options:\n"
-		"    -p <file>            Write pid to file <file>.\n"
-		"                         Only in daemon mode.\n"
-		"                         Defaults to "PIDFILE"\n"
-		"    -i <if>              Read packets from <if> interface\n"
-		"                         Defaults to "TES_IFNAME"\n"
-		"    -f                   Run in foreground\n"
-		"    -u <n>               Print statistics every <n> seconds\n"
-		"                         Set to 0 to disable. Default is %d\n"
-		"                         in foreground and 0 in daemon mode\n"
-		"    -v                   Print debugging messages\n",
+		"    -p <file>         Write pid to file <file>.\n"
+		"                      Only in daemon mode.\n"
+		"                      Defaults to "PIDFILE"\n"
+		"    -i <if>           Read packets from <if> interface\n"
+		"                      Defaults to "TES_IFNAME"\n"
+		"    -f                Run in foreground\n"
+		"    -u <n>            Print statistics every <n> seconds\n"
+		"                      Set to 0 to disable. Default is %d\n"
+		"                      in foreground and 0 in daemon mode\n"
+		"    -v                Print debugging messages\n",
 		self, UPDATE_INTERVAL
 		);
 	exit (EXIT_FAILURE);
@@ -257,7 +262,7 @@ s_prepare_if (const char* ifname_full)
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
-				"Could not put the interface in promiscuous mode");
+				"Could not put interface in promiscuous mode");
 			return -1;
 		}
 		/* check */
@@ -265,13 +270,13 @@ s_prepare_if (const char* ifname_full)
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
-				"Could not get the interface's state");
+				"Could not get interface's state");
 			return -1;
 		}
 		if (! (ifr.ifr_flags & IFF_PROMISC))
 		{
 			logmsg (errno, LOG_ERR,
-				"Could not put the interface in promiscuous mode");
+				"Could not put interface in promiscuous mode");
 			return -1;
 		}
 	}
@@ -317,7 +322,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 			stats->total.missed,
 			stats->total.polled,
 			stats->total.skipped
-		       );
+		   );
 	}
 	else
 	{ /* called by zloop's timer */
@@ -333,7 +338,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 			(stats->latest.polled) ?
 			stats->latest.received / stats->latest.polled : 0,
 			(double) stats->latest.received / tdelta
-		       );
+		   );
 	}
 
 	memcpy (&stats->last_update, &tnow, sizeof (struct timeval));
@@ -408,15 +413,20 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 		dbg_assert (pkt != NULL);
 		uint16_t fseqB = tespkt_fseq (pkt);
 
-		tes_ifring_goto_buf (rxring, new_head); /* cursor -> new head */
+		/* cursor -> new head */
+		tes_ifring_goto_buf (rxring, new_head);
 		dbg_assert (tes_ifring_cur (rxring) == new_head);
-		uint32_t num_new = tes_ifring_done (rxring); /* cursor - old head */
+		/* cursor - old head */
+		uint32_t num_new = tes_ifring_done (rxring);
 
 		data->stats.latest.received += num_new;
-		data->stats.latest.missed += (uint16_t)(fseqB - fseqA - num_new + 1);
+		data->stats.latest.missed += (uint16_t)(
+			fseqB - fseqA - num_new + 1);
 
-		tes_ifring_release_done_buf (rxring); /* head -> new head */
-		dbg_assert (tes_ifring_head (rxring) == tes_ifring_cur (rxring));
+		/* head -> new head */
+		tes_ifring_release_done_buf (rxring);
+		dbg_assert (tes_ifring_head (rxring) ==
+			tes_ifring_cur (rxring));
 	}
 
 	if (skipped)
@@ -437,13 +447,14 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	memset (&data, 0, sizeof (data));
 
 	/*
-	 * (struct nm_desc).nifp->ni_name contains the true name as opened,
-	 * e.g. if the interface is a persistent vale port, it will contain
-	 * vale*:<port> even if nm_open was passed netmap:<port>. (struct
-	 * nm_desc).req.nr_name contains the name of the interface passed to
-	 * nm_open minus the ring specification and minus optional netmap:
-	 * prefix, even if interface is a vale port. So we first open it and
-	 * then pass nifp->ni_name to s_prepare_if.
+	 * (struct nm_desc).nifp->ni_name contains the true name as
+	 * opened, e.g. if the interface is a persistent vale port, it
+	 * will contain vale*:<port> even if nm_open was passed
+	 * netmap:<port>. (struct nm_desc).req.nr_name contains the name
+	 * of the interface passed to nm_open minus the ring
+	 * specification and minus optional netmap: prefix, even if
+	 * interface is a vale port. So we first open it and then pass
+	 * nifp->ni_name to s_prepare_if.
 	 */
 	/* Open the interface. */
 	data.ifd = tes_if_open (ifname_full, NULL, 0, 0);
@@ -464,8 +475,7 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 		goto cleanup; /* s_prepare_if will print the error */
 
 
-	/* Start the tasks and register the readers. Tasks are initialized as
-	 * inactive. */
+	/* Start the tasks and register the readers. */
 	zloop_t* loop = zloop_new ();
 	rc = tasks_start (data.ifd, loop);
 	if (rc)

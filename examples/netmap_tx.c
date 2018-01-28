@@ -35,7 +35,7 @@
 
 #define NM_IFNAME "vale0:vi0"
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
-			* signal handler */
+                        * signal handler */
 
 
 #define MAX_MCA_FRAMES        45
@@ -150,7 +150,7 @@ static struct
 
 		int first_free; /* lowest unallocated index */
 		int cur;        /* used by next_pkt to walk through all created
-				 * in a circular fashion */
+		                 * in a circular fashion */
 		u_int32_t last_sent;
 		u_int32_t sent;
 	} pkts;
@@ -171,7 +171,7 @@ tespkt* next_pkt (void)
 	} while (pkt == NULL);
 
 	set_fseq (pkt, gobj.pkts.sent); /* .sent is incremented
-						   * before sending */
+	                                 * before sending */
 	return pkt;
 }
 
@@ -227,8 +227,8 @@ new_tespkt (void)
 
 static tespkt*
 new_mca_pkt (int seq, int nbins,
-		      int num_all_bins,
-		      struct tespkt_mca_flags* flags)
+			  int num_all_bins,
+			  struct tespkt_mca_flags* flags)
 {
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
@@ -356,9 +356,9 @@ new_pulse_pkt (int num_peaks, struct tespkt_event_flags* flags)
 
 static tespkt*
 new_trace_sgl_pkt (int num_peaks,
-		    int num_samples,
-		    struct tespkt_trace_flags* tr_flags,
-		    struct tespkt_event_flags* flags)
+			int num_samples,
+			struct tespkt_trace_flags* tr_flags,
+			struct tespkt_event_flags* flags)
 {
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
@@ -393,8 +393,8 @@ new_trace_sgl_pkt (int num_peaks,
 
 static tespkt*
 new_trace_avg_pkt (int num_samples,
-		    struct tespkt_trace_flags* tr_flags,
-		    struct tespkt_event_flags* flags)
+			struct tespkt_trace_flags* tr_flags,
+			struct tespkt_event_flags* flags)
 {
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
@@ -450,9 +450,9 @@ new_trace_dp_pkt (int num_peaks,
 
 static tespkt*
 new_trace_dptr_pkt (int num_peaks,
-		     int num_samples,
-		     struct tespkt_trace_flags* tr_flags,
-		     struct tespkt_event_flags* flags)
+			 int num_samples,
+			 struct tespkt_trace_flags* tr_flags,
+			 struct tespkt_event_flags* flags)
 {
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
@@ -785,7 +785,7 @@ main (void)
 	/* Get the ring (we only use one) */
 	assert (gobj.nmd->first_tx_ring == gobj.nmd->last_tx_ring);
 	struct netmap_ring* txring = NETMAP_TXRING (
-			gobj.nmd->nifp, gobj.nmd->cur_tx_ring);
+		gobj.nmd->nifp, gobj.nmd->cur_tx_ring);
 
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
@@ -822,8 +822,8 @@ main (void)
 			struct netmap_slot* cur_slot =
 				&txring->slot[ txring->cur ];
 			nm_pkt_copy (pkt,
-				     NETMAP_BUF (txring, cur_slot->buf_idx),
-				     tespkt_flen (pkt));
+				 NETMAP_BUF (txring, cur_slot->buf_idx),
+					 tespkt_flen (pkt));
 		
 			cur_slot->len = tespkt_flen (pkt);
 			txring->head = txring->cur =

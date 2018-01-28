@@ -43,10 +43,10 @@ int main (void)
 		return -1;
 	}
 	
-	/* mmap from BOF, since mmap requires the offset be a multiple of
-	 * page size. */
+	/* mmap from BOF, since mmap requires the offset be a multiple
+	 * of page size. */
 	char* data = (char*)mmap (NULL, fsize,
-			PROT_READ, MAP_PRIVATE, fd, 0);
+		PROT_READ, MAP_PRIVATE, fd, 0);
 	if ((void*)data == (void*)-1)
 	{
 		logmsg (errno, LOG_ERR,
@@ -110,7 +110,8 @@ int main (void)
 			.length = fsize + 1, /* entire file */
 		},
 	};
-	uint8_t num_dsets = sizeof (dsets) / sizeof (struct hdf5_dset_desc_t);
+	uint8_t num_dsets = sizeof (dsets) / sizeof (
+		struct hdf5_dset_desc_t);
 
 	struct hdf5_conv_req_t creq = {
 		.filename = H5FNAME,

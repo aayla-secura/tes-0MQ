@@ -1,6 +1,6 @@
 /*
- * An opaque class for managing the ring structure. At the moment it's just
- * a wrapper around netmap.
+ * An opaque class for managing the ring structure. At the moment
+ * it's just a wrapper around netmap.
  */
 
 #ifndef __NET_TESIF_MANAGER_H_INCLUDED__
@@ -27,8 +27,8 @@ int tes_if_fd (tes_ifdesc* ifd);
 char* tes_if_name (tes_ifdesc* ifd);
 
 /*
- * Set and get the first, previous, next, <idx> or last tx or rx ring.
- * It is not done in a circular fashion.
+ * Set and get the first, previous, next, <idx> or last tx or rx
+ * ring. It is not done in a circular fashion.
  * Returns NULL for rings beyond the last one.
  */
 tes_ifring* tes_if_rewind_txring (tes_ifdesc* ifd);
@@ -43,8 +43,8 @@ tes_ifring* tes_if_goto_rxring (tes_ifdesc* ifd, uint16_t idx);
 tes_ifring* tes_if_goto_last_rxring (tes_ifdesc* ifd);
 
 /*
- * Set and get the current buffer of a ring to head, previous, next, <idx> or
- * tail-1.
+ * Set and get the current buffer of a ring to head, previous, next,
+ * <idx> or tail-1.
  * previous and next return NULL when reaching the head-1 or tail.
  */
 char* tes_ifring_rewind_buf (tes_ifring* ring);
@@ -75,6 +75,6 @@ void tes_ifring_release_all (tes_ifring* ring);
  */
 int tes_if_inject (tes_ifdesc* ifd, const void* buf, size_t len);
 int tes_if_dispatch (tes_ifdesc* ifd, int cnt, tes_ifpkt_hn handler,
-	unsigned char* arg);
+		unsigned char* arg);
 
 #endif
