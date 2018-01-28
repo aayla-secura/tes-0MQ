@@ -88,9 +88,9 @@ to get a status of a file, only the filename is required.
 
  * "3": filename did not resolve to an allowed path
 
- * "4": error while opening the file, nothing was written
+ * "4": error initializing, nothing was written
 
- * "5": error while writing to file, some data was saved
+ * "5": error while writing to files, some data was saved
 
  * "6": error while converting to hdf5 format
 

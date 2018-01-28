@@ -349,7 +349,7 @@ save_to_remote (const char* server, const char* filename, const char* measuremen
 			printf ("Filename is not allowed\n");
 			break;
 		case A_REQ_FAIL:
-			printf ("Unknown error while opening\n\n");
+			printf ("Unknown error while initializing\n\n");
 			break;
 		case A_REQ_EWRT:
 			printf ("Unknown error while writing\n\n");

@@ -6,8 +6,8 @@
 #define TSAVE_REQ_OK    0 // accepted
 #define TSAVE_REQ_INV   1 // malformed request
 #define TSAVE_REQ_ABORT 2 // no such job (for status query) or file exist (for no-overwrite)
-#define TSAVE_REQ_EPERM 3 // filename is not allowed
-#define TSAVE_REQ_FAIL  4 // other error opening the file, nothing was written
+#define TSAVE_REQ_EPERM 3 // a filename is not allowed
+#define TSAVE_REQ_FAIL  4 // other error initializing, nothing was written
 #define TSAVE_REQ_EWRT  5 // error while writing, less than minimum requested was saved
 #define TSAVE_REQ_ECONV 6 // error while converting to hdf5
 #define TSAVE_REQ_PIC   "ss8811"
@@ -231,15 +231,20 @@ struct s_task_save_data_t
 	uint8_t  prev_esize; // event size for previous event
 	uint8_t  prev_etype; // transformed event type for previous event, see PT above
 
-	uint64_t min_ticks;   // cpature at least that many ticks
-	uint64_t min_events;  // cpature at least that many events
-	uint8_t  overwrite;   // overwrite hdf5 file
-	uint8_t  async;       // copy data to hdf5 in the background
-	char*    basefname;   // basename for hdf5 file
-	char*    measurement; // hdf5 group
+	struct
+	{ /* given by client */
+		uint64_t min_ticks;   // cpature at least that many ticks
+		uint64_t min_events;  // cpature at least that many events
+		uint8_t  overwrite;   // overwrite hdf5 file
+		uint8_t  async;       // copy data to hdf5 in the background
+		char*    basefname;   // datafiles will be
+		                      // <basefname>-<measurement>
+		char*    measurement; // hdf5 group
+	};
 
-	int      fd;          // fd for the statistics file
-	bool     recording;   // wait for a tick before starting capture
+	char     hdf5filename[PATH_MAX]; // full path of hdf5 file
+	int      fd;           // fd for the statistics file
+	bool     recording;    // wait for a tick before starting capture
 };
 
 /* Task initializer and finalizer. */
@@ -259,6 +264,8 @@ static int   s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	mode_t fmode);
 static void  s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf);
 static int   s_task_save_conv_data (struct s_task_save_data_t* sjob);
+static void  s_task_save_send_err (struct s_task_save_data_t* sjob,
+	zsock_t* frontend, uint8_t status);
 
 /* Statistics for a job. */
 static int   s_task_save_stats_read  (struct s_task_save_data_t* sjob);
@@ -273,7 +280,7 @@ static int   s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 static int   s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	bool force);
 static char* s_task_save_canonicalize_path (const char* filename,
-	bool checkonly);
+	char* finalpath, bool checkonly);
 
 #ifdef ENABLE_FULL_DEBUG
 static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob);
@@ -401,6 +408,15 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf, mode_t fmode)
 	dbg_assert (aiobuf->bufzone.waiting == 0);
 	dbg_assert (aiobuf->bufzone.enqueued == 0);
 
+	/* The directory part of filename is at this point ensured to exist and
+	 * be allowed (inside root). Would only end up writing outside of root
+	 * if the datafile is a symlink. But the file will be overridden
+	 * anyway, so no need to keep it. Simply unlink. This will also prevent
+	 * strange behaviour if file is open in another process. */
+	int rc = unlink (aiobuf->filename);
+	if (rc == -1)
+		assert (errno = ENOENT);
+
 	aiobuf->aios.aio_fildes = open (aiobuf->filename, fmode,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (aiobuf->aios.aio_fildes == -1)
@@ -448,7 +464,6 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 {
 	assert (sjob != NULL);
 
-	uint8_t num_dsets = TSAVE_NUM_DSETS;
 	struct hdf5_dset_desc_t dsets[TSAVE_NUM_DSETS] = {0,};
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
@@ -456,21 +471,32 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 		dsets[s].dsetname = sjob->aio[s].dataset;
 		dsets[s].length = -1;
 	}
-	dbg_assert (num_dsets == sizeof (dsets) / sizeof (struct hdf5_dset_desc_t));
-	dbg_assert (num_dsets == sizeof (sjob->aio) / sizeof (struct s_task_save_aiobuf_t));
 
-	char filename[PATH_MAX];
-	snprintf (filename, PATH_MAX, "%s.hdf5", sjob->basefname);
 	struct hdf5_conv_req_t creq = {
-		.filename = filename,
+		.filename = sjob->hdf5filename,
 		.group = sjob->measurement,
 		.dsets = dsets,
-		.num_dsets = num_dsets,
+		.num_dsets = TSAVE_NUM_DSETS,
 		.ovrwt = sjob->overwrite,
 		.async = sjob->async,
 	};
 
-	return hdf5_conv (&creq);
+	int rc = hdf5_conv (&creq);
+	return (rc ? -1 : 0);
+}
+
+/*
+ * Sends an error to client.
+ */
+static void
+s_task_save_send_err (struct s_task_save_data_t* sjob,
+	zsock_t* frontend, uint8_t status)
+{
+	zsock_send (frontend, TSAVE_REP_PIC, status,
+			0, 0, 0, 0, 0, 0, 0);
+
+	zstr_free (&sjob->basefname);   /* nullifies the pointer */
+	zstr_free (&sjob->measurement); /* nullifies the pointer */
 }
 
 /*
@@ -550,7 +576,8 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob,
 	memset (&sjob->cur_stream, 0, sizeof (sjob->cur_stream));
 	memset (&sjob->cur_tick, 0, sizeof (sjob->cur_tick));
 
-	sjob->basefname = NULL; /* points to a static string */
+	zstr_free (&sjob->basefname);   /* nullifies the pointer */
+	zstr_free (&sjob->measurement); /* nullifies the pointer */
 	sjob->recording = 0;
 
 	return rc;
@@ -816,17 +843,20 @@ queue_as_is:
 /*
  * Prepends TSAVE_ROOT to filename and canonicalizes the path via realpath.
  * If checkonly is false, creates any missing parent directories.
- * On success returns a pointer to a statically allocated string, caller
- * must not free it.
+ * Saves the result in finalpath, which must be able to hold PATH_MAX
+ * characters.
+ * On success returns a pointer to a finalpath.
  * Returns NULL on error (including if checkonly is true and the filename does
  * not exist).
  * If NULL is returned because the filename is not allowed by us (i.e. outside
  * of TSAVE_ROOT or ends with a slash) errno should be 0.
  */
 static char*
-s_task_save_canonicalize_path (const char* filename, bool checkonly)
+s_task_save_canonicalize_path (const char* filename,
+	char* finalpath, bool checkonly)
 {
 	assert (filename != NULL);
+	assert (finalpath != NULL);
 
 	errno = 0;
 	size_t len = strlen (filename);
@@ -844,9 +874,6 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly)
 		return NULL;
 	}
 #endif
-
-	/* Only one thread should use this, so static storage is fine. */
-	static char finalpath[PATH_MAX];
 
 	char buf[PATH_MAX];
 	memset (buf, 0, PATH_MAX);
@@ -879,9 +906,7 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly)
 	 * We proceed only if some of the directories are missing, i.e. errno
 	 * is ENOENT.
 	 * errno is ENOTDIR only when a component of the parent path exists but
-	 * is not a directory. If filename ends with a / the part before the
-	 * last slash is also considered a directory, so will return ENOTDIR if
-	 * it is an existing file, but ENOENT if it doesn't exist.
+	 * is not a directory.
 	 */
 	if (errno != ENOENT)
 		return NULL;
@@ -902,16 +927,17 @@ s_task_save_canonicalize_path (const char* filename, bool checkonly)
 			continue;
 		}
 
-		/* copy leading slash of next_seg at the end */
+		/* copy leading slash of next_seg here, at the end */
 		assert (len < PATH_MAX);
-		if (len + next_seg - cur_seg + 1 >= PATH_MAX)
+		size_t thislen = next_seg - cur_seg + 1;
+		if (len + thislen >= PATH_MAX)
 		{
 			logmsg (0, LOG_DEBUG,
 				"Filename too long");
 			return NULL;
 		}
-		strncpy (buf + len, cur_seg, next_seg - cur_seg + 1);
-		len += next_seg - cur_seg + 1;
+		strncpy (buf + len, cur_seg, thislen);
+		len += thislen;
 		assert (len == strlen (buf));
 
 		errno = 0;
@@ -1008,7 +1034,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert ( ! sjob->recording );
 
 
-	char* basefname;
+	char* basefname; /* zsock_recv will allocate it */
 	int rc = zsock_recv (reader, TSAVE_REQ_PIC,
 			&basefname,
 			&sjob->measurement,
@@ -1029,8 +1055,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
-		zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_INV,
-				0, 0, 0, 0, 0, 0, 0);
+		s_task_save_send_err (sjob, reader, TSAVE_REQ_INV);
 		return 0;
 	}
 
@@ -1054,36 +1079,51 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			sjob->async ? ". Convering asynchronously" : "");
 	}
 
-	/* Check if filename is allowed and get the realpath. */
-	sjob->basefname = s_task_save_canonicalize_path (
-			basefname, checkonly);
+	/* Make sure measurement group does not contain a slash. */
+	if (strchr (sjob->measurement, '/') != NULL)
+	{
+		logmsg (0, LOG_INFO,
+				"HDF5 group is not valid");
+		s_task_save_send_err (sjob, reader, TSAVE_REQ_EPERM);
+		return 0;
+	}
+
+	/* Check if stat filename is allowed and get the realpath. */
+	sjob->basefname = (char*) malloc (PATH_MAX);
+	if (sjob->basefname == NULL)
+	{
+		logmsg (errno, LOG_ERR, "Cannot malloc");
+		s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
+		return 0;
+	}
+
+	char* tmpfname = s_task_save_canonicalize_path (
+			basefname, sjob->basefname, checkonly);
 	zstr_free (&basefname); /* nullifies the pointer */
 
-	if (sjob->basefname == NULL)
+	if (tmpfname == NULL)
 	{
 		if (checkonly)
 		{
-			logmsg (0, LOG_INFO,
-					"Job not found");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
-					0, 0, 0, 0, 0, 0, 0);
+			logmsg (0, LOG_INFO, "Job not found");
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_ABORT);
 		}
 		else
 		{
 			logmsg (errno, LOG_INFO,
-					"Filename is not valid");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_EPERM,
-					0, 0, 0, 0, 0, 0, 0);
+				"Filename is not valid");
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_EPERM);
 		}
 
 		return 0;
 	}
 
-	dbg_assert (sjob->basefname != NULL);
-
 	/* -------------------------------------------------- */
 	/*                    Status query.                   */
 	/* -------------------------------------------------- */
+
 	if (checkonly)
 	{ /* just read in stats and send reply */
 		rc = s_task_save_stats_read  (sjob);
@@ -1091,8 +1131,8 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not read stats");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
-					0, 0, 0, 0, 0, 0, 0);
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_FAIL);
 			return 0;
 		}
 		rc = s_task_save_stats_send  (sjob, self->frontend, TSAVE_REQ_OK);
@@ -1107,6 +1147,24 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	/* -------------------------------------------------- */
 	/*                    Write query.                    */
 	/* -------------------------------------------------- */
+
+	dbg_assert ( ! checkonly );
+
+	/* Check if HDF5 filename is allowed, in case it's a symlink. */
+	basefname = strrchr (sjob->basefname, '/');
+	assert (basefname != NULL);
+	basefname++;
+	char h5file[PATH_MAX];
+	snprintf (h5file, PATH_MAX, "%s.hdf5", basefname);
+	tmpfname = s_task_save_canonicalize_path (h5file, sjob->hdf5filename, 0);
+	if (tmpfname == NULL)
+	{
+		logmsg (errno, LOG_INFO,
+			"HDF5 filename is not valid");
+		s_task_save_send_err (sjob, reader, TSAVE_REQ_EPERM);
+		return 0;
+	}
+
 	/*
 	 * Set the file open mode and act according to the return status of
 	 * open and errno (print a warning of errno is unexpected)
@@ -1121,7 +1179,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	int exp_errno = 0;
 	mode_t fmode = O_RDWR | O_CREAT;
 	if ( ! sjob->overwrite )
-	{ /* do not overwrite */
+	{
 		fmode |= O_EXCL;
 		exp_errno = EEXIST;
 	}
@@ -1134,14 +1192,14 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			logmsg (errno, LOG_ERR,
 				"Could not open file %s",
 				sjob->basefname);
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_FAIL,
-					0, 0, 0, 0, 0, 0, 0);
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_FAIL);
 		}
 		else
 		{
 			logmsg (0, LOG_INFO, "Job will not proceed");
-			zsock_send (reader, TSAVE_REP_PIC, TSAVE_REQ_ABORT,
-					0, 0, 0, 0, 0, 0, 0);
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_ABORT);
 		}
 		s_task_save_close (sjob);
 		return 0;
