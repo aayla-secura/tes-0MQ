@@ -24,9 +24,15 @@
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */
 
+static hid_t s_get_grp  (hid_t l_id, const char* group, bool ovrwt);
+static int   s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id);
+static int   s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id);
+static int   s_hdf5_init   (void* creq_data_);
+static int   s_hdf5_write  (void* creq_data_);
+
 struct s_creq_data_t
 {
-	struct hdf5_conv_req_t creq;
+	struct hdf5_conv_req_t* creq;
 	hid_t group_id;
 	hid_t file_id;
 };
@@ -89,20 +95,31 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 }
 
 /*
- * Open filename, mmap it and close the file descriptor.
- * Saves the address of the mapping in ddesc->buffer (overwriting filename
- * pointer).
+ * Open dataset file, mmap it and close the file descriptor.
+ * Saves the address of the mapping in ddesc->buffer.
+ * If ddesc->offset < 0 (refers to EOF), recalculates offset w.r.t. BOF
+ * and saves it.
  * If ddesc->length < 0 or extends beyond EOF, calculates length and
  * saves it.
+ * If length == 0 or offset extends beyond EOF, ddesc->buffer will be
+ * NULL.
+ * On success buffer may be NULL if dataset should be empty, in which case
+ * length is ensured to be 0. Otherwise length is ensured to be positive and
+ * offset---to be non-negative.
  * Returns 0 on success, -1 on error.
  */
 static int
 s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 {
+#ifdef ENABLE_FULL_DEBUG
+	/* sleep (1); */
+#endif
 	assert (ddesc != NULL);
 	assert (ddesc->filename != NULL);
-	assert (ddesc->offset >= 0);
-	assert (ddesc->length != 0);
+	assert (ddesc->buffer == NULL);
+	
+	if (ddesc->length == 0)
+		return 0;
 
 	/* Open the data file. */
 	int fd = open (ddesc->filename, O_RDONLY);
@@ -114,6 +131,7 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 		return -1;
 	}
 
+	/* Get its size. */
 	off_t fsize = lseek (fd, 0, SEEK_END);
 	if (fsize == (off_t)-1)
 	{
@@ -124,15 +142,20 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 		return -1;
 	}
 	
-	/* Check length. */
-	if (ddesc->offset >= fsize)
-	{ /* nothing to read from file */
+	/* Check offset. */
+	if (ddesc->offset < 0)
+		ddesc->offset += fsize;
+	if (fsize == 0 || ddesc->offset >= fsize || ddesc->offset < 0)
+	{ /* file empty or abs(offset) too large */
 		ddesc->length = 0;
 		close (fd);
 		return 0;
 	}
 
+	assert (ddesc->offset >= 0);
+	assert (fsize > 0);
 	ssize_t maxlength = fsize - ddesc->offset;
+	assert (maxlength > 0);
 	if (ddesc->length < 0 || ddesc->length > maxlength)
 		ddesc->length = maxlength;
 
@@ -141,12 +164,12 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 	assert (ddesc->length > 0);
 	void* data = mmap (NULL, ddesc->offset + ddesc->length,
 			PROT_READ, MAP_PRIVATE, fd, 0);
+	close (fd);
 	if (data == (void*)-1)
 	{
 		logmsg (errno, LOG_ERR,
 			"Could not mmap file %s",
 			ddesc->filename);
-		close (fd);
 		return -1;
 	}
 
@@ -154,7 +177,6 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 	 * unmap offset+length (though unmapping is not necessary). */
 	ddesc->buffer = data;
 
-	close (fd);
 	return 0;
 }
 
@@ -169,9 +191,15 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 	/* sleep (1); */
 #endif
 	assert (ddesc != NULL);
-	assert (ddesc->length >= 0);
+	assert (ddesc->dsetname != NULL);
+	assert (ddesc->buffer != (void*)-1);
+	if (ddesc->buffer == NULL)
+		assert (ddesc->length == 0);
+	else
+		assert (ddesc->length > 0);
+
 	logmsg (0, LOG_DEBUG,
-		"Creating dataset %s", ddesc->dname);
+		"Creating dataset %s", ddesc->dsetname);
 
 	/* Create the datasets. */
 	hsize_t length[1] = {ddesc->length};
@@ -182,13 +210,13 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 			"Could not create dataspace");
 		return -1;
 	}
-	hid_t dset = H5Dcreate (g_id, ddesc->dname, DATATYPE,
+	hid_t dset = H5Dcreate (g_id, ddesc->dsetname, DATATYPE,
 		dspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 	if (dset < 0)
 	{
 		logmsg (0, LOG_ERR,
 			"Could not create dataset %s",
-			ddesc->dname);
+			ddesc->dsetname);
 		H5Sclose (dspace);
 		return -1;
 	}
@@ -203,14 +231,14 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 
 	/* Write the data. */
 	assert (ddesc->buffer != NULL);
-	assert (ddesc->buffer != (void*)-1);
+ 	assert (ddesc->offset >= 0);
 	herr_t err = H5Dwrite (dset, DATATYPE, H5S_ALL,
 		H5S_ALL, H5P_DEFAULT, ddesc->buffer + ddesc->offset);
 	if (err < 0)
 	{
 		logmsg (0, LOG_ERR,
 			"Could not write to dataset %s",
-			ddesc->dname);
+			ddesc->dsetname);
 	}
 
 	H5Dclose (dset);
@@ -219,13 +247,19 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 	return (err < 0 ? -1 : 0);
 }
 
+/*
+ * Open the hdf5 file, create the groups if needed.
+ * Open all dataset files and mmap them (calls s_map_file).
+ * On success, save the file and dataset group ids in creq_data_.
+ * Returns 0 on success, -1 on error.
+ */
 static int
 s_hdf5_init (void* creq_data_)
 {
 	assert (creq_data_ != NULL);
 
 	struct s_creq_data_t* creq_data = (struct s_creq_data_t*)creq_data_;
-	struct hdf5_conv_req_t* creq = &creq_data->creq;
+	struct hdf5_conv_req_t* creq = creq_data->creq;
 
 	/* Check if hdf5 file exists. */
 	hid_t f_id;
@@ -291,30 +325,12 @@ s_hdf5_init (void* creq_data_)
 	/* mmap files. */
 	for (int d = 0; d < creq->num_dsets; d++)
 	{
-		struct hdf5_dset_desc_t* ddesc = creq->datasets + d;
-		if (ddesc == NULL ||
-			ddesc->dname == NULL ||
-			strlen (ddesc->dname) == 0 ||
-			ddesc->filename == NULL ||
-			(ddesc->offset < 0 && ddesc->length <=0) )
-		{
-			logmsg (0, LOG_ERR, "Invalid request");
-			H5Gclose (cg_id);
-			H5Fclose (f_id);
-			return -1;
-		}
-		if (ddesc->length == 0 ||
-			ddesc->offset < 0)
-		{
-			/* if length is 0, offset doesn't matter; */
-			/* if copying from buffer (offset < 0), offset should
-			 * be reset to 0 */
-			ddesc->offset = 0;
+		struct hdf5_dset_desc_t* ddesc = &creq->dsets[d];
+		if (ddesc->filename == NULL)
 			continue;
-		}
 
 		int rc = s_map_file (ddesc, cg_id);
-		if (rc != 0)
+		if (rc == -1)
 		{
 			H5Gclose (cg_id);
 			H5Fclose (f_id);
@@ -328,6 +344,10 @@ s_hdf5_init (void* creq_data_)
 	return 0;
 }
 
+/*
+ * Create all datasets (calls s_create_dset).
+ * Returns 0 on success, -1 on error.
+ */
 static int
 s_hdf5_write (void* creq_data_)
 {
@@ -337,12 +357,12 @@ s_hdf5_write (void* creq_data_)
 
 	/* Create the datasets. */
 	int rc = 0;
-	for (int d = 0; d < creq_data->creq.num_dsets; d++)
+	for (int d = 0; d < creq_data->creq->num_dsets; d++)
 	{
 		struct hdf5_dset_desc_t* ddesc =
-			creq_data->creq.datasets + d;
+			&creq_data->creq->dsets[d];
 		int rc = s_create_dset (ddesc, creq_data->group_id);
-		if (rc != 0)
+		if (rc == -1)
 			break;
 	}
 
@@ -358,24 +378,42 @@ s_hdf5_write (void* creq_data_)
 /* ------------------------------------------------------------------------- */
 
 int
-hdf5_conv (const struct hdf5_conv_req_t* creq)
+hdf5_conv (struct hdf5_conv_req_t* creq)
 {
 	if (creq == NULL ||
 		creq->filename == NULL ||
 		strlen (creq->filename) == 0 ||
 		creq->group == NULL ||
-		creq->datasets == NULL ||
+		creq->dsets == NULL ||
 		creq->num_dsets == 0)
 	{
 		logmsg (0, LOG_ERR, "Invalid request");
 		return -1;
 	}
+	for (int d = 0; d < creq->num_dsets; d++)
+	{
+		struct hdf5_dset_desc_t* ddesc = &creq->dsets[d];
+		if (ddesc == NULL ||
+			ddesc->dsetname == NULL ||
+			strlen (ddesc->dsetname) == 0 ||
+			( ddesc->filename != NULL &&
+				ddesc->buffer != NULL ) ||
+			( ddesc->filename == NULL &&
+				ddesc->buffer == NULL ) ||
+			( ddesc->buffer != NULL &&
+				( ddesc->offset < 0 ||
+					 ddesc->length < 0 ) ) )
+		{
+			logmsg (0, LOG_ERR, "Invalid request");
+			return -1;
+		}
+	}
 
-	/* Copy the request so we don't clobber the filename/buffer pointer in
-	 * any of the struct hdf5_dset_desc_t's */
-	struct s_creq_data_t creq_data;
-	memset (&creq_data, 0, sizeof (creq_data));
-	memcpy (&creq_data.creq, creq, sizeof (creq_data.creq));
+	struct s_creq_data_t creq_data = {
+		.creq = creq,
+		.group_id = -1,
+		.file_id = -1,
+		};
 
 	/* If operating in asynchronous mode, fork here before opening
 	 * the files and signal parent before starting copy. */
@@ -392,5 +430,19 @@ hdf5_conv (const struct hdf5_conv_req_t* creq)
 			rc = s_hdf5_write (&creq_data);
 	}
 
+	/* Unmap data. */
+	for (int d = 0; d < creq->num_dsets; d++)
+	{
+		struct hdf5_dset_desc_t* ddesc = &creq->dsets[d];
+		if (ddesc->filename != NULL)
+		{ /* mmapped by us */
+			if (ddesc->buffer != NULL)
+			{
+				munmap (ddesc->buffer,
+						ddesc->offset + ddesc->length);
+				ddesc->buffer = NULL;
+			}
+		}
+	}
 	return rc;
 }

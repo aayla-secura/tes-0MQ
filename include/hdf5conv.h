@@ -24,37 +24,35 @@
 #include <czmq_prelude.h> // bool type
 
 /*
- * If offset is negative, copy directly from buffer. Length must be
- * positive.
+ * Exactly one of filename and buffer must be set.
  *
- * If offset >= 0, open <filename> and mmap it.
- * If length is negative or extends beyond EOF, copy until EOF starting
- * at <offset>.
- * If offset extends beyond EOF, file will be closed and the dataset will
- * be empty.
- * If length is 0, the file will not be opened at all and the dataset
- * will be empty.
+ * 1) If filename is NULL, copy directly from buffer.
+ *    Length and offset must then be non-negative.
+ *
+ * 2) If buffer is NULL, open filename and mmap it. Will close the file,
+ *    unmap and nullify buffer at the end.
+ *    If offset < 0 it is takes with respect to EOF.
+ *    If length < 0 or extends beyond EOF, copy until EOF.
+ *    If length == 0 or offset extends beyond EOF, the dataset will be empty.
+ *    The value of offset and length after the call is unspecified.
  */
 struct hdf5_dset_desc_t
 {
-	char*   dname;  /* dataset name */
-	off_t   offset; /* from beginning of file */
-	ssize_t length; /* how many bytes to copy to dataset */
-	union
-	{
-		char* filename; /* /path/to/<datafile> */
-		void* buffer;   /* address of data */
-	};
+	char*   dsetname; /* dataset name */
+	off_t   offset;   /* from beginning of file */
+	ssize_t length;   /* how many bytes to copy to dataset */
+	char*   filename; /* /path/to/<datafile> */
+	void*   buffer;   /* address of mmapped data */
 };
 
 struct hdf5_conv_req_t
 {
-	char* filename;    /* /path/to/<hdf5file> */
-	char* group;       /* group name under ROOT_GROUP */
-	struct hdf5_dset_desc_t* datasets;
+	char*   filename;  /* /path/to/<hdf5file> */
+	char*   group;     /* group name under <root_group> */
+	struct  hdf5_dset_desc_t* dsets; /* an array of datasets */
 	uint8_t num_dsets; /* how many elements in datasets array */
-	bool ovrwt;        /* overwrite entire hdf5 file */
-	bool async;        /* return after opening files,
+	bool    ovrwt;     /* overwrite entire hdf5 file */
+	bool    async;     /* return after opening files,
 			    * convert in background */
 };
 
@@ -64,6 +62,6 @@ struct hdf5_conv_req_t
  * <root_group> is currently "capture".
  * Returns 0 on success, -1 on error.
  */
-int hdf5_conv (const struct hdf5_conv_req_t* creq);
+int hdf5_conv (struct hdf5_conv_req_t* creq);
 
 #endif

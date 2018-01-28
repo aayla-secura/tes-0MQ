@@ -453,7 +453,7 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		dsets[s].filename = sjob->aio[s].filename;
-		dsets[s].dname = sjob->aio[s].dataset;
+		dsets[s].dsetname = sjob->aio[s].dataset;
 		dsets[s].length = -1;
 	}
 	dbg_assert (num_dsets == sizeof (dsets) / sizeof (struct hdf5_dset_desc_t));
@@ -464,7 +464,7 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 	struct hdf5_conv_req_t creq = {
 		.filename = filename,
 		.group = sjob->measurement,
-		.datasets = dsets,
+		.dsets = dsets,
 		.num_dsets = num_dsets,
 		.ovrwt = sjob->overwrite,
 		.async = sjob->async,
@@ -717,8 +717,8 @@ s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf, bool force)
 	/* Suspend while ready. */
 	if ( rc == EINPROGRESS )
 	{
-		const struct aiocb* aiol = &aiobuf->aios;
-		rc = aio_suspend (&aiol, 1, NULL);
+		const struct aiocb* aiol[1] = { &aiobuf->aios, };
+		rc = aio_suspend (aiol, 1, NULL);
 		if (rc == -1)
 			return -1;
 		rc = aio_error (&aiobuf->aios);
