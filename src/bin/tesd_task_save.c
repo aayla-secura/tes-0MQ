@@ -1092,7 +1092,8 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	sjob->basefname = (char*) malloc (PATH_MAX);
 	if (sjob->basefname == NULL)
 	{
-		logmsg (errno, LOG_ERR, "Cannot malloc");
+		logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
+			"Cannot allocate memory");
 		s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
 		return 0;
 	}
