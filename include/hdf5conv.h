@@ -49,10 +49,14 @@ struct hdf5_dset_desc_t
 struct hdf5_conv_req_t
 {
 	char*   filename;  /* /path/to/<hdf5file> */
-	char*   group;     /* group name under <root_group> */
+	char*   group;     /* group name under root group /<RG> */
 	struct  hdf5_dset_desc_t* dsets; /* an array of datasets */
 	uint8_t num_dsets; /* how many elements in datasets array */
-	bool    ovrwt;     /* overwrite entire hdf5 file */
+	uint8_t ovrwtmode;
+#define HDF5_OVRT_NONE   0 /* error if /<RG>/<group> exists */
+#define HDF5_OVRT_RELINK 1 /* only move existing group to
+                            * /<RG>/overwritten/<group>_<timestamp> */
+#define HDF5_OVRT_FILE   2 /* overwrite entire hdf5 file */
 	bool    async;     /* return after opening files,
 	                    * convert in background */
 };

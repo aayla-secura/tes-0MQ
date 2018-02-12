@@ -57,9 +57,11 @@ At the moment we only handle one request at a time. Will block until done.
 
 5. **Write mode**
 
- * "0": create but do not overwrite hdf5 file
+ * "0": do not overwrite hdf5 file or measurement group
 
- * "1": create or overwrite hdf5 file
+ * "1": only rename existing measurement group
+
+ * "2": overwrite entire hdf5 file
 
 6. **Asyncronous conversion**
 

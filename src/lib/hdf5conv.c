@@ -13,21 +13,25 @@
 #  include <hdf5.h>
 #endif
 
+#include <time.h>
 #include <sys/mman.h>
 #include <errno.h>
 #include <assert.h>
 
 #define INIT_TIMEOUT 5 /* in seconds */
-#define ROOT_GROUP "capture"
+#define ROOT_GROUP  "capture"     /* relative to file */
+#define OVRWT_GROUP "overwritten" /* relative to file */
 #define NODELETE_TMP /* TO DO */
 #define DATATYPE H5T_NATIVE_UINT_LEAST8
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */
 
-static hid_t s_get_grp (hid_t l_id, const char* group, bool ovrwt);
-static int s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id);
+static hid_t s_get_grp (hid_t lid, const char* group, bool create);
+static hid_t s_crt_grp (hid_t lid, const char* group,
+	hid_t bkp_lid, const char* bkpgroup);
+static int s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid);
 static int s_create_dset (const struct hdf5_dset_desc_t* ddesc,
-		hid_t g_id);
+		hid_t gid);
 static int s_hdf5_init   (void* creq_data_);
 static int s_hdf5_write  (void* creq_data_);
 
@@ -43,17 +47,20 @@ struct s_creq_data_t
 /* -------------------------------------------------------------- */
 
 /*
- * Open or create <group> relative to l_id. If ovrwt is true and
- * group exists, it is deleted first.
- * Returns group id on success, -1 on error.
+ * Open or create <group> relative to lid.
+ * If create is true and group does not exists, it is created.
+ * If create is false and group does not exists, we return 0.
+ * Returns positive group id on success, 0 if nothing done, -1 on
+ * error.
  */
 static hid_t
-s_get_grp (hid_t l_id, const char* group, bool ovrwt)
+s_get_grp (hid_t lid, const char* group, bool create)
 {
-	hid_t g_id;
+	assert (group != NULL);
+	assert (lid > 0);
 
 	/* Check if group exists. */
-	htri_t gstat = H5Lexists (l_id, group, H5P_DEFAULT);
+	htri_t gstat = H5Lexists (lid, group, H5P_DEFAULT);
 	if (gstat < 0)
 	{
 		logmsg (0, LOG_ERR,
@@ -61,38 +68,128 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
 			group);
 		return -1;
 	}
-	else if (gstat > 0 && ! ovrwt)
-	{ /* open the group */
-		g_id = H5Gopen (l_id, group, H5P_DEFAULT);    
+	else if (gstat == 0 && ! create)
+	{ /* nothing to do */
+		logmsg (0, LOG_INFO,
+			"Group %s does not exist", group);
+		return 0;
 	}
-	else
-	{ /* create the group */
-		if (gstat > 0)
-		{ /* delete it first */
-			herr_t err = H5Ldelete (l_id, group, H5P_DEFAULT);    
-			if (err < 0)
-			{
-				logmsg (0, LOG_ERR,
-					"Could not delete group %s",
-					group);
-				return -1;
-			}
-		}
 
-		g_id = H5Gcreate (l_id, group, H5P_DEFAULT,
+	/* Open or create it. */
+	hid_t gid = -1;
+
+	logmsg (0, LOG_DEBUG,
+		"%s group %s",
+		(gstat > 0) ? "Opening" : "Creating",
+		group);
+
+	if (gstat > 0)
+		gid = H5Gopen (lid, group, H5P_DEFAULT);    
+	else
+		gid = H5Gcreate (lid, group, H5P_DEFAULT,
 			H5P_DEFAULT, H5P_DEFAULT);
 
-	}
-	if (g_id < 0)
+	if (gid < 0)
 	{
 		logmsg (0, LOG_ERR,
 			"Could not %s group %s",
-			(gstat > 0 && ! ovrwt) ? "open" : "create",
+			(gstat > 0) ? "open" : "create",
 			group);
 		return -1;
 	}
 
-	return g_id;
+	return gid;
+}
+
+/*
+ * Create <group> relative to lid.
+ * If bkp_lid > 0 and group exists, it is renamed to bkpgroup
+ * under bkp_lid.
+ * If bkp_lid <= 0 and group exists, we return 0.
+ * Returns positive group id on success, 0 if nothing done, -1 on
+ * error.
+ */
+static hid_t
+s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid, const char* bkpgroup)
+{
+	assert (group != NULL);
+	assert (lid > 0);
+
+	/* Check if group exists. */
+	hid_t gid = s_get_grp (lid, group, 0);
+	if (gid < 0)
+		return -1;
+
+	bool exists = 0;
+	if (gid > 0)
+	{
+		exists = 1;
+		H5Gclose (gid); /* we don't need it */
+	}
+
+	if (exists)
+	{
+		if (bkp_lid <= 0)
+		{ /* no backup given */
+			logmsg (0, LOG_INFO,
+				"Group %s exists", group);
+			return 0;
+		}
+
+		/* Rename the group. */
+		assert (strlen (bkpgroup) > 0);
+
+		logmsg (0, LOG_DEBUG,
+			"Renaming group %s to %s",
+			group, bkpgroup);
+
+		herr_t err = 0;
+#ifdef ENABLE_FULL_DEBUG
+		/* Make sure backup destination does not exist. */
+		gid = s_get_grp (bkp_lid, bkpgroup, 0);
+		if (gid > 0);
+		{
+			H5Gclose (gid);
+			err = -1;
+		}
+#endif
+		/* Copy, then delete to prevent data loss. */
+		if (err >= 0)
+			err = H5Lcopy (lid, group, bkp_lid, bkpgroup,
+				H5P_DEFAULT, H5P_DEFAULT);
+		if (err >= 0)
+			err = H5Ldelete (lid, group, H5P_DEFAULT);
+#ifdef ENABLE_FULL_DEBUG
+		/* Make sure the old link is gone. */
+		gid = s_get_grp (lid, group, 0);
+		if (gid > 0);
+		{
+			H5Gclose (gid);
+			err = -1;
+		}
+#endif
+		if (err < 0)
+		{
+			logmsg (0, LOG_ERR,
+				"Cannot move group %s to %s",
+				group, bkpgroup);
+			return -1;
+		}
+	}
+
+	/* Create the group. */
+	gid = H5Gcreate (lid, group, H5P_DEFAULT,
+		H5P_DEFAULT, H5P_DEFAULT);
+
+	if (gid < 0)
+	{
+		logmsg (0, LOG_ERR,
+			"Could not create group %s",
+			group);
+		return -1;
+	}
+
+	return gid;
 }
 
 /*
@@ -110,7 +207,7 @@ s_get_grp (hid_t l_id, const char* group, bool ovrwt)
  * Returns 0 on success, -1 on error.
  */
 static int
-s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
+s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 {
 #ifdef ENABLE_FULL_DEBUG
 	/* sleep (1); */
@@ -182,11 +279,11 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 }
 
 /*
- * Write data given in ddesc as a dataset inside group g_id.
+ * Write data given in ddesc as a dataset inside group gid.
  * Returns 0 on success, -1 on error.
  */
 static int
-s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
+s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 {
 #ifdef ENABLE_FULL_DEBUG
 	/* sleep (1); */
@@ -211,7 +308,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 			"Could not create dataspace");
 		return -1;
 	}
-	hid_t dset = H5Dcreate (g_id, ddesc->dsetname, DATATYPE,
+	hid_t dset = H5Dcreate (gid, ddesc->dsetname, DATATYPE,
 		dspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 	if (dset < 0)
 	{
@@ -232,7 +329,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 
 	/* Write the data. */
 	assert (ddesc->buffer != NULL);
-	 assert (ddesc->offset >= 0);
+	assert (ddesc->offset >= 0);
 	herr_t err = H5Dwrite (dset, DATATYPE, H5S_ALL,
 		H5S_ALL, H5P_DEFAULT, ddesc->buffer + ddesc->offset);
 	if (err < 0)
@@ -249,7 +346,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t g_id)
 }
 
 /*
- * Open the hdf5 file, create the groups if needed.
+ * Open the hdf5 file, create the groups.
  * Open all dataset files and mmap them (calls s_map_file).
  * On success, save the file and dataset group ids in creq_data_.
  * Returns 0 on success, -1 on error.
@@ -262,67 +359,108 @@ s_hdf5_init (void* creq_data_)
 	struct s_creq_data_t* creq_data =
 		(struct s_creq_data_t*)creq_data_;
 	struct hdf5_conv_req_t* creq = creq_data->creq;
+	bool ovrwt = (creq->ovrwtmode == HDF5_OVRT_FILE);
 
 	/* Check if hdf5 file exists. */
-	hid_t f_id;
+	hid_t fid;
 	int fok = access (creq->filename, F_OK);
-	if (fok == 0 && ! creq->ovrwt)
+	if (fok == 0 && ! ovrwt)
 	{ /* open it for writing */
 		logmsg (0, LOG_DEBUG,
 			"Opening existing hdf5 file: %s",
 			creq->filename);
-		f_id = H5Fopen (creq->filename, H5F_ACC_RDWR, H5P_DEFAULT);
+		fid = H5Fopen (creq->filename, H5F_ACC_RDWR, H5P_DEFAULT);
 	}
 	else
-	{ /* create it */
+	{ /* create/overwrite it */
 		if (fok == -1 && errno != ENOENT)
 		{ /* the calling process ensures the filepath should be in
 		   * an existing directory (same as the capture files) */
 			logmsg (errno, LOG_ERR,
-				 "Unexpected error accessing hdf5 file %s",
+				 "Cannot access hdf5 file %s",
 				creq->filename);
 			return -1;
 		}
 		logmsg (0, LOG_DEBUG,
 			"%s hdf5 file: %s",
-			(fok ? "Creating" : "Overwriting"), creq->filename);
-		f_id = H5Fcreate (creq->filename, H5F_ACC_TRUNC,
+			(fok ? "Creating" : "Overwriting"),
+			creq->filename);
+		fid = H5Fcreate (creq->filename, H5F_ACC_TRUNC,
 			H5P_DEFAULT, H5P_DEFAULT);
 	}
-	if (f_id < 0)
+	if (fid < 0)
 	{
 		logmsg (0, LOG_ERR,
 			"Could not %s hdf5 file %s",
-			(fok == 0 && ! creq->ovrwt) ? "open" : "create",
+			(fok == 0 && ! ovrwt) ? "open" : "create",
 			creq->filename);
 		return -1;
 	}
 
-	/* (Re-)create the group(s). */
-	/* root group */
-	hid_t rg_id = s_get_grp (f_id, ROOT_GROUP, 0);
-	if (rg_id < 0)
+	/* Open the root group. */
+	hid_t root_gid = s_get_grp (fid, ROOT_GROUP, 1);
+	if (root_gid < 0)
 	{
-		H5Fclose (f_id);
+		H5Fclose (fid);
 		return -1;
 	}
+	assert (root_gid > 0);
 
-	/* client requested subgroup */
-	hid_t cg_id;
-	if (strlen (creq->group) == 0)
+	hid_t ovrwt_gid = -1;
+	char bkpgroup[PATH_MAX] = {0,};
+	if (creq->ovrwtmode == HDF5_OVRT_RELINK)
 	{
-		cg_id = rg_id;
-	}
-	else
-	{
-		cg_id = s_get_grp (rg_id, creq->group, 1);
-		H5Gclose (rg_id);
-		if (cg_id < 0)
+		/* Open the overwrite group. */
+		ovrwt_gid = s_get_grp (fid, OVRWT_GROUP, 1);
+		if (ovrwt_gid < 0)
 		{
-			H5Fclose (f_id);
+			H5Gclose (root_gid);
+			H5Fclose (fid);
+			return -1;
+		}
+		assert (ovrwt_gid > 0);
+
+		/* Generate a name. */
+		time_t tnow = time (NULL);
+		if (tnow == (time_t)-1)
+		{
+			logmsg (0, LOG_ERR,
+				"Could not get current time");
+			H5Gclose (root_gid);
+			H5Gclose (ovrwt_gid);
+			H5Fclose (fid);
+			return -1;
+		}
+		int rc = snprintf (bkpgroup, PATH_MAX, "%s_%lu",
+			creq->group, tnow);
+		if (rc < 0 || rc >= PATH_MAX)
+		{
+			if (rc >= PATH_MAX)
+				logmsg (0, LOG_ERR,
+					"Group name too long, cannot append timestamp");
+			else
+				logmsg (errno, LOG_ERR,
+					"Cannot write to stack buffer");
+			H5Gclose (root_gid);
+			H5Gclose (ovrwt_gid);
+			H5Fclose (fid);
 			return -1;
 		}
 	}
+
+	/* Create the client requested subgroup. */
+	hid_t client_gid;
+	client_gid = s_crt_grp (root_gid, creq->group,
+		ovrwt_gid, bkpgroup);
+	H5Gclose (root_gid); /* not needed anymore */
+	if (ovrwt_gid > 0)
+		H5Gclose (ovrwt_gid); /* not needed anymore */
+	if (client_gid <= 0)
+	{
+		H5Fclose (fid);
+		return -1;
+	}
+	assert (client_gid > 0);
 
 	/* mmap files. */
 	for (int d = 0; d < creq->num_dsets; d++)
@@ -331,18 +469,18 @@ s_hdf5_init (void* creq_data_)
 		if (ddesc->filename == NULL)
 			continue;
 
-		int rc = s_map_file (ddesc, cg_id);
+		int rc = s_map_file (ddesc, client_gid);
 		if (rc == -1)
 		{
-			H5Gclose (cg_id);
-			H5Fclose (f_id);
+			H5Gclose (client_gid);
+			H5Fclose (fid);
 			return -1;
 		}
 	}
 
 	/* Save the file and group id. */
-	creq_data->file_id = f_id;
-	creq_data->group_id = cg_id;
+	creq_data->file_id = fid;
+	creq_data->group_id = client_gid;
 	return 0;
 }
 
@@ -387,6 +525,7 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 		creq->filename == NULL ||
 		strlen (creq->filename) == 0 ||
 		creq->group == NULL ||
+		strlen (creq->group) == 0 ||
 		creq->dsets == NULL ||
 		creq->num_dsets == 0)
 	{

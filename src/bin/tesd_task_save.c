@@ -239,7 +239,7 @@ struct s_task_save_data_t
 	{ /* given by client */
 		uint64_t min_ticks;   // cpature at least that many ticks
 		uint64_t min_events;  // cpature at least that many events
-		uint8_t  overwrite;   // overwrite hdf5 file
+		uint8_t  overwrite;   // HDF5_OVRT_*, see hdf5conv.h
 		uint8_t  async;       // copy data to hdf5 in the background
 		char*    basefname;   // datafiles will be
 		                      // <basefname>-<measurement>
@@ -489,7 +489,7 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 		.group = sjob->measurement,
 		.dsets = dsets,
 		.num_dsets = TSAVE_NUM_DSETS,
-		.ovrwt = sjob->overwrite,
+		.ovrwtmode = sjob->overwrite,
 		.async = sjob->async,
 	};
 
