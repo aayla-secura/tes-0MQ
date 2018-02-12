@@ -60,7 +60,8 @@ struct s_task_save_ftype_t
 #define TSAVE_FTYPE_MCA         8
 #define TSAVE_FTYPE_BAD         9
 	uint8_t PT  : 4;
-	uint8_t     : 3; /* reserved */
+	uint8_t     : 2; /* reserved */
+	uint8_t HDR : 1; /* header frame in multi-frame stream */
 	uint8_t SEQ : 1; /* sequence error in event stream */
 };
 #define linear_etype(pkt_type,tr_type) \
@@ -1463,6 +1464,8 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 			sjob->cur_stream.idx.start = aiodat->size +
 				aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
+
+			fidx.ftype.HDR = 1;
 		}
 		else
 		{ /* ongoing multi-frame stream */
