@@ -359,7 +359,7 @@ s_hdf5_init (void* creq_data_)
 	struct s_creq_data_t* creq_data =
 		(struct s_creq_data_t*)creq_data_;
 	struct hdf5_conv_req_t* creq = creq_data->creq;
-	bool ovrwt = (creq->ovrwtmode == HDF5_OVRT_FILE);
+	bool ovrwt = (creq->ovrwtmode == HDF5_OVRWT_FILE);
 
 	/* Check if hdf5 file exists. */
 	hid_t fid;
@@ -408,7 +408,7 @@ s_hdf5_init (void* creq_data_)
 
 	hid_t ovrwt_gid = -1;
 	char bkpgroup[PATH_MAX] = {0,};
-	if (creq->ovrwtmode == HDF5_OVRT_RELINK)
+	if (creq->ovrwtmode == HDF5_OVRWT_RELINK)
 	{
 		/* Open the overwrite group. */
 		ovrwt_gid = s_get_grp (fid, OVRWT_GROUP, 1);
@@ -527,6 +527,7 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 		creq->group == NULL ||
 		strlen (creq->group) == 0 ||
 		creq->dsets == NULL ||
+		creq->ovrwtmode > 2 ||
 		creq->num_dsets == 0)
 	{
 		logmsg (0, LOG_ERR, "Invalid request");

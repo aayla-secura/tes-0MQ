@@ -1073,7 +1073,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is the request understood? */
-	if (basefname == NULL || sjob->overwrite > 1)
+	if (basefname == NULL)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");

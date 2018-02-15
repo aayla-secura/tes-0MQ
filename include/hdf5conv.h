@@ -53,10 +53,10 @@ struct hdf5_conv_req_t
 	struct  hdf5_dset_desc_t* dsets; /* an array of datasets */
 	uint8_t num_dsets; /* how many elements in datasets array */
 	uint8_t ovrwtmode;
-#define HDF5_OVRT_NONE   0 /* error if /<RG>/<group> exists */
-#define HDF5_OVRT_RELINK 1 /* only move existing group to
+#define HDF5_OVRWT_NONE   0 /* error if /<RG>/<group> exists */
+#define HDF5_OVRWT_RELINK 1 /* only move existing group to
                             * /<RG>/overwritten/<group>_<timestamp> */
-#define HDF5_OVRT_FILE   2 /* overwrite entire hdf5 file */
+#define HDF5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
 	bool    async;     /* return after opening files,
 	                    * convert in background */
 };

@@ -29,6 +29,10 @@
 #define TSAVE_REQ_PIC   "ss8811"
 #define TSAVE_REP_PIC "18888888"
 
+#define TSAVE_HDF5_OVRWT_RELINK 1 /* only move existing group to
+                                   * /<RG>/overwritten/<group>_<timestamp> */
+#define TSAVE_HDF5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
+
 /* mode T */
 #define TAVGTR_REQ_OK    0 // accepted
 #define TAVGTR_REQ_INV   1 // malformed request
@@ -49,7 +53,7 @@ struct tsave_data_t
 	char* measurement;
 	uint64_t min_ticks;
 	uint64_t min_events;
-	uint8_t ovrwrt;
+	uint8_t ovrwtmode;
 	uint8_t async;
 };
 
@@ -70,7 +74,9 @@ usage (const char* self)
 		"                       Default is 1.\n"
 		"    -e <ticks>         Save at least that many non-tick\n"
 		"                       events. Default is 0.\n"
-		"    -o                 Overwrite if file exists.\n"
+		"    -r                 Rename any existing measurement\n"
+		"                       group of that name.\n"
+		"    -o                 Overwrite entire hdf5 file.\n"
 		"    -s                 Request status of filename.\n"
 		"    -a                 Asynchronous hdf5 conversion.\n"
 		"The 'o', 't' or 'e' options cannot be given for status\n"
@@ -329,7 +335,7 @@ save_to_remote (const char* server,
 		data->measurement,
 		data->min_ticks,
 		data->min_events,
-		data->ovrwrt,
+		data->ovrwtmode,
 		data->async);
 	puts ("Waiting for reply");
 
@@ -421,13 +427,13 @@ main (int argc, char **argv)
 	char* buf = NULL;
 	uint64_t min_ticks = 0, min_events = 0, num_hist = 0;
 	uint32_t timeout = 0;
-	uint8_t ovrwrt = 0, async = 0, status = 0;
+	uint8_t ovrwtmode = 0, async = 0, status = 0;
 	/* A for remotely save all frames, T, for locally save traces,
 	 * H for locally save histograms. */
 	char mode = '\0';
 
 	int opt;
-	while ((opt = getopt (argc, argv, "Z:H:T:A:m:w:c:t:e:osah")) != -1)
+	while ((opt = getopt (argc, argv, "Z:H:T:A:m:w:c:t:e:rosah")) != -1)
 	{
 		switch (opt)
 		{
@@ -466,8 +472,23 @@ main (int argc, char **argv)
 					exit (EXIT_FAILURE);
 				}
 				break;
+			case 'r':
+				if (ovrwtmode)
+				{
+					fprintf (stderr, "Conflicting options.\n"
+						"Type %s -h for help\n", argv[0]);
+					exit (EXIT_FAILURE);
+				}
+				ovrwtmode = TSAVE_HDF5_OVRWT_RELINK;
+				break;
 			case 'o':
-				ovrwrt = 1;
+				if (ovrwtmode)
+				{
+					fprintf (stderr, "Conflicting options.\n"
+						"Type %s -h for help\n", argv[0]);
+					exit (EXIT_FAILURE);
+				}
+				ovrwtmode = TSAVE_HDF5_OVRWT_FILE;
 				break;
 			case 's':
 				status = 1;
@@ -516,7 +537,7 @@ main (int argc, char **argv)
 			/* save frames to remote file */
 			if ( num_hist || timeout ||
 				( status &&
-					(async || ovrwrt || min_ticks || min_events) ) )
+					(async || ovrwtmode || min_ticks || min_events) ) )
 			{
 				fprintf (stderr, "Conflicting options.\n"
 					"Type %s -h for help\n", argv[0]);
@@ -529,8 +550,9 @@ main (int argc, char **argv)
 			printf ("Sending %s%s request for remote filename "
 				"%s and group %s.",
 				async ? "an asynchronous " : "a ",
-				status ? "status": (
-					ovrwrt ? "overwrite" : "write" ),
+				status ? "status" : (
+					(ovrwtmode == TSAVE_HDF5_OVRWT_FILE)
+						? "overwrite" : "write" ),
 				filename, measurement);
 			if (!status)
 			{
@@ -545,7 +567,7 @@ main (int argc, char **argv)
 				.measurement = measurement,
 				.min_ticks = min_ticks,
 				.min_events = min_events,
-				.ovrwrt = ovrwrt,
+				.ovrwtmode = ovrwtmode,
 				.async = async,
 			};
 			rc = save_to_remote (server, filename, &tsavereq);
@@ -557,7 +579,7 @@ main (int argc, char **argv)
 			/* save traces to local file */
 			if (strlen (measurement) || num_hist ||
 				async || min_ticks || min_events ||
-				status || ovrwrt)
+				status || ovrwtmode)
 			{
 				fprintf (stderr, "Conflicting options.\n"
 					"Type %s -h for help\n", argv[0]);
@@ -585,7 +607,7 @@ main (int argc, char **argv)
 			/* save histograms to local file */
 			if (strlen (measurement) || timeout ||
 				async || min_ticks || min_events ||
-				status || ovrwrt)
+				status || ovrwtmode)
 			{
 				fprintf (stderr, "Conflicting options.\n"
 					"Type %s -h for help\n", argv[0]);
