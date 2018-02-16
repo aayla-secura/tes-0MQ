@@ -94,6 +94,8 @@
 
 #define PROGNAME "tesd"
 
+#define INIT_TOUT 5
+
 /* Defaults */
 #define UPDATE_INTERVAL 1 // in seconds
 #define TES_IFNAME "netmap:" IFNAME
@@ -121,6 +123,10 @@ struct data_t
 {
 	struct stats_t stats;
 	tes_ifdesc* ifd;
+	char* ifname_req;
+	long int stat_period;
+	uid_t run_as_uid;
+	gid_t run_as_gid;
 };
 
 static void s_usage (const char* self);
@@ -128,8 +134,8 @@ static int s_prepare_if (const char* ifname_full);
 static int s_print_stats (zloop_t* loop, int timer_id, void* stats_);
 static int s_new_pkts_hn (zloop_t* loop,
 		zmq_pollitem_t* pitem, void* data_);
-static int s_coordinator_body (const char* ifname,
-		long int stat_period);
+static daemon_fn s_init;
+static daemon_fn s_coordinator_body;
 
 /* -------------------------------------------------------------- */
 
@@ -141,14 +147,18 @@ s_usage (const char* self)
 		"Options:\n"
 		"    -p <file>         Write pid to file <file>.\n"
 		"                      Only in daemon mode.\n"
-		"                      Defaults to "PIDFILE"\n"
-		"    -i <if>           Read packets from <if> interface\n"
-		"                      Defaults to "TES_IFNAME"\n"
-		"    -f                Run in foreground\n"
-		"    -u <n>            Print statistics every <n> seconds\n"
+		"                      Defaults to "PIDFILE".\n"
+		"    -i <if>           Read packets from <if> interface.\n"
+		"                      Defaults to "TES_IFNAME".\n"
+		"    -f                Run in foreground.\n"
+		"    -U <n>            Print statistics every <n> seconds.\n"
 		"                      Set to 0 to disable. Default is %d\n"
-		"                      in foreground and 0 in daemon mode\n"
-		"    -v                Print debugging messages\n",
+		"                      in foreground and 0 in daemon mode.\n"
+		"    -u <n>            If <n> > 0 setuid to <n>.\n"
+		"                      Default is 0.\n"
+		"    -g <n>            If <n> > 0 setgid to <n>.\n"
+		"                      Default is 0.\n"
+		"    -v                Print debugging messages.\n",
 		self, UPDATE_INTERVAL
 		);
 	exit (EXIT_FAILURE);
@@ -435,16 +445,15 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 	return 0;
 }
 
+/*
+ * Open the interface in netmap mode, put it in promiscuous mode.
+ */
 static int
-s_coordinator_body (const char* ifname_full, long int stat_period)
+s_init (void* data_)
 {
-	char log_id[16];
-	snprintf (log_id, sizeof (log_id), "[Coordinator] ");
-	set_logid (log_id);
+	assert (data_ != NULL);
 
-	int rc;
-	struct data_t data;
-	memset (&data, 0, sizeof (data));
+	struct data_t* data = (struct data_t*)data_;
 
 	/*
 	 * (struct nm_desc).nifp->ni_name contains the true name as
@@ -457,28 +466,66 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	 * nifp->ni_name to s_prepare_if.
 	 */
 	/* Open the interface. */
-	data.ifd = tes_if_open (ifname_full, NULL, 0, 0);
-	if (data.ifd == NULL)
+	data->ifd = tes_if_open (data->ifname_req, NULL, 0, 0);
+	if (data->ifd == NULL)
 	{
 		logmsg (errno, LOG_ERR, "Could not open interface %s",
-			ifname_full);
+			data->ifname_req);
 		return -1;
 	}
-	const char* ifname = tes_if_name (data.ifd);
-	dbg_assert (ifname != NULL);
-	logmsg (0, LOG_INFO, "Opened interface %s", ifname);
-	dbg_assert (tes_if_rxrings (data.ifd) == NUM_RINGS);
+	/* Get the real interface name. */
+	const char* ifname_full = tes_if_name (data->ifd);
+	dbg_assert (ifname_full != NULL);
+	logmsg (0, LOG_INFO, "Opened interface %s", ifname_full);
+	dbg_assert (tes_if_rxrings (data->ifd) == NUM_RINGS);
 
 	/* Bring the interface up and put it in promiscuous mode. */
-	rc = s_prepare_if (ifname);
+	int rc = s_prepare_if (ifname_full);
 	if (rc == -1)
-		goto cleanup; /* s_prepare_if will print the error */
+	{
+		tes_if_close (data->ifd);
+		return -1;
+	}
 
+	return 0;
+}
+
+/*
+ * Drop process privileges, start the task threads and poll. Call
+ * this in a fork, otherwise the process cannot close the interface.
+ */
+static int
+s_coordinator_body (void* data_)
+{
+	assert (data_ != NULL);
+
+	struct data_t* data = (struct data_t*)data_;
+
+	/* Drop privileges */
+	int rc = 0;
+	if (data->run_as_gid != 0)
+	{
+		rc = setgid (data->run_as_gid);
+		if (setgid (0) != -1)
+			rc = -1;
+	}
+	if (rc == 0 && data->run_as_uid != 0)
+	{
+		rc = setuid (data->run_as_uid);
+		if (setuid (0) != -1)
+			rc = -1;
+	}
+	if(rc == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Cannot drop privileges");
+		return -1;
+	}
 
 	/* Start the tasks and register the readers. */
 	zloop_t* loop = zloop_new ();
-	rc = tasks_start (data.ifd, loop);
-	if (rc)
+	rc = tasks_start (data->ifd, loop);
+	if (rc == -1)
 	{
 		logmsg (0, LOG_DEBUG, "Tasks failed to start");
 		goto cleanup;
@@ -487,9 +534,9 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 	/* Register the TES interface as a poller. */
 	struct zmq_pollitem_t pitem;
 	memset (&pitem, 0, sizeof (pitem));
-	pitem.fd = tes_if_fd (data.ifd);
+	pitem.fd = tes_if_fd (data->ifd);
 	pitem.events = ZMQ_POLLIN;
-	rc = zloop_poller (loop, &pitem, s_new_pkts_hn, &data);
+	rc = zloop_poller (loop, &pitem, s_new_pkts_hn, data);
 	if (rc == -1)
 	{
 		logmsg (errno, LOG_ERR,
@@ -497,24 +544,24 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 		goto cleanup;
 	}
 
-	if (stat_period > 0)
+	if (data->stat_period > 0)
 	{
 		/* Set the timer. */
-		rc = zloop_timer (loop, 1000 * stat_period, 0,
-			s_print_stats, &data.stats);
+		rc = zloop_timer (loop, 1000 * data->stat_period, 0,
+			s_print_stats, &data->stats);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR, "Could not set a timer");
 			goto cleanup;
 		}
 		logmsg (0, LOG_DEBUG, "Will print stats every %d seconds",
-			stat_period);
+			data->stat_period);
 	}
 
 	logmsg (0, LOG_DEBUG, "All threads initialized");
 	rc = zloop_start (loop);
 
-	if (rc)
+	if (rc == -1)
 	{
 		logmsg (0, LOG_DEBUG, "Terminated by handler");
 	}
@@ -523,11 +570,11 @@ s_coordinator_body (const char* ifname_full, long int stat_period)
 		logmsg (0, LOG_DEBUG, "Interrupted");
 	}
 
+	s_print_stats (NULL, 0, &data->stats);
+
 cleanup:
 	tasks_destroy ();
 	zloop_destroy (&loop);
-	tes_if_close (data.ifd);
-	s_print_stats (NULL, 0, &data.stats);
 	return rc;
 }
 
@@ -542,14 +589,16 @@ main (int argc, char **argv)
 	/* Process command-line options. */
 	bool is_daemon = 1;
 	bool is_verbose = 0;
+	gid_t run_as_gid = 0;
+	uid_t run_as_uid = 0;
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
-	char ifname_full[IFNAMSIZ];
-	memset (ifname_full, 0, sizeof (ifname_full));
+	char ifname_req[IFNAMSIZ];
+	memset (ifname_req, 0, sizeof (ifname_req));
 	char pidfile[PATH_MAX];
 	memset (pidfile, 0, sizeof (pidfile));
-	while ( (opt = getopt (argc, argv, "p:i:u:fvh")) != -1 )
+	while ( (opt = getopt (argc, argv, "p:i:U:u:g:fvh")) != -1 )
 	{
 		switch (opt)
 		{
@@ -558,15 +607,23 @@ main (int argc, char **argv)
 					"%s", optarg);
 				break;
 			case 'i':
-				snprintf (ifname_full, sizeof (ifname_full),
+				snprintf (ifname_req, sizeof (ifname_req),
 					"%s", optarg);
 				break;
-			case 'u':
+			case 'U':
 				stat_period = strtol (optarg, &buf, 10);
 				if (strlen (buf))
-				{
 					s_usage (argv[0]);
-				}
+				break;
+			case 'u':
+				run_as_uid = strtoul (optarg, &buf, 10);
+				if (strlen (buf))
+					s_usage (argv[0]);
+				break;
+			case 'g':
+				run_as_gid = strtoul (optarg, &buf, 10);
+				if (strlen (buf))
+					s_usage (argv[0]);
 				break;
 			case 'f':
 				is_daemon = 0;
@@ -587,38 +644,63 @@ main (int argc, char **argv)
 	{
 		sprintf (pidfile, PIDFILE);
 	}
-	if (strlen (ifname_full) == 0)
+	if (strlen (ifname_req) == 0)
 	{
-		sprintf (ifname_full, TES_IFNAME);
+		sprintf (ifname_req, TES_IFNAME);
 	}
 	if (stat_period == -1 && ! is_daemon)
 	{
 		stat_period = UPDATE_INTERVAL;
 	}
 
+	struct data_t data;
+	memset (&data, 0, sizeof (data));
+	data.ifname_req = ifname_req;
+
 	if (is_daemon)
 	{
 		/* Go into background. */
-		rc = daemonize (pidfile, NULL, NULL, 0);
+		rc = daemonize (pidfile, s_init, &data, INIT_TOUT);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
 				"Failed to go into background");
 			exit (EXIT_FAILURE);
 		}
-		set_verbose (is_verbose);
 
 		/* Start syslog. */
 		openlog ("TES server", 0, LOG_DAEMON);
-
 		logmsg (0, LOG_DEBUG,
 			"Wrote pid to file '%s'", pidfile);
 	}
+	else
+	{
+		rc = s_init (&data);
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Failed to initialize");
+			exit (EXIT_FAILURE);
+		}
+	}
 
-	rc = s_coordinator_body (ifname_full, stat_period);
+	char log_id[16];
+	snprintf (log_id, sizeof (log_id), "[Coordinator] ");
+	set_logid (log_id);
+	set_verbose (is_verbose);
+
+	/* Fork and run the coordinator.
+	 * s_coordinator_body will drop privileges.
+	 * fork_and_run will block until done (indefinitely). */
+	data.stat_period = stat_period;
+	data.run_as_uid = run_as_uid;
+	data.run_as_gid = run_as_gid;
+	rc = fork_and_run (s_coordinator_body, NULL, &data, -1);
 
 	/* Should we remove the pidfile? */
 	logmsg (0, LOG_INFO, "Shutting down");
+	assert (data.ifd != NULL);
+	tes_if_close (data.ifd);
 
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
