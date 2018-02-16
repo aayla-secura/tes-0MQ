@@ -17,7 +17,7 @@ typedef int (daemon_fn)(void*);
  * Daemonize process according to SysV specification:
  * https://www.freedesktop.org/software/systemd/man/daemon.html#SysV%20Daemons
  *
- * on success (failure) daemonize_and_init will:
+ * on success (failure) daemonize will:
  *    close all file descriptors
  *    fork
  *     |-> setsid -> fork
@@ -27,12 +27,14 @@ typedef int (daemon_fn)(void*);
  *     |
  *    exit (return)
  * 
- * If second fork succeeds, call initializer (unless NULL) passing
- * it arg. If initializer returns 0, parent exits with 0 and the
- * daemon returns 0 to caller.
+ * If second fork succeeds, clear the umask, change the working
+ * directory to /, call initializer (unless NULL) passing
+ * it arg. If initializer returns 0, close stdin, stdout, stderr,
+ * write pid to file.
 
- * If we fail before calling initializer, or if initializer fails,
- * the daemon exits and the parent returns with -1.
+ * If we fail at any point, the daemon exits and the parent returns
+ * with -1.
+ * Otherwise parent exits with 0 and the daemon returns 0 to caller.
  *
  * The parent will wait for the initializer up to timeout seconds.
  * If timeout is 0, it defaults to 3 seconds.

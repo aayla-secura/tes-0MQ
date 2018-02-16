@@ -446,6 +446,20 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		_exit (EXIT_FAILURE);
 	}
 
+	/* Call initializer. */
+	if (initializer != NULL)
+	{
+		rc = initializer (arg);
+		if (rc == -1)
+		{
+			logmsg (0, LOG_ERR,
+				"Initializer encountered an error");
+			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
+
+			_exit (EXIT_FAILURE);
+		}
+	}
+
 	/* Reopen STDIN, STDOUT and STDERR to /dev/null. */
 	is_daemon = 1;
 	rc = 0;
@@ -499,20 +513,6 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		logmsg (0, LOG_DEBUG,
 			"Wrote pid (%u) to pidfile (%s)",
 			pid, pidfile);
-	}
-
-	/* Call initializer. */
-	if (initializer != NULL)
-	{
-		rc = initializer (arg);
-		if (rc == -1)
-		{
-			logmsg (0, LOG_ERR,
-				"Initializer encountered an error");
-			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-
-			_exit (EXIT_FAILURE);
-		}
 	}
 
 	/* Done, signal child #1. */
