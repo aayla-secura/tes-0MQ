@@ -446,7 +446,6 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	{
 		logmsg (errno, LOG_DEBUG, "chdir (\"/\")");
 		s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-
 		_exit (EXIT_FAILURE);
 	}
 
@@ -459,7 +458,6 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 			logmsg (0, LOG_ERR,
 				"Initializer encountered an error");
 			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-
 			_exit (EXIT_FAILURE);
 		}
 	}
@@ -479,7 +477,6 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 		logmsg (errno, LOG_ERR,
 			"Failed to reopen stdin, stdout or stderr");
 		s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-
 		_exit (EXIT_FAILURE);
 	}
 
@@ -494,7 +491,6 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 				"Failed to open pidfile %s",
 				pidfile);
 			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-
 			_exit (EXIT_FAILURE);
 		}
 		
@@ -608,7 +604,6 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 			logmsg (0, LOG_ERR,
 				"Initializer encountered an error");
 			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-
 			_exit (EXIT_FAILURE);
 		}
 	}
@@ -626,7 +621,6 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 		{
 			logmsg (0, LOG_DEBUG,
 				"Action encountered an error");
-
 			_exit (EXIT_FAILURE);
 		}
 	}
@@ -675,13 +669,14 @@ run_as (daemon_fn* action, void* arg, uid_t uid, gid_t gid)
 	{
 		rc = setuid (uid);
 		/* Check if we can regain user privilege. */
-		if (uid != 0 && setuid (0) != -1)
+		if (rc == 0 && uid != 0 && setuid (0) != -1)
 			rc = -1;
 	}
 	/* Check if we can regain group privilege. */
-	if (gid != (gid_t)-1 && /* we tried setting it */
+	if (rc == 0 &&
+		gid != (gid_t)-1 && /* we tried setting it */
 		geteuid () != 0 && /* we shouldn't be able to regain */
-			gid != 0 && setgid (0) != -1)
+		gid != 0 && setgid (0) != -1)
 		rc = -1;
 
 	if(rc == -1)
@@ -698,7 +693,6 @@ run_as (daemon_fn* action, void* arg, uid_t uid, gid_t gid)
 	{
 		logmsg (0, LOG_DEBUG,
 			"Action encountered an error");
-
 		_exit (EXIT_FAILURE);
 	}
 	_exit (EXIT_SUCCESS);
