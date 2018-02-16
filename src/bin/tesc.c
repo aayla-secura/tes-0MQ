@@ -16,59 +16,24 @@
 #  endif
 #endif
 
-/* mode A */
-#define TSAVE_REQ_OK    0 // accepted
-#define TSAVE_REQ_INV   1 // malformed request
-#define TSAVE_REQ_ABORT 2 // no such job (for status query) or file
-						  // exist (for no-overwrite)
-#define TSAVE_REQ_EPERM 3 // a filename is not allowed
-#define TSAVE_REQ_FAIL  4 // error initializing, nothing was written
-#define TSAVE_REQ_EWRT  5 // error while writing, less than minimum
-						  // requested was saved
-#define TSAVE_REQ_ECONV 6 // error while converting to hdf5
-#define TSAVE_REQ_PIC   "ss8811"
-#define TSAVE_REP_PIC "18888888"
-
-#define TSAVE_HDF5_OVRWT_RELINK 1 /* only move existing group to
-                                   * /<RG>/overwritten/<group>_<timestamp> */
-#define TSAVE_HDF5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
-
-/* mode T */
-#define TAVGTR_REQ_OK    0 // accepted
-#define TAVGTR_REQ_INV   1 // malformed request
-#define TAVGTR_REQ_TOUT  2 // timeout error
-#define TAVGTR_REQ_PIC  "4"
-#define TAVGTR_REP_PIC "1c"
-#define MAX_TRACE_SIZE 65528U
-
-/* mode H */
-#if 0 /* FIX */
-#define MAX_HIST_SIZE 65528U
-#else
-#define MAX_HIST_SIZE 65576U
-#endif
-
-struct tsave_data_t
-{
-	char* measurement;
-	uint64_t min_ticks;
-	uint64_t min_events;
-	uint8_t ovrwtmode;
-	uint8_t async;
-};
-
-static int interrupted;
+static char s_prog_name[PATH_MAX];
+static const char* c_bold = "";
+static const char* c_reset = "";
+static const char* opts_g = "Z:F:";
+static const char* opts_r_all = "m:w:t:e:rosa";
+static const char* opts_l_trace = "w:";
+static const char* opts_l_hist = "c:";
 
 static void
-usage (const char* self)
+s_usage (void)
 {
 	fprintf (stdout,
-		"Usage: %s -Z <server> [options]\n"
-		"The format for <server> is <proto>://<host>:<port>\n\n"
-		"The client operates in one of three modes:\n"
-		"1) Save frames to a remote file: Selected by the 'A' option.\n"
+		"Usage: %s -Z <server> -F <filename> <command> [command options]\n"
+		"The format for <server> is <proto>://<host>:<port>\n"
+		"Command-specific options must follow command.\n"
+		"Allowed commands:\n\n"
+		"%sremote_all%s: Save frames to a remote file.\n"
 		"  Options:\n"
-		"    -A <filename>      Remote filename.\n"
 		"    -m <measurement>   Measurement name. Default is empty.\n"
 		"    -t <ticks>         Save at least that many ticks.\n"
 		"                       Default is 1.\n"
@@ -79,28 +44,51 @@ usage (const char* self)
 		"    -o                 Overwrite entire hdf5 file.\n"
 		"    -s                 Request status of filename.\n"
 		"    -a                 Asynchronous hdf5 conversion.\n"
-		"The 'o', 't' or 'e' options cannot be given for status\n"
-		"                       requests.\n\n"
-		"2) Save average traces to a local file: Selected by the 'T' option.\n"
+		"Only one of 'o' and 'r' options can be given.\n"
+		"For status requests (the 's' option) only measurement can be specified.\n\n"
+		"%slocal_trace%s: Save average traces to a local file.\n"
 		"  Options:\n"
-		"    -T <filename>      Local filename. Will append if\n"
-		"                       existing.\n"
 		"    -w <timeout>       Timeout in seconds. Sent to the server, will\n"
 		"                       receive a timeout error if no trace arrives\n"
-		"                       in this period.\n"
-		"3) Save histograms to a local file: Selected by the 'H' option.\n"
+		"                       in this period. Default is 5.\n\n"
+		"%slocal_hist%s: Save histograms to a local file.\n"
 		"  Options:\n"
-		"    -H <filename>      Local filename. Will append if\n"
-		"                       existing.\n"
 		"    -c <count>         Save up to that many histograms.\n"
-		"                       Default is 1.\n\n",
-		self
+		"                       Default is 1.\n",
+		s_prog_name, c_bold, c_reset, c_bold, c_reset, c_bold, c_reset
 		);
-	exit (EXIT_SUCCESS);
+}
+
+static void
+s_conflicting_opt (void)
+{
+	fprintf (stderr, "Conflicting options.\n"
+		"Type %s -h for help\n", s_prog_name);
+}
+
+static void
+s_invalid_arg (char opt)
+{
+	fprintf (stderr, "Invalid format for option %c.\n"
+		"Type %s -h for help\n", opt, s_prog_name);
+}
+
+static void
+s_missing_arg (char opt)
+{
+	fprintf (stderr, "Option %c requires an argument.\n"
+		"Type %s -h for help\n", opt, s_prog_name);
+}
+
+static void
+s_invalid_opt (char opt)
+{
+	fprintf (stderr, "Unknown option %c.\n"
+		"Type %s -h for help\n", opt, s_prog_name);
 }
 
 static int
-prompt (void)
+s_prompt (void)
 {
 	printf ("\nProceed (y/n)? ");
 	do
@@ -125,16 +113,69 @@ prompt (void)
 	} while (1);
 }
 
-static void
-int_hn (int sig)
-{
-	interrupted = 1;
-}
+/* -------------------- AVERAGE TRACE ------------------- */
+#define L_TRACE_REQ_OK    0 // accepted
+#define L_TRACE_REQ_INV   1 // malformed request
+#define L_TRACE_REQ_TOUT  2 // timeout error
+#define L_TRACE_REQ_PIC  "4"
+#define L_TRACE_REP_PIC "1c"
+#define L_TRACE_MAX_SIZE 65528U
 
 static int
-save_trace (const char* server,
-		const char* filename, uint32_t timeout)
+s_local_save_trace (const char* server, const char* filename,
+	int argc, char **argv)
 {
+	uint32_t timeout = 5;
+
+	/* Command-line */
+	char* buf = NULL;
+	int opt;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	char optstring[64];
+	int rc = snprintf (optstring, sizeof (optstring), ":%s%sh",
+		opts_g, opts_l_trace);
+	if (rc < 0)
+	{
+		perror ("snprintf");
+		return -1;
+	}
+	assert ((size_t)rc < sizeof (optstring));
+	while ((opt = getopt (argc, argv, optstring)) != -1)
+	{
+		switch (opt)
+		{
+			case 'Z':
+			case 'F':
+				break;
+			case 'w':
+				timeout = strtoul (optarg, &buf, 10);
+				if (strlen (buf) || timeout == 0)
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			default:
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+	assert (timeout > 0);
+
+	/* Proceed? */
+	printf ("Will save an average trace to local file '%s'.\n"
+		"Timeout is %u seconds.\n",
+		filename, timeout);
+	if ( s_prompt () )
+		return -1;
+
 	/* Open the socket */
 	errno = 0;
 	zsock_t* sock = zsock_new_req (server);
@@ -168,12 +209,12 @@ save_trace (const char* server,
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Send the request */
-	zsock_send (sock, TAVGTR_REQ_PIC, timeout);
+	zsock_send (sock, L_TRACE_REQ_PIC, timeout);
 	puts ("Waiting for reply");
 
 	uint8_t rep;
 	zchunk_t* trace;
-	int rc = zsock_recv (sock, TAVGTR_REP_PIC, &rep, &trace);
+	rc = zsock_recv (sock, L_TRACE_REP_PIC, &rep, &trace);
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -185,13 +226,13 @@ save_trace (const char* server,
 	printf ("\n");
 	switch (rep)
 	{
-		case TAVGTR_REQ_INV:
+		case L_TRACE_REQ_INV:
 			printf ("Request was not understood\n");
 			break;
-		case TAVGTR_REQ_TOUT:
+		case L_TRACE_REQ_TOUT:
 			printf ("Request timed out\n");
 			break;
-		case TAVGTR_REQ_OK:
+		case L_TRACE_REQ_OK:
 			trsize = zchunk_size (trace);
 			printf ("Received %lu bytes of data\n",
 				trsize);
@@ -221,9 +262,68 @@ save_trace (const char* server,
 	return 0;
 }
 
+/* ---------------------- HISTOGRAM --------------------- */
+#if 0 /* FIX */
+#define L_HIST_MAX_SIZE 65528U
+#else
+#define L_HIST_MAX_SIZE 65576U
+#endif
+
 static int
-save_hist (const char* server, const char* filename, uint64_t cnt)
+s_local_save_hist (const char* server, const char* filename,
+	int argc, char **argv)
 {
+	uint64_t num_hist = 1;
+
+	/* Command-line */
+	char* buf = NULL;
+	int opt;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	char optstring[64];
+	int rc = snprintf (optstring, sizeof (optstring), ":%s%sh",
+		opts_g, opts_l_hist);
+	if (rc < 0)
+	{
+		perror ("snprintf");
+		return -1;
+	}
+	assert ((size_t)rc < sizeof (optstring));
+	while ((opt = getopt (argc, argv, optstring)) != -1)
+	{
+		switch (opt)
+		{
+			case 'Z':
+			case 'F':
+				break;
+			case 'c':
+				num_hist = strtoul (optarg, &buf, 10);
+				if (strlen (buf) || num_hist == 0)
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			default:
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+	assert (num_hist > 0);
+
+	/* Proceed? */
+	printf ("Will save %lu histogram%s to local file '%s'.\n"
+		"Maximum total size is %lu.\n",
+		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*L_HIST_MAX_SIZE);
+	if ( s_prompt () )
+		return -1;
+
 	/* Open the socket */
 	errno = 0;
 	zsock_t* sock = zsock_new_sub (server, "");
@@ -257,7 +357,7 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Allocate space */
-	int rc = posix_fallocate (fd, fsize, cnt*MAX_HIST_SIZE);
+	rc = posix_fallocate (fd, fsize, num_hist*L_HIST_MAX_SIZE);
 	if (rc)
 	{
 		errno = rc; /* posix_fallocate does not set it */
@@ -271,7 +371,7 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 	/* TO DO: map starting at the last page boundary before end of
 	 * file. */
 	unsigned char* map = (unsigned char*)mmap (NULL,
-		fsize + cnt*MAX_HIST_SIZE, PROT_WRITE, MAP_SHARED, fd, 0);
+		fsize + num_hist*L_HIST_MAX_SIZE, PROT_WRITE, MAP_SHARED, fd, 0);
 	if (map == (void*)-1)
 	{
 		perror ("Could not mmap file");
@@ -284,16 +384,16 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 	size_t hsize = 0;
 	void* sock_h = zsock_resolve (sock);
 	assert (sock_h != NULL);
-	for (; ! interrupted && h < cnt; h++)
+	for (; ! zsys_interrupted && h < num_hist; h++)
 	{
 		rc = zmq_recv (sock_h, map + fsize + hsize,
-			MAX_HIST_SIZE, 0);
+			L_HIST_MAX_SIZE, 0);
 		if (rc == -1)
 		{
 			perror ("Could not write to file");
 			break;
 		}
-		else if ((size_t)rc > MAX_HIST_SIZE)
+		else if ((size_t)rc > L_HIST_MAX_SIZE)
 		{
 			fprintf (stderr,
 				"Frame is too large: %lu bytes", (size_t)rc);
@@ -301,11 +401,12 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 		}
 		hsize += (size_t)rc;
 	}
-	if (h < cnt - 1)
-		printf ("Saved %lu histograms\n", h);
+	if (h < num_hist - 1)
+		printf ("Saved %lu histogram%s\n",
+			h, (num_hist > 1)? "s" : "");
 
 	zsock_destroy (&sock);
-	munmap (map, cnt*MAX_HIST_SIZE);
+	munmap (map, num_hist*L_HIST_MAX_SIZE);
 	rc = ftruncate (fd, fsize + hsize);
 	if (rc == -1)
 		perror ("Could not truncate file");
@@ -313,10 +414,137 @@ save_hist (const char* server, const char* filename, uint64_t cnt)
 	return 0;
 }
 
+/* -------------------- SAVE-TO-FILE -------------------- */
+#define R_ALL_REQ_OK    0 // accepted
+#define R_ALL_REQ_INV   1 // malformed request
+#define R_ALL_REQ_ABORT 2 // no such job (for status query) or file
+						  // exist (for no-overwrite)
+#define R_ALL_REQ_EPERM 3 // a filename is not allowed
+#define R_ALL_REQ_FAIL  4 // error initializing, nothing was written
+#define R_ALL_REQ_EWRT  5 // error while writing, less than minimum
+						  // requested was saved
+#define R_ALL_REQ_ECONV 6 // error while converting to hdf5
+#define R_ALL_REQ_PIC   "ss8811"
+#define R_ALL_REP_PIC "18888888"
+
+#define R_ALL_HDF5_OVRWT_RELINK 1 /* only move existing group to
+                                   * /<RG>/overwritten/<group>_<timestamp> */
+#define R_ALL_HDF5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
+
 static int
-save_to_remote (const char* server,
-		const char* filename, struct tsave_data_t* data)
+s_remote_save_all (const char* server, const char* filename,
+	int argc, char **argv)
 {
+	char measurement[1024];
+	memset (measurement, 0, sizeof (measurement));
+	uint64_t min_ticks = 0, min_events = 0;
+	uint8_t ovrwtmode = 0, async = 0, status = 0;
+
+	/* Command-line */
+	char* buf = NULL;
+	int opt;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	char optstring[64];
+	int rc = snprintf (optstring, sizeof (optstring), ":%s%sh",
+		opts_g, opts_r_all);
+	if (rc < 0)
+	{
+		perror ("snprintf");
+		return -1;
+	}
+	assert ((size_t)rc < sizeof (optstring));
+	while ((opt = getopt (argc, argv, optstring)) != -1)
+	{
+		switch (opt)
+		{
+			case 'Z':
+			case 'F':
+				break;
+			case 'm':
+				snprintf (measurement, sizeof (measurement),
+					"%s", optarg);
+				break;
+			case 't':
+			case 'e':
+				if (opt == 't')
+					min_ticks = strtoul (optarg, &buf, 10);
+				else
+					min_events = strtoul (optarg, &buf, 10);
+
+				if (strlen (buf))
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case 'r':
+			case 'o':
+				if (ovrwtmode)
+				{
+					s_conflicting_opt ();
+					return -1;
+				}
+
+				if (opt == 'r')
+					ovrwtmode = R_ALL_HDF5_OVRWT_RELINK;
+				else
+					ovrwtmode = R_ALL_HDF5_OVRWT_FILE;
+				break;
+			case 's':
+				status = 1;
+				break;
+			case 'a':
+				async = 1;
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			default:
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+
+	/* Check for conflicting options. */
+	if ( status &&
+		(async || ovrwtmode || min_ticks || min_events) )
+	{
+		s_conflicting_opt ();
+		return -1;
+	}
+
+	/* Min ticks defaults to 1. */
+	if ( ! min_ticks && ! status )
+		min_ticks = 1;
+
+	/* Proceed? */
+	if (status)
+	{
+		printf ("Sending a status request for remote filename "
+			"'%s' and measurement group '%s'.\n",
+			filename, measurement);
+	}
+	else
+	{
+		printf ("Sending a%s request for remote filename "
+			"'%s' and measurement group '%s'.\n"
+			"%sWill terminate after at least "
+			"%lu ticks and %lu events.\n",
+			async ? "n asynchronous" : "",
+			filename, measurement,
+			(ovrwtmode == R_ALL_HDF5_OVRWT_FILE) ?
+				"Will overwrite file.\n" : 
+				(ovrwtmode == R_ALL_HDF5_OVRWT_RELINK) ?
+					"Will backup measurement group.\n" : "",
+			min_ticks, min_events);
+	}
+	if ( s_prompt () )
+		return -1;
+
 	/* Open the socket */
 	errno = 0;
 	zsock_t* sock = zsock_new_req (server);
@@ -330,18 +558,18 @@ save_to_remote (const char* server,
 	}
 
 	/* Send the request */
-	zsock_send (sock, TSAVE_REQ_PIC,
+	zsock_send (sock, R_ALL_REQ_PIC,
 		filename,
-		data->measurement,
-		data->min_ticks,
-		data->min_events,
-		data->ovrwtmode,
-		data->async);
+		measurement,
+		min_ticks,
+		min_events,
+		ovrwtmode,
+		async);
 	puts ("Waiting for reply");
 
 	uint8_t fstat;
 	uint64_t ticks, events, traces, hists, frames, missed, dropped;
-	int rc = zsock_recv (sock, TSAVE_REP_PIC,
+	rc = zsock_recv (sock, R_ALL_REP_PIC,
 		&fstat,
 		&ticks,
 		&events,
@@ -359,26 +587,26 @@ save_to_remote (const char* server,
 	printf ("\n");
 	switch (fstat)
 	{
-		case TSAVE_REQ_INV:
+		case R_ALL_REQ_INV:
 			printf ("Request was not understood\n");
 			break;
-		case TSAVE_REQ_ABORT:
-			printf ("File %s\n", data->min_ticks ?
+		case R_ALL_REQ_ABORT:
+			printf ("File %s\n", min_ticks ?
 				"exists" : "does not exist");
 			break;
-		case TSAVE_REQ_EPERM:
+		case R_ALL_REQ_EPERM:
 			printf ("Filename is not allowed\n");
 			break;
-		case TSAVE_REQ_FAIL:
+		case R_ALL_REQ_FAIL:
 			printf ("Unknown error while initializing\n\n");
 			break;
-		case TSAVE_REQ_EWRT:
+		case R_ALL_REQ_EWRT:
 			printf ("Unknown error while writing\n\n");
 			/* fallthrough */
-		case TSAVE_REQ_ECONV:
+		case R_ALL_REQ_ECONV:
 			printf ("Unknown error while converting\n\n");
 			/* fallthrough */
-		case TSAVE_REQ_OK:
+		case R_ALL_REQ_OK:
 			printf ("%s\n"
 				"ticks:          %lu\n"
 				"other events:   %lu\n"
@@ -387,7 +615,7 @@ save_to_remote (const char* server,
 				"saved frames:   %lu\n"
 				"missed frames:  %lu\n"
 				"dropped frames: %lu\n",
-				data->min_ticks ? "Wrote" : "File contains",
+				status ? "Wrote" : "File contains",
 				ticks, events, traces, hists, frames, missed, dropped);
 			break;
 		default:
@@ -397,43 +625,36 @@ save_to_remote (const char* server,
 	return 0;
 }
 
-	int
+int
 main (int argc, char **argv)
 {
-	int rc;
-
-	/* Signal handlers */
-	struct sigaction sigact;
-	sigact.sa_flags = 0;
-	sigact.sa_handler = int_hn;
-	sigemptyset (&sigact.sa_mask);
-	sigaddset (&sigact.sa_mask, SIGINT);
-	sigaddset (&sigact.sa_mask, SIGTERM);
-	rc  = sigaction (SIGINT, &sigact, NULL);
-	rc |= sigaction (SIGTERM, &sigact, NULL);
-	if (rc == -1)
-	{
-		perror ("sigaction");
-		exit (EXIT_FAILURE);
-	}
+	strncpy (s_prog_name, argv[0], sizeof (s_prog_name));
+	zsys_init ();
+	zsys_catch_interrupts ();
 
 	/* Command-line */
 	char server[1024];
 	memset (server, 0, sizeof (server));
 	char filename[PATH_MAX];
 	memset (filename, 0, sizeof (filename));
-	char measurement[1024];
-	memset (measurement, 0, sizeof (measurement));
-	char* buf = NULL;
-	uint64_t min_ticks = 0, min_events = 0, num_hist = 0;
-	uint32_t timeout = 0;
-	uint8_t ovrwtmode = 0, async = 0, status = 0;
-	/* A for remotely save all frames, T, for locally save traces,
-	 * H for locally save histograms. */
-	char mode = '\0';
 
 	int opt;
-	while ((opt = getopt (argc, argv, "Z:H:T:A:m:w:c:t:e:rosah")) != -1)
+	/* Handle missing arguments, but not unknown options here. */
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	char optstring[64];
+	int rc = snprintf (optstring, sizeof (optstring), ":%s%s%s%sh",
+		opts_g, opts_r_all, opts_l_trace, opts_l_hist);
+	if (rc < 0)
+	{
+		perror ("snprintf");
+		return -1;
+	}
+	assert ((size_t)rc < sizeof (optstring));
+	while ((opt = getopt (argc, argv, optstring)) != -1)
 	{
 		switch (opt)
 		{
@@ -441,190 +662,57 @@ main (int argc, char **argv)
 				snprintf (server, sizeof (server),
 					"%s", optarg);
 				break;
-			case 'A':
-			case 'T':
-			case 'H':
+			case 'F':
 				snprintf (filename, sizeof (filename),
 					"%s", optarg);
-				mode = opt;
-				break;
-			case 'm':
-				snprintf (measurement, sizeof (measurement),
-					"%s", optarg);
-				break;
-			case 'w':
-				timeout = strtoul (optarg, &buf, 10);
-			case 'c':
-				if (opt == 'c')
-					num_hist = strtoul (optarg, &buf, 10);
-			case 't':
-				if (opt == 't')
-					min_ticks = strtoul (optarg, &buf, 10);
-			case 'e':
-				if (opt == 'e')
-					min_events = strtoul (optarg, &buf, 10);
-
-				if (strlen (buf))
-				{
-					fprintf (stderr, "Invalid format for "
-						"option %c.\n", opt);
-					// usage (argv[0]);
-					exit (EXIT_FAILURE);
-				}
-				break;
-			case 'r':
-				if (ovrwtmode)
-				{
-					fprintf (stderr, "Conflicting options.\n"
-						"Type %s -h for help\n", argv[0]);
-					exit (EXIT_FAILURE);
-				}
-				ovrwtmode = TSAVE_HDF5_OVRWT_RELINK;
-				break;
-			case 'o':
-				if (ovrwtmode)
-				{
-					fprintf (stderr, "Conflicting options.\n"
-						"Type %s -h for help\n", argv[0]);
-					exit (EXIT_FAILURE);
-				}
-				ovrwtmode = TSAVE_HDF5_OVRWT_FILE;
-				break;
-			case 's':
-				status = 1;
-				break;
-			case 'a':
-				async = 1;
 				break;
 			case 'h':
-			case '?':
-				usage (argv[0]);
-				break;
-			default:
-				/* we forgot to handle an option */
-				assert (0);
+				s_usage ();
+				exit (EXIT_SUCCESS);
+			case ':': /* missing argument to option */
+				s_missing_arg (optopt);
+				exit (EXIT_FAILURE);
 		}
 	}
 
-	if (argc > optind)
-	{
-		fprintf (stderr, "Extra arguments given.\n"
-			"Type %s -h for help\n", argv[0]);
-		exit (EXIT_FAILURE);
-	}
-
-	/* Handle missing mandatory options. */
+	/* getopt won't complain from empty string argument. */
 	if (strlen (server) == 0)
 	{
 		fprintf (stderr, "You must specify the remote address.\n"
-			"Type %s -h for help\n", argv[0]);
+			"Type %s -h for help\n", s_prog_name);
 		exit (EXIT_FAILURE);
 	}
 	if (strlen (filename) == 0)
 	{
 		fprintf (stderr, "You must specify a filename.\n"
-			"Type %s -h for help\n", argv[0]);
+			"Type %s -h for help\n", s_prog_name);
 		exit (EXIT_FAILURE);
 	}
-	/* if filename was given, mode should have been set */
-	assert (mode != '\0');
 
-	/* Handle conflicting options and set defaults. */
-	/* Then, prompt and take action. */
-	switch (mode)
+	/* Get command argument. */
+	if (optind == argc)
 	{
-		case 'A':
-			/* save frames to remote file */
-			if ( num_hist || timeout ||
-				( status &&
-					(async || ovrwtmode || min_ticks || min_events) ) )
-			{
-				fprintf (stderr, "Conflicting options.\n"
-					"Type %s -h for help\n", argv[0]);
-				exit (EXIT_FAILURE);
-			}
-			if ( ! min_ticks && ! status )
-				min_ticks = 1;
-
-			/* Proceed? */
-			printf ("Sending %s%s request for remote filename "
-				"%s and group %s.",
-				async ? "an asynchronous " : "a ",
-				status ? "status" : (
-					(ovrwtmode == TSAVE_HDF5_OVRWT_FILE)
-						? "overwrite" : "write" ),
-				filename, measurement);
-			if (!status)
-			{
-				printf (" Will terminate after at least "
-					"%lu ticks and %lu events.",
-					min_ticks, min_events);
-			}
-			if ( prompt () )
-				exit (EXIT_SUCCESS);
-
-			struct tsave_data_t tsavereq = {
-				.measurement = measurement,
-				.min_ticks = min_ticks,
-				.min_events = min_events,
-				.ovrwtmode = ovrwtmode,
-				.async = async,
-			};
-			rc = save_to_remote (server, filename, &tsavereq);
-			exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
-
-			break;
-
-		case 'T':
-			/* save traces to local file */
-			if (strlen (measurement) || num_hist ||
-				async || min_ticks || min_events ||
-				status || ovrwtmode)
-			{
-				fprintf (stderr, "Conflicting options.\n"
-					"Type %s -h for help\n", argv[0]);
-				exit (EXIT_FAILURE);
-			}
-			if (timeout == 0)
-			{
-				fprintf (stderr, "You must specify a non-zero timeout.\n"
-					"Type %s -h for help\n", argv[0]);
-				exit (EXIT_FAILURE);
-			}
-
-			/* Proceed? */
-			printf ("Will save the first average trace in the next "
-				"%u seconds to local file %s.",
-				timeout, filename);
-			if ( prompt () )
-				exit (EXIT_SUCCESS);
-			rc = save_trace (server, filename, timeout);
-			exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
-
-			break;
-
-		case 'H':
-			/* save histograms to local file */
-			if (strlen (measurement) || timeout ||
-				async || min_ticks || min_events ||
-				status || ovrwtmode)
-			{
-				fprintf (stderr, "Conflicting options.\n"
-					"Type %s -h for help\n", argv[0]);
-				exit (EXIT_FAILURE);
-			}
-			if ( ! num_hist )
-				num_hist = 1;
-
-			/* Proceed? */
-			printf ("Will save %lu histograms, each of maximum "
-				"size %u to local file %s.",
-				num_hist, MAX_HIST_SIZE, filename);
-			if ( prompt () )
-				exit (EXIT_SUCCESS);
-			rc = save_hist (server, filename, num_hist);
-			exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
-
-			break;
+		fprintf (stderr, "Missing command\n");
+		exit (EXIT_FAILURE);
 	}
+	else if (optind + 1 > argc)
+	{
+		fprintf (stderr, "Extra arguments\n");
+		exit (EXIT_FAILURE);
+	}
+	char* cmd = argv[optind];
+	rc = 0;
+	optind = 1; /* reset getopt position */
+	if (strcmp (cmd, "remote_all") == 0)
+		rc = s_remote_save_all (server, filename, argc, argv);
+	else if (strcmp (cmd, "local_trace") == 0)
+		rc = s_local_save_trace (server, filename, argc, argv);
+	else if (strcmp (cmd, "local_hist") == 0)
+		rc = s_local_save_hist (server, filename, argc, argv);
+	else
+	{
+		printf ("Unknown command %s\n", cmd);
+		rc = -1;
+	}
+	exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 }
