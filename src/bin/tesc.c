@@ -17,45 +17,52 @@
 #endif
 
 static char s_prog_name[PATH_MAX];
-static const char* c_bold = "";
-static const char* c_reset = "";
-static const char* opts_g = "Z:F:";
-static const char* opts_r_all = "m:w:t:e:rosa";
-static const char* opts_l_trace = "w:";
-static const char* opts_l_hist = "c:";
+#define ANSI_RED     "\x1b[31;1m"
+#define ANSI_GREEN   "\x1b[32;1m"
+#define ANSI_YELLOW  "\x1b[33;1m"
+#define ANSI_BLUE    "\x1b[34;1m"
+#define ANSI_MAGENTA "\x1b[35;1m"
+#define ANSI_CYAN    "\x1b[36;1m"
+#define ANSI_RESET   "\x1b[0m"
+#define ANSI_BOLD    "\x1b[1m"
+#define OPTS_G       "Z:F:"
+#define OPTS_R_ALL   "m:w:t:e:rosa"
+#define OPTS_L_TRACE "w:"
+#define OPTS_L_HIST  "c:"
 
 static void
 s_usage (void)
 {
 	fprintf (stdout,
-		"Usage: %s -Z <server> -F <filename> <command> [command options]\n"
+		ANSI_BOLD "Usage: " ANSI_RESET ANSI_CYAN "%s -Z <server> -F <filename> " ANSI_RESET
+		ANSI_GREEN "<command> " ANSI_RED "[command options]" ANSI_RESET "\n\n"
 		"The format for <server> is <proto>://<host>:<port>\n"
 		"Command-specific options must follow command.\n"
 		"Allowed commands:\n\n"
-		"%sremote_all%s: Save frames to a remote file.\n"
-		"  Options:\n"
-		"    -m <measurement>   Measurement name. Default is empty.\n"
-		"    -t <ticks>         Save at least that many ticks.\n"
-		"                       Default is 1.\n"
-		"    -e <ticks>         Save at least that many non-tick\n"
-		"                       events. Default is 0.\n"
-		"    -r                 Rename any existing measurement\n"
-		"                       group of that name.\n"
-		"    -o                 Overwrite entire hdf5 file.\n"
-		"    -s                 Request status of filename.\n"
-		"    -a                 Asynchronous hdf5 conversion.\n"
-		"Only one of 'o' and 'r' options can be given.\n"
-		"For status requests (the 's' option) only measurement can be specified.\n\n"
-		"%slocal_trace%s: Save average traces to a local file.\n"
-		"  Options:\n"
-		"    -w <timeout>       Timeout in seconds. Sent to the server, will\n"
-		"                       receive a timeout error if no trace arrives\n"
-		"                       in this period. Default is 5.\n\n"
-		"%slocal_hist%s: Save histograms to a local file.\n"
-		"  Options:\n"
-		"    -c <count>         Save up to that many histograms.\n"
-		"                       Default is 1.\n",
-		s_prog_name, c_bold, c_reset, c_bold, c_reset, c_bold, c_reset
+		ANSI_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
+		ANSI_BOLD  "  Options:\n" ANSI_RESET
+		ANSI_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
+		ANSI_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
+		           "                       "            "Default is 1.\n"
+		ANSI_RED   "    -e <ticks>         " ANSI_RESET "Save at least that many non-tick\n"
+		           "                       "            "events. Default is 0.\n"
+		ANSI_RED   "    -r                 " ANSI_RESET "Rename any existing measurement\n"
+		           "                       "            "group of that name.\n"
+		ANSI_RED   "    -o                 " ANSI_RESET "Overwrite entire hdf5 file.\n"
+		ANSI_RED   "    -s                 " ANSI_RESET "Request status of filename.\n"
+		ANSI_RED   "    -a                 " ANSI_RESET "Asynchronous hdf5 conversion.\n"
+		"Only one of -o and -r can be given.\n"
+		"For status requests (-s) only measurement (-m) can be specified.\n\n"
+		ANSI_GREEN "local_trace" ANSI_RESET ": Save average traces to a local file.\n"
+		ANSI_BOLD  "  Options:\n" ANSI_RESET
+		ANSI_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
+		           "                       "            "receive a timeout error if no trace arrives\n"
+		           "                       "            "in this period. Default is 5.\n\n"
+		ANSI_GREEN "local_hist" ANSI_RESET ": Save histograms to a local file.\n"
+		ANSI_BOLD  "  Options:\n" ANSI_RESET
+		ANSI_RED   "    -c <count>         " ANSI_RESET "Save up to that many histograms.\n"
+		           "                       "            "Default is 1.\n",
+		s_prog_name
 		);
 }
 
@@ -129,22 +136,13 @@ s_local_save_trace (const char* server, const char* filename,
 
 	/* Command-line */
 	char* buf = NULL;
-	int opt;
 #ifdef GETOPT_DEBUG
 	for (int a = 0; a < argc; a++)
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	char optstring[64];
-	int rc = snprintf (optstring, sizeof (optstring), ":%s%sh",
-		opts_g, opts_l_trace);
-	if (rc < 0)
-	{
-		perror ("snprintf");
-		return -1;
-	}
-	assert ((size_t)rc < sizeof (optstring));
-	while ((opt = getopt (argc, argv, optstring)) != -1)
+	for ( int opt = -1; (opt = getopt (argc, argv,
+		":" OPTS_G OPTS_L_TRACE)) != -1; )
 	{
 		switch (opt)
 		{
@@ -153,7 +151,7 @@ s_local_save_trace (const char* server, const char* filename,
 				break;
 			case 'w':
 				timeout = strtoul (optarg, &buf, 10);
-				if (strlen (buf) || timeout == 0)
+				if (strlen (buf))
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -167,7 +165,6 @@ s_local_save_trace (const char* server, const char* filename,
 				assert (0);
 		}
 	}
-	assert (timeout > 0);
 
 	/* Proceed? */
 	printf ("Will save an average trace to local file '%s'.\n"
@@ -214,7 +211,7 @@ s_local_save_trace (const char* server, const char* filename,
 
 	uint8_t rep;
 	zchunk_t* trace;
-	rc = zsock_recv (sock, L_TRACE_REP_PIC, &rep, &trace);
+	int rc = zsock_recv (sock, L_TRACE_REP_PIC, &rep, &trace);
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -277,22 +274,13 @@ s_local_save_hist (const char* server, const char* filename,
 
 	/* Command-line */
 	char* buf = NULL;
-	int opt;
 #ifdef GETOPT_DEBUG
 	for (int a = 0; a < argc; a++)
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	char optstring[64];
-	int rc = snprintf (optstring, sizeof (optstring), ":%s%sh",
-		opts_g, opts_l_hist);
-	if (rc < 0)
-	{
-		perror ("snprintf");
-		return -1;
-	}
-	assert ((size_t)rc < sizeof (optstring));
-	while ((opt = getopt (argc, argv, optstring)) != -1)
+	for ( int opt = -1; (opt = getopt (argc, argv,
+		":" OPTS_G OPTS_L_HIST)) != -1; )
 	{
 		switch (opt)
 		{
@@ -357,7 +345,7 @@ s_local_save_hist (const char* server, const char* filename,
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Allocate space */
-	rc = posix_fallocate (fd, fsize, num_hist*L_HIST_MAX_SIZE);
+	int rc = posix_fallocate (fd, fsize, num_hist*L_HIST_MAX_SIZE);
 	if (rc)
 	{
 		errno = rc; /* posix_fallocate does not set it */
@@ -442,22 +430,13 @@ s_remote_save_all (const char* server, const char* filename,
 
 	/* Command-line */
 	char* buf = NULL;
-	int opt;
 #ifdef GETOPT_DEBUG
 	for (int a = 0; a < argc; a++)
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	char optstring[64];
-	int rc = snprintf (optstring, sizeof (optstring), ":%s%sh",
-		opts_g, opts_r_all);
-	if (rc < 0)
-	{
-		perror ("snprintf");
-		return -1;
-	}
-	assert ((size_t)rc < sizeof (optstring));
-	while ((opt = getopt (argc, argv, optstring)) != -1)
+	for ( int opt = -1; (opt = getopt (argc, argv,
+		":" OPTS_G OPTS_R_ALL)) != -1; )
 	{
 		switch (opt)
 		{
@@ -569,7 +548,7 @@ s_remote_save_all (const char* server, const char* filename,
 
 	uint8_t fstat;
 	uint64_t ticks, events, traces, hists, frames, missed, dropped;
-	rc = zsock_recv (sock, R_ALL_REP_PIC,
+	int rc = zsock_recv (sock, R_ALL_REP_PIC,
 		&fstat,
 		&ticks,
 		&events,
@@ -638,23 +617,14 @@ main (int argc, char **argv)
 	char filename[PATH_MAX];
 	memset (filename, 0, sizeof (filename));
 
-	int opt;
 	/* Handle missing arguments, but not unknown options here. */
 #ifdef GETOPT_DEBUG
 	for (int a = 0; a < argc; a++)
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	char optstring[64];
-	int rc = snprintf (optstring, sizeof (optstring), ":%s%s%s%sh",
-		opts_g, opts_r_all, opts_l_trace, opts_l_hist);
-	if (rc < 0)
-	{
-		perror ("snprintf");
-		return -1;
-	}
-	assert ((size_t)rc < sizeof (optstring));
-	while ((opt = getopt (argc, argv, optstring)) != -1)
+	for ( int opt = -1; (opt = getopt (argc, argv,
+		":h" OPTS_G OPTS_R_ALL OPTS_L_TRACE OPTS_L_HIST)) != -1; )
 	{
 		switch (opt)
 		{
@@ -701,8 +671,8 @@ main (int argc, char **argv)
 		exit (EXIT_FAILURE);
 	}
 	char* cmd = argv[optind];
-	rc = 0;
 	optind = 1; /* reset getopt position */
+	int rc = 0;
 	if (strcmp (cmd, "remote_all") == 0)
 		rc = s_remote_save_all (server, filename, argc, argv);
 	else if (strcmp (cmd, "local_trace") == 0)
