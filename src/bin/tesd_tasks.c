@@ -143,7 +143,7 @@
 #include "tesd_tasks_coordinator.h"
 
 #ifndef NUMCPUS
-#define NUMCPUS 4 /* fallback if sysconf (_SC_NPROCESSORS_ONLN) fails */
+#define NUMCPUS 4L /* fallback if sysconf (_SC_NPROCESSORS_ONLN) fails */
 #endif
 
 static zloop_reader_fn s_sig_hn;
@@ -537,12 +537,30 @@ s_task_shim (zsock_t* pipe, void* self_)
 	CPU_ZERO (&cpus);
 	long ncpus = sysconf (_SC_NPROCESSORS_ONLN);
 	if (ncpus == -1)
+	{
+		logmsg (errno, LOG_WARNING,
+				"Cannot determine number of online cpus, "
+				"using a fallback value of %ld", NUMCPUS);
 		ncpus = NUMCPUS;
+	}
 	CPU_SET (self->id % (ncpus - 1), &cpus);
 	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
+	if (rc == 0)
+		rc = pthread_getaffinity_np (pt, sizeof(cpuset_t), &cpus);
+	if (rc == 0)
+	{
+		for (long cpu = 0; cpu < ncpus; cpu++)
+		{
+			if (CPU_ISSET (cpu, &cpus) && cpu != self->id)
+			{
+				rc = -1; /* unknown error */
+				break;
+			}
+		}
+	}
 	if (rc != 0)
-	{ /* errno is not set, rc is the error */
-		logmsg (rc, LOG_WARNING,
+	{ /* errno is not set by pthread_*etaffinity_np, rc is the error */
+		logmsg ((rc > 0 ? rc : 0), LOG_WARNING,
 			"Cannot set cpu affinity");
 	}
 	
