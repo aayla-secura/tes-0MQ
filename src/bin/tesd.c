@@ -154,10 +154,10 @@ s_usage (const char* self)
 		"    -U <n>            Print statistics every <n> seconds.\n"
 		"                      Set to 0 to disable. Default is %d\n"
 		"                      in foreground and 0 in daemon mode.\n"
-		"    -u <n>            If <n> > 0 setuid to <n>.\n"
-		"                      Default is 0.\n"
-		"    -g <n>            If <n> > 0 setgid to <n>.\n"
-		"                      Default is 0.\n"
+		"    -u <n>            If <n> >= 0 setuid to <n>.\n"
+		"                      Default is -1.\n"
+		"    -g <n>            If <n> >= 0 setgid to <n>.\n"
+		"                      Default is -1.\n"
 		"    -v                Print debugging messages.\n",
 		self, UPDATE_INTERVAL
 		);
@@ -491,8 +491,8 @@ s_init (void* data_)
 }
 
 /*
- * Drop process privileges, start the task threads and poll. Call
- * this in a fork, otherwise the process cannot close the interface.
+ * Start the task threads and poll. Call this in a fork that drops
+ * privileges, otherwise the process cannot close the interface.
  */
 static int
 s_coordinator_body (void* data_)
@@ -501,30 +501,9 @@ s_coordinator_body (void* data_)
 
 	struct data_t* data = (struct data_t*)data_;
 
-	/* Drop privileges */
-	int rc = 0;
-	if (data->run_as_gid != 0)
-	{
-		rc = setgid (data->run_as_gid);
-		if (setgid (0) != -1)
-			rc = -1;
-	}
-	if (rc == 0 && data->run_as_uid != 0)
-	{
-		rc = setuid (data->run_as_uid);
-		if (setuid (0) != -1)
-			rc = -1;
-	}
-	if(rc == -1)
-	{
-		logmsg (errno, LOG_ERR,
-			"Cannot drop privileges");
-		return -1;
-	}
-
 	/* Start the tasks and register the readers. */
 	zloop_t* loop = zloop_new ();
-	rc = tasks_start (data->ifd, loop);
+	int rc = tasks_start (data->ifd, loop);
 	if (rc == -1)
 	{
 		logmsg (0, LOG_DEBUG, "Tasks failed to start");
@@ -589,8 +568,8 @@ main (int argc, char **argv)
 	/* Process command-line options. */
 	bool is_daemon = 1;
 	bool is_verbose = 0;
-	gid_t run_as_gid = 0;
-	uid_t run_as_uid = 0;
+	gid_t run_as_gid = (gid_t)-1;
+	uid_t run_as_uid = (uid_t)-1;
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
@@ -657,6 +636,7 @@ main (int argc, char **argv)
 	memset (&data, 0, sizeof (data));
 	data.ifname_req = ifname_req;
 
+	set_verbose (is_verbose);
 	if (is_daemon)
 	{
 		/* Go into background. */
@@ -687,15 +667,12 @@ main (int argc, char **argv)
 	char log_id[16];
 	snprintf (log_id, sizeof (log_id), "[Coordinator] ");
 	set_logid (log_id);
-	set_verbose (is_verbose);
 
 	/* Fork and run the coordinator.
 	 * s_coordinator_body will drop privileges.
-	 * fork_and_run will block until done (indefinitely). */
+	 * run_as will block until done (indefinitely). */
 	data.stat_period = stat_period;
-	data.run_as_uid = run_as_uid;
-	data.run_as_gid = run_as_gid;
-	rc = fork_and_run (s_coordinator_body, NULL, &data, -1);
+	rc = run_as (s_coordinator_body, &data, run_as_uid, run_as_gid);
 
 	/* Should we remove the pidfile? */
 	logmsg (0, LOG_INFO, "Shutting down");
