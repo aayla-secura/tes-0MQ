@@ -223,22 +223,29 @@ static void pkt_pretty_print (tespkt* pkt,
 /*
  * Check if packet is valid.
  * Returns 0 if all is ok, or one or more OR-ed flags TES_E* flags.
+ * Examine with tespkt_*error.
  */
 static int  tespkt_is_valid (tespkt* pkt);
 
 /*
- * Print info about each of the flags present in the return value of
- * tespkt_is_valid.
+ * Print info about each of the error bits set in err.
  */
 static void tespkt_perror (FILE* stream, int err);
 
 /*
- * As above, but print only the first error in err to a char*
- * buffer.
- * Returns the error minus the bit corresponding to the printed
- * error.
+ * As above, but return a pointer to a string literal describing the
+ * error associated with the lowest error bit set in err. Caller
+ * should clear the bit and call again.
  */
-static int  tespkt_serror (char* stream, int err);
+static const char* tespkt_error (int err);
+
+/*
+ * As above, but put the error associated with the lowest error
+ * bit set in err in buf. buf must be able to hold at least
+ * TES_EMAXLEN characters.
+ * Returns the error with the corresponding bit cleared.
+ */
+static int  tespkt_serror (char* buf, int err);
 
 #ifdef TESPKT_DEBUG
 static void tespkt_self_test (void);
@@ -1086,21 +1093,23 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 }
 
 /* Return codes */
+static const char* _tespkt_errors[7] = {
 #define TES_EETHTYPE    1 // ether type 
+	"Invalid ether type",
 #define TES_EETHLEN     2 // frame length
+	"Invalid frame length",
 #define TES_EEVTTYPE    4 // event type 
+	"Invalid event type",
 #define TES_EEVTSIZE    8 // event size for fixed size events
+	"Invalid event size",
 #define TES_ETRSIZE    16 // event size for fixed size events
+	"Invalid trace size",
 #define TES_EMCASIZE   32 // mismatch: size vs last bin
+	"Invalid histogram size",
 #define TES_EMCABINS   64 // mismatch: most frequent vs last bin
+	"Invalid bin number in histogram",
+};
 
-#define TES_EETHTYPE_S  "Invalid ether type"
-#define TES_EETHLEN_S   "Invalid frame length"
-#define TES_EEVTTYPE_S  "Invalid event type"
-#define TES_EEVTSIZE_S  "Invalid event size"
-#define TES_ETRSIZE_S   "Invalid trace size"
-#define TES_EMCASIZE_S  "Invalid histogram size"
-#define TES_EMCABINS_S  "Invalid bin number in histogram"
 #define TES_EMAXLEN     64 // maximum length of error string
 
 static int
@@ -1196,64 +1205,33 @@ tespkt_is_valid (tespkt* pkt)
 static void
 tespkt_perror (FILE* stream, int err)
 {
-	if (err & TES_EETHTYPE)
-		fprintf (stream, "%s\n", TES_EETHTYPE_S);
-	if (err & TES_EETHLEN)
-		fprintf (stream, "%s\n", TES_EETHLEN_S);
-	if (err & TES_EEVTTYPE)
-		fprintf (stream, "%s\n", TES_EEVTTYPE_S);
-	if (err & TES_EEVTSIZE)
-		fprintf (stream, "%s\n", TES_EEVTSIZE_S);
-	if (err & TES_ETRSIZE)
-		fprintf (stream, "%s\n", TES_ETRSIZE_S);
-	if (err & TES_EMCASIZE)
-		fprintf (stream, "%s\n", TES_EMCASIZE_S);
-	if (err & TES_EMCABINS)
-		fprintf (stream, "%s\n", TES_EMCABINS_S);
+	for (int e = 0; err != 0; err >>= 1, e++)
+		if (err & 1)
+			fprintf (stream, "%s\n", _tespkt_errors[e]);
+}
+
+static const char*
+tespkt_error (int err)
+{
+	for (int e = 0; err != 0; err >>= 1, e++)
+		if (err & 1)
+			return _tespkt_errors[e];
+
+	return NULL; /* suppress gcc warning */
 }
 
 static int
 tespkt_serror (char* buf, int err)
 {
-	if (err & TES_EETHTYPE)
+	for (int e = 0; err != 0; err >>= 1, e++)
 	{
-		snprintf (buf, TES_EMAXLEN, TES_EETHTYPE_S);
-		return (err & ~TES_EETHTYPE);
-	}
-	else if (err & TES_EETHLEN)
-	{
-		snprintf (buf, TES_EMAXLEN, TES_EETHLEN_S);
-		return (err & ~TES_EETHLEN);
-	}
-	else if (err & TES_EEVTTYPE)
-	{
-		snprintf (buf, TES_EMAXLEN, TES_EEVTTYPE_S);
-		return (err & ~TES_EEVTTYPE);
-	}
-	else if (err & TES_EEVTSIZE)
-	{
-		snprintf (buf, TES_EMAXLEN, TES_EEVTSIZE_S);
-		return (err & ~TES_EEVTSIZE);
-	}
-	else if (err & TES_ETRSIZE)
-	{
-		snprintf (buf, TES_EMAXLEN, TES_ETRSIZE_S);
-		return (err & ~TES_ETRSIZE);
-	}
-	else if (err & TES_EMCASIZE)
-	{
-		snprintf (buf, TES_EMAXLEN, TES_EMCASIZE_S);
-		return (err & ~TES_EMCASIZE);
-	}
-	else if (err & TES_EMCABINS)
-	{
-		snprintf (buf, TES_EMAXLEN, TES_EMCABINS_S);
-		return (err & ~TES_EMCABINS);
+		if (err & 1)
+		{
+			snprintf (buf, TES_EMAXLEN, "%s", _tespkt_errors[e]);
+			return err;
+		}
 	}
 
-#ifdef TESPKT_DEBUG
-	assert (0); /* we forgot to handle an error */
-#endif
 	return 0; /* suppress gcc warning */
 }
 
@@ -1317,6 +1295,10 @@ tespkt_self_test (void)
 	assert (sizeof (struct tespkt_event_flags) == EVT_FL_LEN);
 	assert (sizeof (struct tespkt_tick_flags) == TICK_FL_LEN);
 	assert (sizeof (struct tespkt_trace_flags) == TRACE_FL_LEN);
+
+	for (unsigned int e = 0;
+		e < sizeof (_tespkt_errors) / sizeof (char*) ; e++)
+		assert (tespkt_error (1 << e) == _tespkt_errors[e]);
 
 	/* Check the order of the bitfields in the structs */
 	struct tespkt_event_type et;
