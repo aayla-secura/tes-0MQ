@@ -152,10 +152,10 @@ s_usage (const char* self)
 		"    -U <n>            Print statistics every <n> seconds.\n"
 		"                      Set to 0 to disable. Default is %d\n"
 		"                      in foreground and 0 in daemon mode.\n"
-		"    -u <n>            If <n> >= 0 setuid to <n>.\n"
-		"                      Default is -1.\n"
-		"    -g <n>            If <n> >= 0 setgid to <n>.\n"
-		"                      Default is -1.\n"
+		"    -u <n>            If <n> > 0 setuid to <n>.\n"
+		"                      Default is 0.\n"
+		"    -g <n>            If <n> > 0 setgid to <n>.\n"
+		"                      Default is 0.\n"
 		"    -v                Print debugging messages.\n",
 		self, UPDATE_INTERVAL
 		);
@@ -565,8 +565,8 @@ main (int argc, char **argv)
 	/* Process command-line options. */
 	bool is_daemon = 1;
 	bool is_verbose = 0;
-	gid_t run_as_gid = (gid_t)-1;
-	uid_t run_as_uid = (uid_t)-1;
+	gid_t run_as_gid = 0;
+	uid_t run_as_uid = 0;
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
@@ -667,21 +667,21 @@ main (int argc, char **argv)
 
 	/* Drop privileges, group first, then user, then check */
 	rc = 0;
-	if (run_as_gid != (gid_t)-1)
+	if (run_as_gid != 0)
 		rc = setgid (run_as_gid);
-	if (rc == 0 && run_as_uid != (uid_t)-1)
+	if (rc == 0 && run_as_uid != 0)
 	{
 		rc = setuid (run_as_uid);
 		/* Check if we can regain user privilege. */
-		if (rc == 0 && run_as_uid != 0 && setuid (0) != -1)
+		if (rc == 0 && setuid (0) != -1)
 			rc = -1;
 	}
 
 	/* Check if we can regain group privilege. */
 	if (rc == 0 &&
-		run_as_gid != (gid_t)-1 && /* we tried setting it */
+		run_as_gid != 0 && /* we tried setting it */
 		geteuid () != 0 && /* we shouldn't be able to regain */
-		run_as_gid != 0 && setgid (0) != -1)
+		setgid (0) != -1)
 		rc = -1;
 
 	if (rc == -1)

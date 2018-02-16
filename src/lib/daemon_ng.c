@@ -127,8 +127,8 @@ s_close_open_fds (rlim_t max_fd)
 		if ((rlim_t)dirent_no >= max_fd)
 			break;
 
-		logmsg (0, LOG_DEBUG,
-			"Closing fd = %d", dirent_no);
+		// logmsg (0, LOG_DEBUG,
+		//     "Closing fd = %d", dirent_no);
 		rc = close (dirent_no);
 		/* Should we return on error? */
 		if (rc == -1) 
@@ -186,7 +186,7 @@ s_close_nonstd_fds (void)
 		if (cur_fd == STDERR_FILENO)
 			continue;
 
-		logmsg (0, LOG_DEBUG, "Closing fd = %li", cur_fd);
+		// logmsg (0, LOG_DEBUG, "Closing fd = %li", cur_fd);
 		close (cur_fd);
 	}
 
