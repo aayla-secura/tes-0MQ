@@ -1,7 +1,18 @@
 #ifndef __TESD_H__INCLUDED__
 #define __TESD_H__INCLUDED__
 
+#ifdef linux
+#  define _GNU_SOURCE /* CPU_SET and friends */
+#endif
 #include <sys/types.h>
+#include <pthread.h>
+#ifdef linux
+#  include <sched.h>
+#  define cpuset_t cpu_set_t
+#else
+#  include <sys/_cpuset.h>
+#  include <sys/cpuset.h>
+#endif
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <stdlib.h>

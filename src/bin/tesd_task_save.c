@@ -19,7 +19,9 @@
 #define TSAVE_TIDX_LEN  8         // tick index
 #define TSAVE_SIDX_LEN 16         // MCA and trace indices
 #define TSAVE_STAT_LEN 64         // job statistics
+#ifndef TSAVE_ROOT
 #define TSAVE_ROOT "/media/data/captures/" // must have a trailing slash
+#endif
 
 #define TSAVE_REQUIRE_FILENAME // for now we don't generate filename
 // #define TSAVE_SINGLE_FILE      // save all payloads (with

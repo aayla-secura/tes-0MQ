@@ -16,7 +16,7 @@ TASKS_OBJ  := $(patsubst %.c,%.o,$(wildcard $(BIN_SRC)/tesd_task_*.c))
 CC      := gcc
 CFLAGS  += -I$(CPATH) -O1 -fPIC -Wall -Wextra \
 	   -Wno-unused-parameter -Wno-unused-function
-LDLIBS  := -lzmq -lczmq -lrt
+LDLIBS  := -lzmq -lczmq -lrt -lpthread
 UNAME := $(shell uname -o)
 
 ifeq ($(HDF5LIB),)

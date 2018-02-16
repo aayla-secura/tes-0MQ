@@ -139,8 +139,12 @@
  *   coordinator.
  */
 
-#include "tesd_tasks_coordinator.h"
 #include "tesd_tasks.h"
+#include "tesd_tasks_coordinator.h"
+
+#ifndef NUMCPUS
+#define NUMCPUS 4 /* fallback if sysconf (_SC_NPROCESSORS_ONLN) fails */
+#endif
 
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
@@ -522,9 +526,25 @@ s_task_shim (zsock_t* pipe, void* self_)
 	assert (self->ifd != NULL);
 	assert (self->id > 0);
 
+	/* Set log prefix. */
 	char log_id[16];
 	snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
 	set_logid (log_id);
+
+	/* Set CPU affinity. */
+	pthread_t pt = pthread_self ();
+	cpuset_t cpus;
+	CPU_ZERO (&cpus);
+	long ncpus = sysconf (_SC_NPROCESSORS_ONLN);
+	if (ncpus == -1)
+		ncpus = NUMCPUS;
+	CPU_SET (self->id % (ncpus - 1), &cpus);
+	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
+	if (rc != 0)
+	{ /* errno is not set, rc is the error */
+		logmsg (rc, LOG_WARNING,
+			"Cannot set cpu affinity");
+	}
 	
 	zloop_t* loop = zloop_new ();
 	self->loop = loop;

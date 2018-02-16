@@ -692,6 +692,18 @@ main (int argc, char **argv)
 		exit (EXIT_FAILURE);
 	}
 
+	/* Set CPU affinity. */
+	pthread_t pt = pthread_self ();
+	cpuset_t cpus;
+	CPU_ZERO (&cpus);
+	CPU_SET (0, &cpus);
+	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
+	if (rc != 0)
+	{ /* errno is not set, rc is the error */
+		logmsg (rc, LOG_WARNING,
+			"Cannot set cpu affinity");
+	}
+
 	data.stat_period = stat_period;
 	rc = s_coordinator_body (&data);
 
