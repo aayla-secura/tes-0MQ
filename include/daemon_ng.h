@@ -52,7 +52,7 @@ int daemonize (const char* pidfile, daemon_fn* initializer,
  *   
  * fork_and_run will:
  *    fork
- *     |--> fork
+ *     |-> fork
  *     |     |-> init -> signal first fork -> run action -> exit
  *     |    exit <----------------|
  *    wait <-|
@@ -72,6 +72,19 @@ int daemonize (const char* pidfile, daemon_fn* initializer,
  */
 int fork_and_run (daemon_fn* initializer, daemon_fn* action,
 		void* arg, int timeout_sec);
+
+/*
+ * Fork once, drop privileges in child and perform task. Parent will
+ * wait for the task.
+
+ * run_as will:
+ *    fork
+ *     |-> drop privileges -> run action -> exit
+ *    wait <---------------------------------|
+ *     |
+ *    return
+ */
+int run_as (daemon_fn* action, void* arg, uid_t uid, gid_t gid);
 
 /* -------------------------------------------------------------- */
 

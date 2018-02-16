@@ -204,9 +204,13 @@ s_wait_sig (int pipe_fd, int timeout_sec)
 	poll_fd.fd = pipe_fd;
 	poll_fd.events = POLLIN;
 
-	int timeout = timeout_sec * 1000;
-	if (timeout == 0)
+	/* On FreeBSD poll accepts timeout of >=0 or strictly -1, no
+	 * other negative value. */
+	int timeout = -1;
+	if (timeout_sec == 0)
 		timeout = DAEMON_TIMEOUT;
+	else if (timeout_sec > 0)
+		timeout = timeout_sec * 1000;
 	int rc = poll (&poll_fd, 1, timeout);
 
 	if (rc == 0)
@@ -625,6 +629,77 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 
 			_exit (EXIT_FAILURE);
 		}
+	}
+	_exit (EXIT_SUCCESS);
+}
+
+int
+run_as (daemon_fn* action, void* arg, uid_t uid, gid_t gid)
+{
+	if (action == NULL)
+		return -1;
+
+	int rc;
+
+	/* Fork. */
+	pid_t pid = fork ();
+
+	if (pid == -1)
+	{
+		logmsg (errno, LOG_ERR, "Could not fork");
+		return -1;
+	}
+
+	/* -------------------------------------------------- */
+	/*                      Parent                        */
+	/* -------------------------------------------------- */
+	else if (pid > 0)
+	{
+		/* Wait for child to exit. */
+		waitpid (pid, &rc, 0);
+
+		/* Parent is done. */
+		return WEXITSTATUS (rc);
+	}
+
+	/* -------------------------------------------------- */
+	/*                     Child 1                        */
+	/* -------------------------------------------------- */
+	assert (pid == 0);
+
+	/* Drop privileges, group first, then user, then check */
+	rc = 0;
+	if (gid != (gid_t)-1)
+		rc = setgid (gid);
+	if (rc == 0 && uid != (uid_t)-1)
+	{
+		rc = setuid (uid);
+		/* Check if we can regain user privilege. */
+		if (uid != 0 && setuid (0) != -1)
+			rc = -1;
+	}
+	/* Check if we can regain group privilege. */
+	if (gid != (gid_t)-1 && /* we tried setting it */
+		geteuid () != 0 && /* we shouldn't be able to regain */
+			gid != 0 && setgid (0) != -1)
+		rc = -1;
+
+	if(rc == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Cannot drop privileges");
+		_exit (EXIT_FAILURE);
+	}
+
+
+	/* Perform task and exit. */
+	rc = action (arg);
+	if (rc == -1)
+	{
+		logmsg (0, LOG_DEBUG,
+			"Action encountered an error");
+
+		_exit (EXIT_FAILURE);
 	}
 	_exit (EXIT_SUCCESS);
 }
