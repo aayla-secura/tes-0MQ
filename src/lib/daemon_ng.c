@@ -350,14 +350,14 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	/* Reset signal handlers and masks. */
 	struct sigaction sa = {0,};
 	sigemptyset (&sa.sa_mask);
-	sigprocmask (SIG_UNBLOCK, &sa.sa_mask, NULL);
+	sigprocmask (SIG_SETMASK, &sa.sa_mask, NULL);
 	sa.sa_handler = SIG_DFL;
 	for ( int sig = 1; sig < NSIG ; sig++ )
 	{
-		errno = 0;
-		sigaction (sig, &sa, NULL);
-		if (errno)
-			logmsg (0, LOG_DEBUG,
+		if (sig == SIGTERM || sig == SIGSTOP)
+			continue;
+		if (sigaction (sig, &sa, NULL) == -1)
+			logmsg (errno, LOG_DEBUG,
 				"signal (%d, SIG_DFL)", sig);
 	}
 
@@ -623,77 +623,6 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 				"Action encountered an error");
 			_exit (EXIT_FAILURE);
 		}
-	}
-	_exit (EXIT_SUCCESS);
-}
-
-int
-run_as (daemon_fn* action, void* arg, uid_t uid, gid_t gid)
-{
-	if (action == NULL)
-		return -1;
-
-	int rc;
-
-	/* Fork. */
-	pid_t pid = fork ();
-
-	if (pid == -1)
-	{
-		logmsg (errno, LOG_ERR, "Could not fork");
-		return -1;
-	}
-
-	/* -------------------------------------------------- */
-	/*                      Parent                        */
-	/* -------------------------------------------------- */
-	else if (pid > 0)
-	{
-		/* Wait for child to exit. */
-		waitpid (pid, &rc, 0);
-
-		/* Parent is done. */
-		return WEXITSTATUS (rc);
-	}
-
-	/* -------------------------------------------------- */
-	/*                     Child 1                        */
-	/* -------------------------------------------------- */
-	assert (pid == 0);
-
-	/* Drop privileges, group first, then user, then check */
-	rc = 0;
-	if (gid != (gid_t)-1)
-		rc = setgid (gid);
-	if (rc == 0 && uid != (uid_t)-1)
-	{
-		rc = setuid (uid);
-		/* Check if we can regain user privilege. */
-		if (rc == 0 && uid != 0 && setuid (0) != -1)
-			rc = -1;
-	}
-	/* Check if we can regain group privilege. */
-	if (rc == 0 &&
-		gid != (gid_t)-1 && /* we tried setting it */
-		geteuid () != 0 && /* we shouldn't be able to regain */
-		gid != 0 && setgid (0) != -1)
-		rc = -1;
-
-	if(rc == -1)
-	{
-		logmsg (errno, LOG_ERR,
-			"Cannot drop privileges");
-		_exit (EXIT_FAILURE);
-	}
-
-
-	/* Perform task and exit. */
-	rc = action (arg);
-	if (rc == -1)
-	{
-		logmsg (0, LOG_DEBUG,
-			"Action encountered an error");
-		_exit (EXIT_FAILURE);
 	}
 	_exit (EXIT_SUCCESS);
 }

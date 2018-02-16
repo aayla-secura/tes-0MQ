@@ -125,8 +125,6 @@ struct data_t
 	tes_ifdesc* ifd;
 	char* ifname_req;
 	long int stat_period;
-	uid_t run_as_uid;
-	gid_t run_as_gid;
 };
 
 static void s_usage (const char* self);
@@ -491,8 +489,7 @@ s_init (void* data_)
 }
 
 /*
- * Start the task threads and poll. Call this in a fork that drops
- * privileges, otherwise the process cannot close the interface.
+ * Start the task threads and poll.
  */
 static int
 s_coordinator_body (void* data_)
@@ -668,16 +665,42 @@ main (int argc, char **argv)
 	snprintf (log_id, sizeof (log_id), "[Coordinator] ");
 	set_logid (log_id);
 
-	/* Fork and run the coordinator.
-	 * s_coordinator_body will drop privileges.
-	 * run_as will block until done (indefinitely). */
+	/* Drop privileges, group first, then user, then check */
+	rc = 0;
+	if (run_as_gid != (gid_t)-1)
+		rc = setgid (run_as_gid);
+	if (rc == 0 && run_as_uid != (uid_t)-1)
+	{
+		rc = setuid (run_as_uid);
+		/* Check if we can regain user privilege. */
+		if (rc == 0 && run_as_uid != 0 && setuid (0) != -1)
+			rc = -1;
+	}
+
+	/* Check if we can regain group privilege. */
+	if (rc == 0 &&
+		run_as_gid != (gid_t)-1 && /* we tried setting it */
+		geteuid () != 0 && /* we shouldn't be able to regain */
+		run_as_gid != 0 && setgid (0) != -1)
+		rc = -1;
+
+	if (rc == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Cannot drop privileges");
+		tes_if_close (data.ifd);
+		exit (EXIT_FAILURE);
+	}
+
 	data.stat_period = stat_period;
-	rc = run_as (s_coordinator_body, &data, run_as_uid, run_as_gid);
+	rc = s_coordinator_body (&data);
 
 	/* Should we remove the pidfile? */
 	logmsg (0, LOG_INFO, "Shutting down");
 	assert (data.ifd != NULL);
-	tes_if_close (data.ifd);
+	rc = tes_if_close (data.ifd);
+	if (rc != 0)
+		logmsg (0, LOG_WARNING, "Cannot close interface");
 
 	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
 }
