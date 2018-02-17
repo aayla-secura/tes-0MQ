@@ -354,7 +354,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	sa.sa_handler = SIG_DFL;
 	for ( int sig = 1; sig < NSIG ; sig++ )
 	{
-		if (sig == SIGTERM || sig == SIGSTOP)
+		if (sig == SIGKILL || sig == SIGSTOP)
 			continue;
 		if (sigaction (sig, &sa, NULL) == -1)
 			logmsg (errno, LOG_DEBUG,
