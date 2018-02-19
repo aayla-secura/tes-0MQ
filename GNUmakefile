@@ -69,6 +69,8 @@ $(BIN_DEST)/%: $(TEST_SRC)/%.o \
 	| $(BIN_DEST)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
 		$(foreach lib, \
+			$(findstring czmq,$*) \
+			$(findstring zmq,$*) \
 			$(findstring pthread,$*) \
 			$(findstring pcap,$*), \
 			-l$(lib)) \
