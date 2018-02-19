@@ -87,7 +87,7 @@
 #  define sdl_index sll_ifindex
 #  define IFNAME "eth0"
 #else
-#  define IFNAME "igb1"
+#  define IFNAME "igb0"
 #endif
 
 #define NEED_PROMISC // put the interface in promiscuous mode
