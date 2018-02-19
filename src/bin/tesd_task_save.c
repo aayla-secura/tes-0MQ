@@ -377,8 +377,9 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
-		snprintf (aiobuf->filename, PATH_MAX, "%s-%s.%s",
+		snprintf (aiobuf->filename, PATH_MAX, "%s%s%s.%s",
 			sjob->basefname,
+			strlen (sjob->measurement) == 0 ? "" : "-",
 			sjob->measurement,
 			s_task_save_dsets[s].extension);
 		aiobuf->dataset = s_task_save_dsets[s].dataset;
@@ -1074,7 +1075,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is the request understood? */
-	if (basefname == NULL || sjob->measurement == NULL)
+	if (basefname == NULL)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
@@ -1082,22 +1083,40 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
+	if (sjob->measurement == NULL)
+	{ /* The client did not send a frame for the measurement, default to
+		 * empty string. We free this later so it must be malloc'ed rather
+		 * than static. */
+		sjob->measurement = (char*) malloc (1);
+		if (sjob->measurement == NULL)
+		{
+			logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
+				"Cannot allocate memory");
+			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
+			return 0;
+		}
+		sjob->measurement[0] = '\0';
+	}
+
 	/* Is it only a status query? */
 	bool checkonly = (sjob->min_ticks == 0);
 	if (checkonly)
 	{
 		logmsg (0, LOG_INFO,
-			"Received request for status of '%s-%s'",
-			basefname, sjob->measurement);
+			"Received request for status of '%s%s%s'",
+			basefname,
+			strlen (sjob->measurement) == 0 ? "" : "-",
+			sjob->measurement);
 	}
 	else
 	{
 		logmsg (0, LOG_INFO,
 			"Received request to write %lu ticks and "
-			"%lu events to '%s-%s%s'",
+			"%lu events to '%s%s%s%s'",
 			sjob->min_ticks,
 			sjob->min_events,
 			basefname,
+			strlen (sjob->measurement) == 0 ? "" : "-",
 			sjob->measurement,
 			sjob->async ? ". Convering asynchronously" : "");
 	}
@@ -1232,8 +1251,10 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	logmsg (0, LOG_INFO,
-		"Opened files %s-%s.* for writing",
-		sjob->basefname, sjob->measurement);
+		"Opened files %s%s%s.* for writing",
+		sjob->basefname,
+		strlen (sjob->measurement) == 0 ? "" : "-",
+		sjob->measurement);
 
 	/* Disable polling on the reader until the job is done. Wakeup
 	 * packet handler. */

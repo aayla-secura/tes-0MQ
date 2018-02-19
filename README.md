@@ -36,7 +36,8 @@ At the moment we only handle one request at a time. Will block until done.
 
 2. **Measurement**
 
-   Name of hdf5 group relative to a hardcoded topmost group.
+   Name of hdf5 group relative to a hardcoded topmost group. If empty, no
+   conversion is done.
    
 3. **No. of ticks**
 
@@ -74,7 +75,8 @@ number of ticks and the minimum number of non-tick events has been recorded.
 
 As a consequence of how `zsock_recv` parses arguments, the client may omit
 frames corresponding to ignored arguments or arguments which are "0". Therefore
-to get a status of a file, only the filename is required.
+to get a status of a file, only the filename and possibly measurement is
+required.
 
 #### Message frames in a reply
 
