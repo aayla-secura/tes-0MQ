@@ -1606,12 +1606,15 @@ done:
 		}
 
 		/* Convert them to hdf5. */
-		rc = s_task_save_conv_data (sjob);
-		if (rc != 0)
+		if (strlen (sjob->measurement) != 0)
 		{
-			status = TSAVE_REQ_ECONV;
-			logmsg (errno, LOG_ERR,
-				"Could not convert data to hdf5");
+			rc = s_task_save_conv_data (sjob);
+			if (rc != 0)
+			{
+				status = TSAVE_REQ_ECONV;
+				logmsg (errno, LOG_ERR,
+					"Could not convert data to hdf5");
+			}
 		}
 
 		/* Send reply. */
