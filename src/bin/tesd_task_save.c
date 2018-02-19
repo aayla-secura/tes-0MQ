@@ -1057,7 +1057,6 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		(struct s_task_save_data_t*) self->data;
 	dbg_assert ( ! sjob->recording );
 
-
 	char* basefname; /* zsock_recv will allocate it */
 	int rc = zsock_recv (reader, TSAVE_REQ_PIC,
 		&basefname,
@@ -1075,7 +1074,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is the request understood? */
-	if (basefname == NULL)
+	if (basefname == NULL || sjob->measurement == NULL)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
