@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <assert.h>
 #include <czmq.h>
+#include "ansicolors.h"
 
 #ifndef PATH_MAX
 #  ifdef MAXPATHLEN
@@ -17,14 +18,6 @@
 #endif
 
 static char s_prog_name[PATH_MAX];
-#define ANSI_RED     "\x1b[31;1m"
-#define ANSI_GREEN   "\x1b[32;1m"
-#define ANSI_YELLOW  "\x1b[33;1m"
-#define ANSI_BLUE    "\x1b[34;1m"
-#define ANSI_MAGENTA "\x1b[35;1m"
-#define ANSI_CYAN    "\x1b[36;1m"
-#define ANSI_RESET   "\x1b[0m"
-#define ANSI_BOLD    "\x1b[1m"
 #define OPTS_G       "Z:F:"
 #define OPTS_R_ALL   "m:w:t:e:rosa"
 #define OPTS_L_TRACE "w:"
@@ -34,34 +27,34 @@ static void
 s_usage (void)
 {
 	fprintf (stdout,
-		ANSI_BOLD "Usage: " ANSI_RESET ANSI_CYAN "%s -Z <server> -F <filename> " ANSI_RESET
-		ANSI_GREEN "<command> " ANSI_RED "[command options]" ANSI_RESET "\n\n"
+		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server> -F <filename> "
+		ANSI_FG_GREEN "<command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
 		"The format for <server> is <proto>://<host>:<port>\n"
 		"Command-specific options must follow command.\n"
 		"Allowed commands:\n\n"
-		ANSI_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
-		ANSI_BOLD  "  Options:\n" ANSI_RESET
-		ANSI_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
-		ANSI_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
-		           "                       "            "Default is 1.\n"
-		ANSI_RED   "    -e <ticks>         " ANSI_RESET "Save at least that many non-tick\n"
-		           "                       "            "events. Default is 0.\n"
-		ANSI_RED   "    -r                 " ANSI_RESET "Rename any existing measurement\n"
-		           "                       "            "group of that name.\n"
-		ANSI_RED   "    -o                 " ANSI_RESET "Overwrite entire hdf5 file.\n"
-		ANSI_RED   "    -s                 " ANSI_RESET "Request status of filename.\n"
-		ANSI_RED   "    -a                 " ANSI_RESET "Asynchronous hdf5 conversion.\n"
+		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
+		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
+		              "                       "            "Default is 1.\n"
+		ANSI_FG_RED   "    -e <ticks>         " ANSI_RESET "Save at least that many non-tick\n"
+		              "                       "            "events. Default is 0.\n"
+		ANSI_FG_RED   "    -r                 " ANSI_RESET "Rename any existing measurement\n"
+		              "                       "            "group of that name.\n"
+		ANSI_FG_RED   "    -o                 " ANSI_RESET "Overwrite entire hdf5 file.\n"
+		ANSI_FG_RED   "    -s                 " ANSI_RESET "Request status of filename.\n"
+		ANSI_FG_RED   "    -a                 " ANSI_RESET "Asynchronous hdf5 conversion.\n"
 		"Only one of -o and -r can be given.\n"
 		"For status requests (-s) only measurement (-m) can be specified.\n\n"
-		ANSI_GREEN "local_trace" ANSI_RESET ": Save average traces to a local file.\n"
-		ANSI_BOLD  "  Options:\n" ANSI_RESET
-		ANSI_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
-		           "                       "            "receive a timeout error if no trace arrives\n"
-		           "                       "            "in this period. Default is 5.\n\n"
-		ANSI_GREEN "local_hist" ANSI_RESET ": Save histograms to a local file.\n"
-		ANSI_BOLD  "  Options:\n" ANSI_RESET
-		ANSI_RED   "    -c <count>         " ANSI_RESET "Save up to that many histograms.\n"
-		           "                       "            "Default is 1.\n",
+		ANSI_FG_GREEN "local_trace" ANSI_RESET ": Save average traces to a local file.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
+		              "                       "            "receive a timeout error if no trace arrives\n"
+		              "                       "            "in this period. Default is 5.\n\n"
+		ANSI_FG_GREEN "local_hist" ANSI_RESET ": Save histograms to a local file.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -c <count>         " ANSI_RESET "Save up to that many histograms.\n"
+		              "                       "            "Default is 1.\n",
 		s_prog_name
 		);
 }

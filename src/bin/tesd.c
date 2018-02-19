@@ -79,6 +79,7 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include "ansicolors.h"
 
 #ifdef linux
 #  define ifr_index ifr_ifindex
@@ -141,22 +142,22 @@ static void
 s_usage (const char* self)
 {
 	fprintf (stderr,
-		"Usage: %s [options]\n\n"
-		"Options:\n"
-		"    -p <file>         Write pid to file <file>.\n"
-		"                      Only in daemon mode.\n"
-		"                      Defaults to "PIDFILE".\n"
-		"    -i <if>           Read packets from <if> interface.\n"
-		"                      Defaults to "TES_IFNAME".\n"
-		"    -f                Run in foreground.\n"
-		"    -U <n>            Print statistics every <n> seconds.\n"
-		"                      Set to 0 to disable. Default is %d\n"
-		"                      in foreground and 0 in daemon mode.\n"
-		"    -u <n>            If <n> > 0 setuid to <n>.\n"
-		"                      Default is 0.\n"
-		"    -g <n>            If <n> > 0 setgid to <n>.\n"
-		"                      Default is 0.\n"
-		"    -v                Print debugging messages.\n",
+		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_RED "[<options>]" ANSI_RESET "\n\n"
+		ANSI_BOLD "Options:\n" ANSI_RESET
+		ANSI_FG_RED "    -p <file>         " ANSI_RESET "Write pid to file <file>.\n"
+		            "                      "            "Only in daemon mode.\n"
+		            "                      "            "Defaults to " PIDFILE ".\n"
+		ANSI_FG_RED "    -i <if>           " ANSI_RESET "Read packets from <if> interface.\n"
+		            "                      "            "Defaults to " TES_IFNAME ".\n"
+		ANSI_FG_RED "    -f                " ANSI_RESET "Run in foreground.\n"
+		ANSI_FG_RED "    -U <n>            " ANSI_RESET "Print statistics every <n> seconds.\n"
+		            "                      "            "Set to 0 to disable. Default is %d\n"
+		            "                      "            "in foreground and 0 in daemon mode.\n"
+		ANSI_FG_RED "    -u <n>            " ANSI_RESET "If <n> > 0 setuid to <n>.\n"
+		            "                      "            "Default is 0.\n"
+		ANSI_FG_RED "    -g <n>            " ANSI_RESET "If <n> > 0 setgid to <n>.\n"
+		            "                      "            "Default is 0.\n"
+		ANSI_FG_RED "    -v                " ANSI_RESET "Print debugging messages.\n",
 		self, UPDATE_INTERVAL
 		);
 	exit (EXIT_FAILURE);
