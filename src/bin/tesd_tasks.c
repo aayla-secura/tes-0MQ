@@ -375,6 +375,8 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	dbg_assert ( ! self->busy );
+	self->busy = 1;
 	
 #ifdef ENABLE_FULL_DEBUG
 	/* Catch bugs by receiving a message and asserting it's
@@ -404,7 +406,6 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return -1;
 	}
 	dbg_assert (sig == SIG_WAKEUP);
-	dbg_assert ( ! self->busy );
 
 	/* We should never have received a WAKEUP if we are not active,
 	 * but we do, after a job is done. Signals must be queueing in
@@ -417,12 +418,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 				"First inactive wakeup");
 		self->dbg_stats.wakeups_inactive++;
 #endif
+		self->busy = 0;
 		return 0;
 	}
 #ifdef ENABLE_FULL_DEBUG
 	self->dbg_stats.wakeups++;
 #endif
-	self->busy = 1;
+	// self->busy = 1;
 
 	/* Process packets. */
 #ifdef ENABLE_FULL_DEBUG
