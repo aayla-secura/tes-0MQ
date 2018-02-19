@@ -2,7 +2,7 @@ PREFIX := /usr/local
 
 LIB_SRC  := $(abspath src/lib)
 BIN_SRC  := $(abspath src/bin)
-TEST_SRC := $(abspath examples)
+TEST_SRC := $(abspath tests)
 CPATH    := $(abspath include)
 LIB_DEST := $(abspath lib)
 BIN_DEST := $(abspath bin)
