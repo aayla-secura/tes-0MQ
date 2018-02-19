@@ -16,6 +16,10 @@
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 #define NUM_LOOPS INT_MAX
 
+#ifndef VERBOSE
+#  define QUIET
+#endif
+
 int interrupted;
 
 static void
@@ -93,24 +97,46 @@ main (int argc, char** argv)
 	pfd.events = POLLOUT;
 
 	uint64_t p = 0;
-	int sf = -1;
-	uint16_t ef;
-	uint64_t missed = 0;
 	int looped = 0;
+	uint64_t mcas = 0, ticks = 0, peaks = 0, areas = 0, pulses = 0,
+		 traces = 0, trace_sgls = 0, trace_avgs = 0, trace_dps = 0,
+		 trace_dp_trs = 0;
+	uint64_t missed = 0, invalid = 0;
+	uint16_t prev_fseq, mca_n = 0, trace_n = 0;
 
 	while (!interrupted && looped < NUM_LOOPS)
 	{
-		const unsigned char* pkt = pcap_next (pc, &h);
+		tespkt* pkt = (tespkt*)pcap_next (pc, &h);
 		if (pkt == NULL)
 		{
 			if (looped == 0)
 			{
-				printf ("\n----------\n"
-					"Total number of packets: %lu\n"
-					"Missed packets:          %lu\n"
-					"Start frame:             %d\n"
-					"End frame:               %hu\n",
-					p, missed, sf, ef);
+				printf ("packets: %lu\n"
+					"missed:  %lu\n"
+					"invalid: %lu\n"
+					"mcas:    %lu\n"
+					"ticks:   %lu\n"
+					"peaks:   %lu\n"
+					"areas:   %lu\n"
+					"pulses:  %lu\n"
+					"traces:  %lu\n"
+					"  sgl:   %lu\n"
+					"  avg:   %lu\n"
+					"  dp:    %lu\n"
+					"  dptr:  %lu\n",
+					p,
+					missed,
+					invalid,
+					mcas,
+					ticks,
+					peaks,
+					areas,
+					pulses,
+					traces,
+					trace_sgls,
+					trace_avgs,
+					trace_dps,
+					trace_dp_trs);
 			}
 			/* Reopen the file */
 			pcap_close (pc);
@@ -127,7 +153,7 @@ main (int argc, char** argv)
 		p++;
 
 		/* Send the packet */
-		uint16_t len = tespkt_flen ((tespkt*)pkt);
+		uint16_t len = tespkt_flen (pkt);
 		if (len != h.len && len >= 60)
 			printf ("Packet #%5lu: frame len says %5hu, "
 				"caplen = %5hu, len = %5hu\n",
@@ -141,31 +167,101 @@ main (int argc, char** argv)
 				perror ("poll");
 			break;
 		}
-		// rc = nm_inject (nmd, pkt, len);
-		// if (!rc)
-		// {
-		//         fprintf (stderr, "Cannot inject packet\n");
-		//         break;
-		// }
+		rc = nm_inject (nmd, (unsigned char*)pkt, len);
+		if (!rc)
+		{
+						fprintf (stderr, "Cannot inject packet\n");
+						break;
+		}
 
 		if (looped)
 			continue;
 
-		/* Statistics */
-		if (sf == -1)
+		/* Statistics, only first time through the loop */
+		uint16_t cur_fseq = tespkt_fseq (pkt);
+		if (p > 1)
+			missed += (uint16_t)(cur_fseq - prev_fseq - 1);
+		prev_fseq = cur_fseq;
+
+		rc = tespkt_is_valid (pkt);
+		if (rc)
 		{
-			sf = (int)tespkt_fseq ((tespkt*)pkt);
+#ifndef QUIET
+			fprintf (stderr, "Packet no. %d: ", p);
+			tespkt_perror (stderr, rc);
+			dump_pkt ((void*)pkt, TES_HDR_LEN + 8);
+#endif
+			invalid++;
 		}
+#ifndef QUIET
 		else
 		{
-			missed += (uint64_t) (
-				(uint16_t)(tespkt_fseq ((tespkt*)pkt) - ef) - 1 );
+			pkt_pretty_print (pkt, stdout, stderr);
+			printf ("\n");
+			dump_pkt ((unsigned char*)pkt, TES_HDR_LEN);
 		}
-		ef = tespkt_fseq ((tespkt*)pkt);
-		// pkt_pretty_print ((tespkt*)pkt, stdout, stderr);
-		tespkt_perror (stdout, tespkt_is_valid ((tespkt*)pkt));
-		// printf ("\n");
-		// dump_pkt (pkt, TES_HDR_LEN);
+#endif
+		
+		const char* ptype = NULL;
+		uint16_t* prev_n = NULL;
+		if (tespkt_is_mca (pkt))
+		{
+			mcas++;
+			ptype = "MCA";
+			prev_n = &mca_n;
+		}
+		else if (tespkt_is_tick (pkt))
+			ticks++;
+		else if (tespkt_is_peak (pkt))
+			peaks++;
+		else if (tespkt_is_area (pkt))
+			areas++;
+		else if (tespkt_is_pulse (pkt))
+			pulses++;
+		else if (tespkt_is_trace (pkt))
+		{
+			traces++;
+			if (tespkt_is_trace_dp (pkt))
+			{
+				trace_dps++;
+			}
+			else
+			{
+				prev_n = &trace_n;
+				if (tespkt_is_trace_sgl (pkt))
+				{
+					trace_sgls++;
+					ptype = "Trace single";
+				}
+				else if (tespkt_is_trace_avg (pkt))
+				{
+					trace_avgs++;
+					ptype = "Trace avg";
+				}
+				else if (tespkt_is_trace_dptr (pkt))
+				{
+					trace_dp_trs++;
+					ptype = "Trace DP trace";
+				}
+			}
+		}
+
+		if (prev_n != NULL)
+		{ /* packet is part of a multi-frame, i.e. trace or MCA */
+			if (tespkt_is_header (pkt))
+			{
+				assert (ptype != NULL);
+#ifndef QUIET
+				off_t pos = lseek (capfd, 0, SEEK_CUR);
+				printf ("Packet no. %lu (ends at offset 0x%lx): "
+					"new event stream for type %s, "
+					"previous count was %hu\n",
+					p, pos, ptype, *prev_n);
+#endif
+				*prev_n = 0;
+			}
+			(*prev_n)++;
+		}
 	}
 
 	pcap_close (pc);
