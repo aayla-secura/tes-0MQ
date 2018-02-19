@@ -1,3 +1,7 @@
+/*
+ * Common to tasks and coordinator.
+ */
+
 #ifndef __TESD_H__INCLUDED__
 #define __TESD_H__INCLUDED__
 

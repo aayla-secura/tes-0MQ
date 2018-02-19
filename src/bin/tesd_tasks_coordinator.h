@@ -1,6 +1,6 @@
 /*
- * Actions on all tasks used by coordinator (tesd.c). Definitions
- * are in tesd_tasks.c
+ * Declarations of task related actions used by the coordinator.
+ * Definitions are in tesd_tasks.c
  */
 
 #ifndef __TESD_TASKS_COORDINATOR_H__INCLUDED__

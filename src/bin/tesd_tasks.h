@@ -1,7 +1,9 @@
 /*
- * Type definitions common to all tasks.
  * Declarations of task related actions used by all tasks.
  * Definitions are in tesd_tasks.c
+ *
+ * Also declarations of task handlers.
+ * Definitions are in tesd_task_*.c
  */
 
 #ifndef __TESD_TASKS_H__INCLUDED__
