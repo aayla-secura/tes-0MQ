@@ -244,8 +244,7 @@ main_body (void* arg)
 		pthread_exit (NULL);
 	}
 
-	struct t_data data;
-	memset (&data, 0, sizeof (data));
+	struct t_data data = {0};
 #ifdef SAVE_FILE
 	data.save_fd = -1;
 #endif /* SAVE_FILE */

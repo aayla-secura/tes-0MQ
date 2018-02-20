@@ -25,9 +25,8 @@ int interrupted;
 static void
 dump_pkt (const unsigned char* pkt, uint32_t len)
 {
-	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
+	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ] = {0};
 
-	memset (buf, 0, sizeof (buf));
 	for (uint32_t r = 0; r < len; r += DUMP_ROW_LEN) {
 		sprintf (buf, "%0*x: ", DUMP_OFF_LEN, r);
 

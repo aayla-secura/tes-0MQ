@@ -176,8 +176,7 @@ s_prepare_if (const char* ifname_full)
 	if (memcmp (ifname_full, "vale", 4) == 0)
 		return 0;
 
-	char ifname[IFNAMSIZ];
-	memset (ifname, 0, IFNAMSIZ);
+	char ifname[IFNAMSIZ] = {0};
 
 	/* Skip over optional "netmap:" (or anything else?). */
 	const char* start = strchr (ifname_full, ':');
@@ -211,8 +210,7 @@ s_prepare_if (const char* ifname_full)
 	}
 
 	/* Retrieve the index of the interface. */
-	struct ifreq ifr;
-	memset (&ifr, 0, sizeof (ifr));
+	struct ifreq ifr = {0};
 	strcpy (ifr.ifr_name, ifname);
 	rc = ioctl (sock, SIOCGIFINDEX, &ifr);
 	if (rc == -1)
@@ -509,8 +507,7 @@ s_coordinator_body (void* data_)
 	}
 
 	/* Register the TES interface as a poller. */
-	struct zmq_pollitem_t pitem;
-	memset (&pitem, 0, sizeof (pitem));
+	struct zmq_pollitem_t pitem = {0};
 	pitem.fd = tes_if_fd (data->ifd);
 	pitem.events = ZMQ_POLLIN;
 	rc = zloop_poller (loop, &pitem, s_new_pkts_hn, data);
@@ -571,10 +568,8 @@ main (int argc, char **argv)
 	int opt;
 	char* buf = NULL;
 	long int stat_period = -1;
-	char ifname_req[IFNAMSIZ];
-	memset (ifname_req, 0, sizeof (ifname_req));
-	char pidfile[PATH_MAX];
-	memset (pidfile, 0, sizeof (pidfile));
+	char ifname_req[IFNAMSIZ] = {0};
+	char pidfile[PATH_MAX] = {0};
 	while ( (opt = getopt (argc, argv, "p:i:U:u:g:fvh")) != -1 )
 	{
 		switch (opt)
@@ -630,8 +625,7 @@ main (int argc, char **argv)
 		stat_period = UPDATE_INTERVAL;
 	}
 
-	struct data_t data;
-	memset (&data, 0, sizeof (data));
+	struct data_t data = {0};
 	data.ifname_req = ifname_req;
 
 	set_verbose (is_verbose);

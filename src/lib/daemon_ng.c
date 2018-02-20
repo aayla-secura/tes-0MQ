@@ -283,8 +283,7 @@ logmsg (int errnum, int priority, const char* format, ...)
 
 	va_list args;
 	va_start (args, format);
-	char msg[MAX_MSG_LEN];
-	memset (msg, 0, MAX_MSG_LEN);
+	char msg[MAX_MSG_LEN] = {0};
 	int len = vsnprintf (msg, MAX_MSG_LEN, format, args);
 
 	if (len < 0)
@@ -348,7 +347,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	s_close_nonstd_fds ();
 
 	/* Reset signal handlers and masks. */
-	struct sigaction sa = {0,};
+	struct sigaction sa = {0};
 	sigemptyset (&sa.sa_mask);
 	sigprocmask (SIG_SETMASK, &sa.sa_mask, NULL);
 	sa.sa_handler = SIG_DFL;

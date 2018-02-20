@@ -439,7 +439,7 @@ new_trace_dp_pkt (int num_peaks,
 	/* Don't know how to cast to 48-bit integer and don't want to write to
 	 * reserved bits, so write 64-bits to a temporary struct and copy only
 	 * the used field */
-	struct tespkt_dot_prod dptmp = {0,};
+	struct tespkt_dot_prod dptmp = {0};
 	u_int64_t rand = random ();
 	memcpy (&dptmp, &rand, DP_LEN);
 	dp->dot_prod = dptmp.dot_prod;
@@ -486,9 +486,8 @@ dump_pkt (tespkt* _pkt)
 {
 	u_int16_t len = tespkt_flen (_pkt);
 	const char* pkt = (const char*)_pkt;
-	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
+	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ] = {0};
 
-	memset (buf, 0, sizeof (buf));
 	for (int r = 0; r < len; r += DUMP_ROW_LEN) {
 		sprintf (buf, "%0*x: ", DUMP_OFF_LEN, r);
 

@@ -167,9 +167,9 @@ s_task_shim (zsock_t* pipe, void* pdata_)
 int
 main (void)
 {
-	struct zmq_pollitem_t master = {0,};
+	struct zmq_pollitem_t master = {0};
 	master.events = ZMQ_POLLOUT;
-	struct zmq_pollitem_t slave = {0,};
+	struct zmq_pollitem_t slave = {0};
 	slave.events = ZMQ_POLLIN;
 	zsys_init ();
 	int rc;

@@ -207,9 +207,8 @@ main (void)
 	print_desc_info ();
 
 	/* A dummy packet */
-	tespkt pkt;
+	struct tespkt pkt = {0};
 	assert (sizeof (pkt) == PKT_LEN);
-	memset (&pkt, 0, PKT_LEN);
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
 	memcpy (&pkt.eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);

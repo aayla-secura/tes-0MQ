@@ -416,8 +416,7 @@ static int
 s_remote_save_all (const char* server, const char* filename,
 	int argc, char **argv)
 {
-	char measurement[1024];
-	memset (measurement, 0, sizeof (measurement));
+	char measurement[1024] = {0};
 	uint64_t min_ticks = 0, min_events = 0;
 	uint8_t ovrwtmode = 0, async = 0, status = 0;
 
@@ -605,10 +604,8 @@ main (int argc, char **argv)
 	zsys_catch_interrupts ();
 
 	/* Command-line */
-	char server[1024];
-	memset (server, 0, sizeof (server));
-	char filename[PATH_MAX];
-	memset (filename, 0, sizeof (filename));
+	char server[1024] = {0};
+	char filename[PATH_MAX] = {0};
 
 	/* Handle missing arguments, but not unknown options here. */
 #ifdef GETOPT_DEBUG

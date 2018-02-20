@@ -96,9 +96,8 @@ struct s_stats_t
 static void
 s_dump_pkt (const unsigned char* pkt, uint32_t len)
 {
-	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ];
+	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ] = {0};
 
-	memset (buf, 0, sizeof (buf));
 	for (uint32_t r = 0; r < len; r += DUMP_ROW_LEN) {
 		sprintf (buf, "%0*x: ", DUMP_OFF_LEN, r);
 
@@ -283,8 +282,7 @@ s_inject_from_fidx (const char* basefname,
 	pfd.events = POLLOUT;
 
 	int looped = 0;
-	struct s_stats_t stats;
-	memset (&stats, 0, sizeof (stats));
+	struct s_stats_t stats = {0};
 
 	while (!interrupted && looped != NUM_LOOPS)
 	{
@@ -305,8 +303,7 @@ s_inject_from_fidx (const char* basefname,
 			}
 		}
 
-		struct s_fidx_t fidx;
-		memset (&fidx, 0, FIDX_LEN);
+		struct s_fidx_t fidx = {0};
 
 		/* Read the index */
 		rc = read (fidxfd, &fidx, FIDX_LEN);
@@ -333,8 +330,7 @@ s_inject_from_fidx (const char* basefname,
 		}
 		stats.pkts++;
 
-		tespkt pkt;
-		memset (&pkt, 0, MAX_TES_FRAME_LEN);
+		struct tespkt pkt = {0};
 
 		/* Construct the ethernet header */
 		uint16_t plen = fidx.length;
@@ -475,8 +471,7 @@ s_inject_from_flat (const char* filename,
 	pfd.events = POLLOUT;
 
 	int looped = 0;
-	struct s_stats_t stats;
-	memset (&stats, 0, sizeof (stats));
+	struct s_stats_t stats = {0};
 
 	while (!interrupted && looped != NUM_LOOPS)
 	{
@@ -497,8 +492,7 @@ s_inject_from_flat (const char* filename,
 			}
 		}
 
-		tespkt pkt;
-		memset (&pkt, 0, MAX_TES_FRAME_LEN);
+		struct tespkt pkt = {0};
 
 		/* Read the header */
 		rc = read (capfd, &pkt, TES_HDR_LEN);

@@ -50,8 +50,7 @@ main (void)
 	}
 
 	/* Retrieve the index of the interface */
-	struct ifreq ifr;
-	memset (&ifr, 0, sizeof (ifr));
+	struct ifreq ifr = {0};
 	strncpy (ifr.ifr_name, IFNAME, IFNAMSIZ);
 	rc = ioctl (sock, SIOCGIFINDEX, &ifr);
 	if (rc == -1)
