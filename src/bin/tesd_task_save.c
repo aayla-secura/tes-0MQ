@@ -237,7 +237,7 @@ struct s_task_save_data_t
 	{ /* given by client */
 		uint64_t min_ticks;   // cpature at least that many ticks
 		uint64_t min_events;  // cpature at least that many events
-		uint8_t  overwrite;   // HDF5_OVRT_*, see hdf5conv.h
+		uint8_t  ovrwtmode;   // HDF5_OVRT_*, see hdf5conv.h
 		uint8_t  async;       // copy data to hdf5 in the background
 		char*    basefname;   // datafiles will be
 		                      // <basefname>-<measurement>
@@ -424,9 +424,13 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	 * will be overridden anyway, so no need to keep it. Simply
 	 * unlink. This will also prevent strange behaviour if file is
 	 * open in another process. */
-	int rc = unlink (aiobuf->filename);
-	if (rc == -1)
-		assert (errno = ENOENT);
+	int fok = access (aiobuf->filename, F_OK);
+	if (fok == 0)
+	{
+		int rc = unlink (aiobuf->filename);
+		if (rc == -1)
+			return -1;
+	}
 
 	aiobuf->aios.aio_fildes = open (aiobuf->filename, fmode,
 		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -475,7 +479,7 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 {
 	assert (sjob != NULL);
 
-	struct hdf5_dset_desc_t dsets[TSAVE_NUM_DSETS] = {0,};
+	struct hdf5_dset_desc_t dsets[TSAVE_NUM_DSETS] = {0};
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		dsets[s].filename = sjob->aio[s].filename;
@@ -488,7 +492,7 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 		.group = sjob->measurement,
 		.dsets = dsets,
 		.num_dsets = TSAVE_NUM_DSETS,
-		.ovrwtmode = sjob->overwrite,
+		.ovrwtmode = sjob->ovrwtmode,
 		.async = sjob->async,
 	};
 
@@ -546,7 +550,8 @@ s_task_save_stats_write (struct s_task_save_data_t* sjob)
 	assert (sjob->basefname != NULL);
 	dbg_assert (sjob->fd == -1);
 
-	sjob->fd = open (sjob->basefname, O_WRONLY | O_CREAT,
+	/* s_req_hn should unlink it, ensure this with O_EXCL */
+	sjob->fd = open (sjob->basefname, O_WRONLY | O_CREAT | O_EXCL,
 		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (sjob->fd == -1)
 		return -1;
@@ -894,8 +899,7 @@ s_task_save_canonicalize_path (const char* filename,
 	}
 #endif
 
-	char buf[PATH_MAX];
-	memset (buf, 0, PATH_MAX);
+	char buf[PATH_MAX] = {0};
 	snprintf (buf, PATH_MAX, "%s%s", TSAVE_ROOT, filename);
 
 	/* Check if the file exists first. */
@@ -1059,7 +1063,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		&sjob->measurement,
 		&sjob->min_ticks,
 		&sjob->min_events,
-		&sjob->overwrite,
+		&sjob->ovrwtmode,
 		&sjob->async);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or
@@ -1189,6 +1193,31 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	dbg_assert ( ! checkonly );
 
+	/* Check if job exists (stat) file and we are not overwriting. */
+	int fok = access (sjob->basefname, F_OK);
+	if (fok == 0)
+	{ /* exists */
+		if (sjob->ovrwtmode == HDF5_OVRWT_NONE)
+		{
+			logmsg (0, LOG_INFO, "Job will not proceed");
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_ABORT);
+			return 0;
+		}
+		else
+		{ /* unlink it to prevent permission errors later when writing */
+			rc = unlink (sjob->basefname);
+			if (rc == -1)
+			{
+				logmsg (errno, LOG_ERR,
+					"Could not delete stat file");
+				s_task_save_send_err (sjob, reader,
+					TSAVE_REQ_FAIL);
+				return 0;
+			}
+		}
+	}
+
 	/* Check if HDF5 filename is allowed, in case it's a symlink. */
 	basefname = strrchr (sjob->basefname, '/');
 	assert (basefname != NULL);
@@ -1205,42 +1234,19 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	/*
-	 * Set the file open mode and act according to the return status
-	 * of open and errno (print a warning of errno is unexpected)
-	 * Request is for:
-	 *   create: create if non-existing
-	 *           - if successful, enable save
-	 *           - if failed, send reply (expect errno == EEXIST)
-	 *   create: create or overwrite
-	 *           - if successful, enable save
-	 *           - if failed, send reply (this shouldn't happen)
-	 */
-	int exp_errno = 0;
-	mode_t fmode = O_RDWR | O_CREAT;
-	if ( ! sjob->overwrite )
-	{
-		fmode |= O_EXCL;
-		exp_errno = EEXIST;
-	}
+	/* s_task_save_open_aiobuf will unlink the data files first, ensure
+	 * this with O_EXCL */
+	mode_t fmode = O_RDWR | O_CREAT | O_EXCL;
 
 	rc = s_task_save_open (sjob, fmode);
 	if (rc == -1)
 	{
-		if (errno != exp_errno)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not open file %s",
-				sjob->basefname);
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_FAIL);
-		}
-		else
-		{
-			logmsg (0, LOG_INFO, "Job will not proceed");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_ABORT);
-		}
+		logmsg (errno, LOG_ERR,
+			"Could not open file %s",
+			sjob->basefname);
+		s_task_save_send_err (sjob, reader,
+			TSAVE_REQ_FAIL);
+
 		s_task_save_close (sjob);
 		return 0;
 	}

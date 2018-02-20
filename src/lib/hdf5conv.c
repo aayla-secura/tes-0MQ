@@ -373,13 +373,17 @@ s_hdf5_init (void* creq_data_)
 	}
 	else
 	{ /* create/overwrite it */
-		if (fok == -1 && errno != ENOENT)
-		{ /* the calling process ensures the filepath should be in
-		   * an existing directory (same as the capture files) */
-			logmsg (errno, LOG_ERR,
-				 "Cannot access hdf5 file %s",
-				creq->filename);
-			return -1;
+		if (fok == 0)
+		{ /* unlink it first */
+			assert (ovrwt);
+			int rc = unlink (creq->filename);
+			if (rc == -1)
+			{
+				logmsg (errno, LOG_ERR,
+					"Cannot delete hdf5 file %s",
+					creq->filename);
+				return -1;
+			}
 		}
 		logmsg (0, LOG_DEBUG,
 			"%s hdf5 file: %s",
@@ -407,7 +411,7 @@ s_hdf5_init (void* creq_data_)
 	assert (root_gid > 0);
 
 	hid_t ovrwt_gid = -1;
-	char bkpgroup[PATH_MAX] = {0,};
+	char bkpgroup[PATH_MAX] = {0};
 	if (creq->ovrwtmode == HDF5_OVRWT_RELINK)
 	{
 		/* Open the overwrite group. */
