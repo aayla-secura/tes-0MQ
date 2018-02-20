@@ -19,9 +19,9 @@
 
 static char s_prog_name[PATH_MAX];
 #define OPTS_G       "Z:F:"
-#define OPTS_R_ALL   "m:w:t:e:rosa"
+#define OPTS_R_ALL   "m:w:t:e:rosca"
 #define OPTS_L_TRACE "w:"
-#define OPTS_L_HIST  "c:"
+#define OPTS_L_HIST  "n:"
 
 static void
 s_usage (void)
@@ -43,6 +43,7 @@ s_usage (void)
 		              "                       "            "group of that name.\n"
 		ANSI_FG_RED   "    -o                 " ANSI_RESET "Overwrite entire hdf5 file.\n"
 		ANSI_FG_RED   "    -s                 " ANSI_RESET "Request status of filename.\n"
+		ANSI_FG_RED   "    -c                 " ANSI_RESET "Convert only, no capture.\n"
 		ANSI_FG_RED   "    -a                 " ANSI_RESET "Asynchronous hdf5 conversion.\n"
 		"Only one of -o and -r can be given.\n"
 		"For status requests (-s) only measurement (-m) can be specified.\n\n"
@@ -53,7 +54,7 @@ s_usage (void)
 		              "                       "            "in this period. Default is 5.\n\n"
 		ANSI_FG_GREEN "local_hist" ANSI_RESET ": Save histograms to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
-		ANSI_FG_RED   "    -c <count>         " ANSI_RESET "Save up to that many histograms.\n"
+		ANSI_FG_RED   "    -n <count>         " ANSI_RESET "Save up to that many histograms.\n"
 		              "                       "            "Default is 1.\n",
 		s_prog_name
 		);
@@ -405,7 +406,7 @@ s_local_save_hist (const char* server, const char* filename,
 #define R_ALL_REQ_EWRT  5 // error while writing, less than minimum
 						  // requested was saved
 #define R_ALL_REQ_ECONV 6 // error while converting to hdf5
-#define R_ALL_REQ_PIC   "ss8811"
+#define R_ALL_REQ_PIC  "ss88111"
 #define R_ALL_REP_PIC "18888888"
 
 #define R_ALL_HDF5_OVRWT_RELINK 1 /* only move existing group to
@@ -418,7 +419,7 @@ s_remote_save_all (const char* server, const char* filename,
 {
 	char measurement[1024] = {0};
 	uint64_t min_ticks = 0, min_events = 0;
-	uint8_t ovrwtmode = 0, async = 0, status = 0;
+	uint8_t ovrwtmode = 0, async = 0, status = 0, convonly = 0;
 
 	/* Command-line */
 	char* buf = NULL;
@@ -468,6 +469,9 @@ s_remote_save_all (const char* server, const char* filename,
 			case 's':
 				status = 1;
 				break;
+			case 'c':
+				convonly = 1;
+				break;
 			case 'a':
 				async = 1;
 				break;
@@ -481,22 +485,23 @@ s_remote_save_all (const char* server, const char* filename,
 	}
 
 	/* Check for conflicting options. */
-	if ( status &&
-		(async || ovrwtmode || min_ticks || min_events) )
+	if ( ( (status || convonly) && (min_ticks || min_events) ) ||
+		(status && (async || ovrwtmode)) )
 	{
 		s_conflicting_opt ();
 		return -1;
 	}
 
 	/* Min ticks defaults to 1. */
-	if ( ! min_ticks && ! status )
+	if ( ! min_ticks && ! status && ! convonly )
 		min_ticks = 1;
 
 	/* Proceed? */
-	if (status)
+	if (status || convonly)
 	{
-		printf ("Sending a status request for remote filename "
+		printf ("Sending a %s request for remote filename "
 			"'%s' and measurement group '%s'.\n",
+			status ? "status" : "conversion",
 			filename, measurement);
 	}
 	else
@@ -535,7 +540,8 @@ s_remote_save_all (const char* server, const char* filename,
 		min_ticks,
 		min_events,
 		ovrwtmode,
-		async);
+		async,
+		convonly);
 	puts ("Waiting for reply");
 
 	uint8_t fstat;

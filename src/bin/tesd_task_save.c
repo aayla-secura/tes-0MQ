@@ -12,7 +12,7 @@
 #define TSAVE_REQ_EWRT  5 // error while writing, less than minimum
                           // requested was saved
 #define TSAVE_REQ_ECONV 6 // error while converting to hdf5
-#define TSAVE_REQ_PIC   "ss8811"
+#define TSAVE_REQ_PIC  "ss88111"
 #define TSAVE_REP_PIC "18888888"
 
 #define TSAVE_FIDX_LEN 16 // frame index
@@ -239,6 +239,7 @@ struct s_task_save_data_t
 		uint64_t min_events;  // cpature at least that many events
 		uint8_t  ovrwtmode;   // HDF5_OVRT_*, see hdf5conv.h
 		uint8_t  async;       // copy data to hdf5 in the background
+		uint8_t  convonly;    // only convert a previous capture
 		char*    basefname;   // datafiles will be
 		                      // <basefname>-<measurement>
 		char*    measurement; // hdf5 group
@@ -262,6 +263,8 @@ static void  s_task_save_fin_aiobuf (
  * processing is done.
  */
 /* Job initializer and finalizer. */
+static int  s_task_construct_filenames (
+		struct s_task_save_data_t* sjob);
 static int  s_task_save_open  (
 		struct s_task_save_data_t* sjob, mode_t fmode);
 static void s_task_save_close (struct s_task_save_data_t* sjob);
@@ -287,7 +290,7 @@ static int   s_task_save_try_queue_aiobuf (
 static int   s_task_save_queue_aiobuf (
 		struct s_task_save_aiobuf_t* aiobuf, bool force);
 static char* s_task_save_canonicalize_path (const char* filename,
-		char* finalpath, bool checkonly);
+		char* finalpath, bool mustexist);
 
 #ifdef ENABLE_FULL_DEBUG
 static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob);
@@ -338,6 +341,45 @@ s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 }
 
 /*
+ * Append file extensions and set dataset names.
+ * Returns 0 on success, -1 on error.
+ */
+static int s_task_construct_filenames (
+		struct s_task_save_data_t* sjob)
+{
+	assert (sjob != NULL);
+	assert (sjob->basefname != NULL);
+	assert (sjob->measurement != NULL);
+
+	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	{
+		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
+		aiobuf->dataset = s_task_save_dsets[s].dataset;
+
+		int rc = snprintf (aiobuf->filename, PATH_MAX, "%s%s%s.%s",
+			sjob->basefname,
+			strlen (sjob->measurement) == 0 ? "" : "-",
+			sjob->measurement,
+			s_task_save_dsets[s].extension);
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Cannot construct filename for dataset %s",
+				aiobuf->dataset);
+			return -1;
+		}
+		else if ((size_t)rc >= PATH_MAX)
+		{
+			logmsg (0, LOG_ERR,
+				"Cannot construct filename for dataset, basename too long");
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+/*
  * Opens the stream and index files.
  * It does not close any successfully opened files are closed if an
  * error occurs.
@@ -347,7 +389,6 @@ static int
 s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 {
 	assert (sjob != NULL);
-	assert (sjob->basefname != NULL);
 
 	dbg_assert (sjob->st.ticks == 0);
 	dbg_assert (sjob->st.events == 0);
@@ -363,23 +404,11 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	dbg_assert (sjob->cur_tick.nframes == 0);
 
 	/* Open the data files. */
-	if (strlen (sjob->basefname) + 6 > PATH_MAX)
-	{
-		errno = ENAMETOOLONG;
-		return -1;
-	}
-
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
-		snprintf (aiobuf->filename, PATH_MAX, "%s%s%s.%s",
-			sjob->basefname,
-			strlen (sjob->measurement) == 0 ? "" : "-",
-			sjob->measurement,
-			s_task_save_dsets[s].extension);
-		aiobuf->dataset = s_task_save_dsets[s].dataset;
 		int rc = s_task_save_open_aiobuf (aiobuf, fmode);
-		if (rc != 0)
+		if (rc == -1)
 			return -1;
 	}
 
@@ -418,18 +447,19 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	dbg_assert (aiobuf->bufzone.waiting == 0);
 	dbg_assert (aiobuf->bufzone.enqueued == 0);
 
-	/* The directory part of filename is at this point ensured to
-	 * exist and be allowed (inside root). Would only end up writing
-	 * outside of root if the datafile is a symlink. But the file
-	 * will be overridden anyway, so no need to keep it. Simply
-	 * unlink. This will also prevent strange behaviour if file is
-	 * open in another process. */
-	int fok = access (aiobuf->filename, F_OK);
-	if (fok == 0)
+	/* If overwriting, unlink the file first to prevent permission
+	 * errors if owned by another user and to avoid writing outside of
+	 * root if data file is a symlink (it is not checked with
+	 * s_task_save_canonicalize_path). */
+	if (! (fmode & O_EXCL))
 	{
-		int rc = unlink (aiobuf->filename);
-		if (rc == -1)
-			return -1;
+		int fok = access (aiobuf->filename, F_OK);
+		if (fok == 0)
+		{
+			int rc = unlink (aiobuf->filename);
+			if (rc == -1)
+				return -1;
+		}
 	}
 
 	aiobuf->aios.aio_fildes = open (aiobuf->filename, fmode,
@@ -865,19 +895,23 @@ queue_as_is:
 /*
  * Prepends TSAVE_ROOT to filename and canonicalizes the path via
  * realpath.
- * If checkonly is false, creates any missing parent directories.
- * Saves the result in finalpath, which must be able to hold
- * PATH_MAX characters.
- * On success returns a pointer to a finalpath.
- * Returns NULL on error (including if checkonly is true and the
- * filename does not exist).
- * If NULL is returned because the filename is not allowed by us
- * (i.e. outside of TSAVE_ROOT or ends with a slash) errno should be
- * 0.
+ *
+ * If mustexist is true, filename must exist and resolve to a path under
+ * TSAVE_ROOT.
+ * If mustexist is false, directory part must resolve to a path under
+ * TSAVE_ROOT (or TSAVE_ROOT). Any missing directories are created.
+ *
+ * On success saves the result in finalpath, which must be able to hold
+ * PATH_MAX characters, and returns a pointer to finalpath.
+ * On error, returns NULL.
+ *
+ * If NULL is returned and errno is 0, it should be because the filename
+ * is not allowed by us (i.e. outside of TSAVE_ROOT or ends with a
+ * slash) or because mustexist is true and file does not exist.
  */
 static char*
 s_task_save_canonicalize_path (const char* filename,
-	char* finalpath, bool checkonly)
+	char* finalpath, bool mustexist)
 {
 	assert (filename != NULL);
 	assert (finalpath != NULL);
@@ -919,7 +953,7 @@ s_task_save_canonicalize_path (const char* filename,
 		}
 		return finalpath;
 	}
-	if (checkonly)
+	if (mustexist)
 	{
 		logmsg (0, LOG_DEBUG,
 			"File doesn't exist");
@@ -1064,7 +1098,8 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		&sjob->min_ticks,
 		&sjob->min_events,
 		&sjob->ovrwtmode,
-		&sjob->async);
+		&sjob->async,
+		&sjob->convonly);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or
 	   * a null frame (z) but message received did not match this
@@ -1098,11 +1133,13 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is it only a status query? */
-	bool checkonly = (sjob->min_ticks == 0);
-	if (checkonly)
+	bool nocapture = (sjob->min_ticks == 0);
+	bool checkonly = (nocapture && ! sjob->convonly);
+	if (nocapture)
 	{
 		logmsg (0, LOG_INFO,
-			"Received request for status of '%s%s%s'",
+			"Received request for %s of '%s%s%s'",
+			checkonly ? "status" : "conversion",
 			basefname,
 			strlen (sjob->measurement) == 0 ? "" : "-",
 			sjob->measurement);
@@ -1140,12 +1177,12 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	char* tmpfname = s_task_save_canonicalize_path (
-		basefname, sjob->basefname, checkonly);
+		basefname, sjob->basefname, nocapture);
 	zstr_free (&basefname); /* nullifies the pointer */
 
 	if (tmpfname == NULL)
 	{
-		if (checkonly)
+		if (nocapture)
 		{
 			logmsg (0, LOG_INFO, "Job not found");
 			s_task_save_send_err (sjob, reader,
@@ -1162,13 +1199,52 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
+	/* Set the filenames and dataset names. */
+	rc = s_task_construct_filenames (sjob);
+	if (rc == -1)
+	{
+		s_task_save_send_err (sjob, reader,
+			TSAVE_REQ_FAIL);
+		return 0;
+	}
+
+	/* Check if HDF5 filename is allowed and set it. */
+	basefname = strrchr (sjob->basefname, '/');
+	assert (basefname != NULL);
+	basefname++;
+	char h5file[PATH_MAX];
+	snprintf (h5file, PATH_MAX, "%s.hdf5", basefname);
+	tmpfname = s_task_save_canonicalize_path (h5file,
+		sjob->hdf5filename, 0);
+	if (tmpfname == NULL)
+	{ /* this will only happen if it was a symlink */
+		logmsg (errno, LOG_INFO,
+			"HDF5 filename is not valid");
+		s_task_save_send_err (sjob, reader, TSAVE_REQ_EPERM);
+		return 0;
+	}
+
 	/* -------------------------------------------------- */
-	/*                    Status query.                   */
+	/*              Status or convert query.              */
 	/* -------------------------------------------------- */
 
-	if (checkonly)
-	{ /* just read in stats and send reply */
-		rc = s_task_save_stats_read  (sjob);
+	if (nocapture)
+	{
+		if (sjob->convonly)
+		{
+			rc = s_task_save_conv_data (sjob);
+			if (rc != 0)
+			{
+				logmsg (errno, LOG_ERR,
+					"Could not convert data to hdf5");
+				s_task_save_send_err (sjob, reader,
+					TSAVE_REQ_ECONV);
+				return 0;
+			}
+		}
+
+	 /* Read in stats and send reply. */
+		rc = s_task_save_stats_read (sjob);
 		if (rc != 0)
 		{
 			logmsg (errno, LOG_ERR,
@@ -1177,6 +1253,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 				TSAVE_REQ_FAIL);
 			return 0;
 		}
+
 		rc = s_task_save_stats_send (sjob,
 			self->frontend, TSAVE_REQ_OK);
 		if (rc != 0)
@@ -1187,65 +1264,37 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
+	dbg_assert ( ! checkonly );
+	dbg_assert ( ! sjob->convonly );
+
 	/* -------------------------------------------------- */
 	/*                    Write query.                    */
 	/* -------------------------------------------------- */
 
-	dbg_assert ( ! checkonly );
-
-	/* Check if job exists (stat) file and we are not overwriting. */
-	int fok = access (sjob->basefname, F_OK);
-	if (fok == 0)
-	{ /* exists */
-		if (sjob->ovrwtmode == HDF5_OVRWT_NONE)
-		{
-			logmsg (0, LOG_INFO, "Job will not proceed");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_ABORT);
-			return 0;
-		}
-		else
-		{ /* unlink it to prevent permission errors later when writing */
-			rc = unlink (sjob->basefname);
-			if (rc == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not delete stat file");
-				s_task_save_send_err (sjob, reader,
-					TSAVE_REQ_FAIL);
-				return 0;
-			}
-		}
-	}
-
-	/* Check if HDF5 filename is allowed, in case it's a symlink. */
-	basefname = strrchr (sjob->basefname, '/');
-	assert (basefname != NULL);
-	basefname++;
-	char h5file[PATH_MAX];
-	snprintf (h5file, PATH_MAX, "%s.hdf5", basefname);
-	tmpfname = s_task_save_canonicalize_path (h5file,
-		sjob->hdf5filename, 0);
-	if (tmpfname == NULL)
-	{
-		logmsg (errno, LOG_INFO,
-			"HDF5 filename is not valid");
-		s_task_save_send_err (sjob, reader, TSAVE_REQ_EPERM);
-		return 0;
-	}
-
-	/* s_task_save_open_aiobuf will unlink the data files first, ensure
-	 * this with O_EXCL */
-	mode_t fmode = O_RDWR | O_CREAT | O_EXCL;
+	/* If not overwriting add O_EXCL, s_task_save_open_aiobuf will then
+	 * not unlink the data files and the open call will fail */
+	mode_t fmode = O_RDWR | O_CREAT;
+	if (sjob->ovrwtmode == HDF5_OVRWT_NONE)
+		fmode |= O_EXCL;
 
 	rc = s_task_save_open (sjob, fmode);
 	if (rc == -1)
 	{
-		logmsg (errno, LOG_ERR,
-			"Could not open file %s",
-			sjob->basefname);
-		s_task_save_send_err (sjob, reader,
-			TSAVE_REQ_FAIL);
+		if (sjob->ovrwtmode == HDF5_OVRWT_NONE && errno == EEXIST)
+		{
+			logmsg (0, LOG_INFO,
+				"Not going to overwrite");
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_ABORT);
+		}
+		else
+		{
+			logmsg (errno, LOG_ERR,
+					"Could not open file %s",
+					sjob->basefname);
+			s_task_save_send_err (sjob, reader,
+					TSAVE_REQ_FAIL);
+		}
 
 		s_task_save_close (sjob);
 		return 0;
@@ -1256,6 +1305,23 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		sjob->basefname,
 		strlen (sjob->measurement) == 0 ? "" : "-",
 		sjob->measurement);
+
+	/* Unlink stat file to prevent permission errors later when writing */
+	int fok = access (sjob->basefname, F_OK);
+	if (fok == 0)
+	{
+		rc = unlink (sjob->basefname);
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not delete stat file");
+			s_task_save_send_err (sjob, reader,
+				TSAVE_REQ_FAIL);
+
+			s_task_save_close (sjob);
+			return 0;
+		}
+	}
 
 	/* Disable polling on the reader until the job is done. Wakeup
 	 * packet handler. */
