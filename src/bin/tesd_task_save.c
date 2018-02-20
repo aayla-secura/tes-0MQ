@@ -216,13 +216,13 @@ struct s_task_save_data_t
 	struct s_task_save_aiobuf_t aio[TSAVE_NUM_DSETS];
 
 	struct
-	{
+	{ /* keep track of multi-frame streams */
 		struct s_task_save_sidx_t idx;
 		size_t size;
 		size_t cur_size;
 		bool is_event; // i.e. is_trace, otherwise it's MCA
 		bool discard;  // stream had errors, ignore rest
-	} cur_stream;          // ongoing trace of histogram
+	} cur_stream;
 
 	struct
 	{
@@ -241,13 +241,16 @@ struct s_task_save_data_t
 		uint8_t  async;       // copy data to hdf5 in the background
 		uint8_t  convonly;    // only convert a previous capture
 		char*    basefname;   // datafiles will be
-		                      // <basefname>-<measurement>
+		                      // <basefname>-<measurement>.*
 		char*    measurement; // hdf5 group
 	};
+	bool     nocapture;  // set for convenience, request is for
+	                     // status or conversion
 
 	char     hdf5filename[PATH_MAX]; // full path of hdf5 file
-	int      fd;        // fd for the statistics file
-	bool     recording; // wait for a tick before starting capture
+	char     statfilename[PATH_MAX]; // full path of stats file
+	int      statfd;        // fd for the statis file
+	bool     recording;  // wait for a tick before starting capture
 };
 
 /* Task initializer and finalizer. */
@@ -263,6 +266,8 @@ static void  s_task_save_fin_aiobuf (
  * processing is done.
  */
 /* Job initializer and finalizer. */
+static int  s_task_save_is_req_valid (
+		struct s_task_save_data_t* sjob);
 static int  s_task_construct_filenames (
 		struct s_task_save_data_t* sjob);
 static int  s_task_save_open  (
@@ -341,8 +346,41 @@ s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 }
 
 /*
- * Append file extensions and set dataset names.
- * Returns 0 on success, -1 on error.
+ * Check if request is valid, set useful internal flags.
+ * Returns TSAVE_REQ_*
+ */
+static int  s_task_save_is_req_valid (
+		struct s_task_save_data_t* sjob)
+{
+	if (sjob->basefname == NULL)
+	{
+		logmsg (0, LOG_ERR, "Invalid request");
+		return TSAVE_REQ_INV;
+	}
+
+	if (sjob->measurement == NULL)
+	{ /* The client did not send a frame for the measurement, default to
+		 * empty string. We free this later so it must be malloc'ed rather
+		 * than static. */
+		sjob->measurement = (char*) malloc (1);
+		if (sjob->measurement == NULL)
+		{
+			logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
+				"Cannot allocate memory");
+			return TSAVE_REQ_FAIL;
+		}
+		sjob->measurement[0] = '\0';
+	}
+
+	/* Does it require capture? */
+	sjob->nocapture = (sjob->min_ticks == 0);
+	return TSAVE_REQ_OK;
+}
+
+/*
+ * Set the stats, hdf5, index and data filenames as well as the dataset
+ * names.
+ * Returns TSAVE_REQ_*
  */
 static int s_task_construct_filenames (
 		struct s_task_save_data_t* sjob)
@@ -351,32 +389,70 @@ static int s_task_construct_filenames (
 	assert (sjob->basefname != NULL);
 	assert (sjob->measurement != NULL);
 
+	char tmpfname[PATH_MAX];
+
+	/* Statistics file. */
+	int rc = snprintf (tmpfname, PATH_MAX, "%s%s%s",
+		sjob->basefname,
+		strlen (sjob->measurement) == 0 ? "" : "-",
+		sjob->measurement);
+	if (rc == -1 || (size_t)rc >= PATH_MAX)
+	{
+		logmsg (rc == -1 ? errno : 0, LOG_ERR,
+			"Cannot construct filename for dataset %s%s%s",
+			sjob->basefname,
+			strlen (sjob->measurement) == 0 ? "" : "-",
+			sjob->measurement);
+		return TSAVE_REQ_FAIL;
+	}
+	char* tmpfname_p = s_task_save_canonicalize_path (
+		tmpfname, sjob->statfilename, sjob->nocapture);
+	if (tmpfname_p == NULL)
+	{
+		if (sjob->nocapture)
+		{
+			logmsg (0, LOG_INFO, "Job not found");
+			return TSAVE_REQ_ABORT;
+		}
+		else
+		{
+			logmsg (errno, LOG_INFO, "Filename is not valid");
+			return TSAVE_REQ_EPERM;
+		}
+	}
+
+	/* HDF5 file. */
+	tmpfname_p = NULL;
+	if (strchr (sjob->measurement, '/') == NULL)
+	{ /* make sure measurement group does not contain a slash. */
+		snprintf (tmpfname, PATH_MAX, "%s.hdf5", sjob->basefname);
+		tmpfname_p = s_task_save_canonicalize_path (
+			tmpfname, sjob->hdf5filename, 0);
+	}
+	if (tmpfname_p == NULL)
+	{ /* it had a slash or it was a symlink to outside TSAVE_ROOT */
+		logmsg (errno, LOG_INFO, "HDF5 filename is not valid");
+		return TSAVE_REQ_EPERM;
+	}
+
+	/* Index and data files. */
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
 		aiobuf->dataset = s_task_save_dsets[s].dataset;
 
-		int rc = snprintf (aiobuf->filename, PATH_MAX, "%s%s%s.%s",
-			sjob->basefname,
-			strlen (sjob->measurement) == 0 ? "" : "-",
-			sjob->measurement,
+		rc = snprintf (aiobuf->filename, PATH_MAX, "%s.%s",
+			sjob->statfilename,
 			s_task_save_dsets[s].extension);
-		if (rc == -1)
+		if (rc == -1 || (size_t)rc >= PATH_MAX)
 		{
-			logmsg (errno, LOG_ERR,
-				"Cannot construct filename for dataset %s",
-				aiobuf->dataset);
-			return -1;
-		}
-		else if ((size_t)rc >= PATH_MAX)
-		{
-			logmsg (0, LOG_ERR,
-				"Cannot construct filename for dataset, basename too long");
-			return -1;
+			logmsg (rc == -1 ? errno : 0, LOG_ERR,
+				"Cannot construct filename for dataset");
+			return TSAVE_REQ_FAIL;
 		}
 	}
 
-	return 0;
+	return TSAVE_REQ_OK;
 }
 
 /*
@@ -553,15 +629,15 @@ s_task_save_stats_read (struct s_task_save_data_t* sjob)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
-	dbg_assert (sjob->fd == -1);
+	dbg_assert (sjob->statfd == -1);
 
-	sjob->fd = open (sjob->basefname, O_RDONLY);
-	if (sjob->fd == -1)
+	sjob->statfd = open (sjob->statfilename, O_RDONLY);
+	if (sjob->statfd == -1)
 		return -1;
 
-	off_t rc = read (sjob->fd, &sjob->st, TSAVE_STAT_LEN);
-	close (sjob->fd);
-	sjob->fd = -1;
+	off_t rc = read (sjob->statfd, &sjob->st, TSAVE_STAT_LEN);
+	close (sjob->statfd);
+	sjob->statfd = -1;
 
 	if (rc != TSAVE_STAT_LEN)
 		return -1;
@@ -578,17 +654,18 @@ s_task_save_stats_write (struct s_task_save_data_t* sjob)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
-	dbg_assert (sjob->fd == -1);
+	dbg_assert (sjob->statfd == -1);
 
 	/* s_req_hn should unlink it, ensure this with O_EXCL */
-	sjob->fd = open (sjob->basefname, O_WRONLY | O_CREAT | O_EXCL,
+	sjob->statfd = open (sjob->statfilename,
+		O_WRONLY | O_CREAT | O_EXCL,
 		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-	if (sjob->fd == -1)
+	if (sjob->statfd == -1)
 		return -1;
 
-	off_t rc = write (sjob->fd, &sjob->st, TSAVE_STAT_LEN);
-	close (sjob->fd);
-	sjob->fd = -1;
+	off_t rc = write (sjob->statfd, &sjob->st, TSAVE_STAT_LEN);
+	close (sjob->statfd);
+	sjob->statfd = -1;
 
 	if (rc != TSAVE_STAT_LEN)
 		return -1;
@@ -606,7 +683,7 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob,
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
-	dbg_assert (sjob->fd == -1); /* _read and _write close it */
+	dbg_assert (sjob->statfd == -1); /* _read and _write close it */
 
 	int rc = zsock_send (frontend, TSAVE_REP_PIC,
 		status,
@@ -738,13 +815,11 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	{
 		/* TO DO: how to handle errors */
 #ifdef ENABLE_FULL_DEBUG
-		logmsg (0, LOG_ERR,
-			"Queued %lu bytes, wrote %lu",
+		logmsg (0, LOG_ERR, "Queued %lu bytes, wrote %lu",
 			aiobuf->bufzone.enqueued,
 			aiobuf->bufzone.st.last_written);
 #else /* ENABLE_FULL_DEBUG */
-		logmsg (0, LOG_ERR,
-			"Wrote unexpected number of bytes");
+		logmsg (0, LOG_ERR, "Wrote unexpected number of bytes");
 #endif /* ENABLE_FULL_DEBUG */
 	}
 
@@ -927,8 +1002,7 @@ s_task_save_canonicalize_path (const char* filename,
 #ifdef TSAVE_REQUIRE_FILENAME
 	if (filename[len - 1] == '/')
 	{
-		logmsg (0, LOG_DEBUG,
-			"Filename ends with /");
+		logmsg (0, LOG_DEBUG, "Filename ends with /");
 		return NULL;
 	}
 #endif
@@ -946,8 +1020,7 @@ s_task_save_canonicalize_path (const char* filename,
 		if ( memcmp (finalpath, TSAVE_ROOT,
 			strlen (TSAVE_ROOT)) != 0 )
 		{
-			logmsg (0, LOG_DEBUG,
-				"Resolved to %s, outside of root",
+			logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
 				finalpath);
 			return NULL; /* outside of root */
 		}
@@ -955,8 +1028,7 @@ s_task_save_canonicalize_path (const char* filename,
 	}
 	if (mustexist)
 	{
-		logmsg (0, LOG_DEBUG,
-			"File doesn't exist");
+		logmsg (0, LOG_DEBUG, "File doesn't exist");
 		return NULL;
 	}
 
@@ -990,8 +1062,7 @@ s_task_save_canonicalize_path (const char* filename,
 		size_t thislen = next_seg - cur_seg + 1;
 		if (len + thislen >= PATH_MAX)
 		{
-			logmsg (0, LOG_DEBUG,
-				"Filename too long");
+			logmsg (0, LOG_DEBUG, "Filename too long");
 			return NULL;
 		}
 		strncpy (buf + len, cur_seg, thislen);
@@ -1021,8 +1092,7 @@ s_task_save_canonicalize_path (const char* filename,
 	len = strlen (finalpath);
 	if (strlen (cur_seg) + len >= PATH_MAX)
 	{
-		logmsg (0, LOG_DEBUG,
-			"Filename too long");
+		logmsg (0, LOG_DEBUG, "Filename too long");
 		return NULL;
 	}
 
@@ -1030,8 +1100,7 @@ s_task_save_canonicalize_path (const char* filename,
 	errno = 0;
 	if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
 	{
-		logmsg (0, LOG_DEBUG,
-			"Resolved to %s, outside of root",
+		logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
 			finalpath);
 		return NULL; /* outside of root */
 	}
@@ -1046,8 +1115,7 @@ s_task_save_dbg_stats (struct s_task_save_data_t* sjob)
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
 	{
 		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
-		logmsg (0, LOG_DEBUG,
-			"Dataset %s: ", aiobuf->dataset); 
+		logmsg (0, LOG_DEBUG, "Dataset %s: ", aiobuf->dataset); 
 		uint64_t batches_tot = 0,
 			 steps = TSAVE_BUFSIZE / (TSAVE_HISTBINS - 1);
 		for (int b = 0 ; b < TSAVE_HISTBINS ; b++)
@@ -1091,9 +1159,8 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		(struct s_task_save_data_t*) self->data;
 	dbg_assert ( ! sjob->recording );
 
-	char* basefname; /* zsock_recv will allocate it */
 	int rc = zsock_recv (reader, TSAVE_REQ_PIC,
-		&basefname,
+		&sjob->basefname,
 		&sjob->measurement,
 		&sjob->min_ticks,
 		&sjob->min_events,
@@ -1109,118 +1176,18 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is the request understood? */
-	if (basefname == NULL)
+	rc = s_task_save_is_req_valid (sjob);
+	if (rc != TSAVE_REQ_OK)
 	{
-		logmsg (0, LOG_INFO,
-			"Received a malformed request");
-		s_task_save_send_err (sjob, reader, TSAVE_REQ_INV);
-		return 0;
-	}
-
-	if (sjob->measurement == NULL)
-	{ /* The client did not send a frame for the measurement, default to
-		 * empty string. We free this later so it must be malloc'ed rather
-		 * than static. */
-		sjob->measurement = (char*) malloc (1);
-		if (sjob->measurement == NULL)
-		{
-			logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
-				"Cannot allocate memory");
-			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
-			return 0;
-		}
-		sjob->measurement[0] = '\0';
-	}
-
-	/* Is it only a status query? */
-	bool nocapture = (sjob->min_ticks == 0);
-	bool checkonly = (nocapture && ! sjob->convonly);
-	if (nocapture)
-	{
-		logmsg (0, LOG_INFO,
-			"Received request for %s of '%s%s%s'",
-			checkonly ? "status" : "conversion",
-			basefname,
-			strlen (sjob->measurement) == 0 ? "" : "-",
-			sjob->measurement);
-	}
-	else
-	{
-		logmsg (0, LOG_INFO,
-			"Received request to write %lu ticks and "
-			"%lu events to '%s%s%s%s'",
-			sjob->min_ticks,
-			sjob->min_events,
-			basefname,
-			strlen (sjob->measurement) == 0 ? "" : "-",
-			sjob->measurement,
-			sjob->async ? ". Convering asynchronously" : "");
-	}
-
-	/* Make sure measurement group does not contain a slash. */
-	if (strchr (sjob->measurement, '/') != NULL)
-	{
-		logmsg (0, LOG_INFO,
-			"HDF5 group is not valid");
-		s_task_save_send_err (sjob, reader, TSAVE_REQ_EPERM);
-		return 0;
-	}
-
-	/* Check if stat filename is allowed and get the realpath. */
-	sjob->basefname = (char*) malloc (PATH_MAX);
-	if (sjob->basefname == NULL)
-	{
-		logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
-			"Cannot allocate memory");
-		s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
-		return 0;
-	}
-
-	char* tmpfname = s_task_save_canonicalize_path (
-		basefname, sjob->basefname, nocapture);
-	zstr_free (&basefname); /* nullifies the pointer */
-
-	if (tmpfname == NULL)
-	{
-		if (nocapture)
-		{
-			logmsg (0, LOG_INFO, "Job not found");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_ABORT);
-		}
-		else
-		{
-			logmsg (errno, LOG_INFO,
-				"Filename is not valid");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_EPERM);
-		}
-
+		s_task_save_send_err (sjob, reader, rc);
 		return 0;
 	}
 
 	/* Set the filenames and dataset names. */
 	rc = s_task_construct_filenames (sjob);
-	if (rc == -1)
+	if (rc != TSAVE_REQ_OK)
 	{
-		s_task_save_send_err (sjob, reader,
-			TSAVE_REQ_FAIL);
-		return 0;
-	}
-
-	/* Check if HDF5 filename is allowed and set it. */
-	basefname = strrchr (sjob->basefname, '/');
-	assert (basefname != NULL);
-	basefname++;
-	char h5file[PATH_MAX];
-	snprintf (h5file, PATH_MAX, "%s.hdf5", basefname);
-	tmpfname = s_task_save_canonicalize_path (h5file,
-		sjob->hdf5filename, 0);
-	if (tmpfname == NULL)
-	{ /* this will only happen if it was a symlink */
-		logmsg (errno, LOG_INFO,
-			"HDF5 filename is not valid");
-		s_task_save_send_err (sjob, reader, TSAVE_REQ_EPERM);
+		s_task_save_send_err (sjob, reader, rc);
 		return 0;
 	}
 
@@ -1228,29 +1195,32 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	/*              Status or convert query.              */
 	/* -------------------------------------------------- */
 
-	if (nocapture)
+	if (sjob->nocapture)
 	{
+		logmsg (0, LOG_INFO,
+			"Received request for %s of '%s.*'%s",
+			sjob->convonly ? "conversion" : "status",
+			sjob->statfilename,
+			(sjob->convonly && sjob->async) ?
+				". Convering asynchronously" : "");
+
 		if (sjob->convonly)
 		{
 			rc = s_task_save_conv_data (sjob);
 			if (rc != 0)
 			{
-				logmsg (errno, LOG_ERR,
-					"Could not convert data to hdf5");
-				s_task_save_send_err (sjob, reader,
-					TSAVE_REQ_ECONV);
+				logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
+				s_task_save_send_err (sjob, reader, TSAVE_REQ_ECONV);
 				return 0;
 			}
 		}
 
-	 /* Read in stats and send reply. */
+	 /* Read in stats and send reply either way. */
 		rc = s_task_save_stats_read (sjob);
 		if (rc != 0)
 		{
-			logmsg (errno, LOG_ERR,
-				"Could not read stats");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_FAIL);
+			logmsg (errno, LOG_ERR, "Could not read stats");
+			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
 			return 0;
 		}
 
@@ -1258,21 +1228,27 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			self->frontend, TSAVE_REQ_OK);
 		if (rc != 0)
 		{
-			logmsg (0, LOG_NOTICE,
-				"Could not send stats");
+			logmsg (0, LOG_NOTICE, "Could not send stats");
 		}
 		return 0;
 	}
 
-	dbg_assert ( ! checkonly );
-	dbg_assert ( ! sjob->convonly );
+	dbg_assert ( ! sjob->nocapture ); /* forgot to return? */
 
 	/* -------------------------------------------------- */
 	/*                    Write query.                    */
 	/* -------------------------------------------------- */
 
+	logmsg (0, LOG_INFO,
+		"Received request to write %lu ticks and "
+		"%lu events to '%s.*'%s",
+		sjob->min_ticks,
+		sjob->min_events,
+		sjob->statfilename,
+		sjob->async ? ". Convering asynchronously" : "");
+
 	/* If not overwriting add O_EXCL, s_task_save_open_aiobuf will then
-	 * not unlink the data files and the open call will fail */
+	 * not unlink the data files and the open call will fail. */
 	mode_t fmode = O_RDWR | O_CREAT;
 	if (sjob->ovrwtmode == HDF5_OVRWT_NONE)
 		fmode |= O_EXCL;
@@ -1282,41 +1258,32 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		if (sjob->ovrwtmode == HDF5_OVRWT_NONE && errno == EEXIST)
 		{
-			logmsg (0, LOG_INFO,
-				"Not going to overwrite");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_ABORT);
+			logmsg (0, LOG_INFO, "Not going to overwrite");
+			s_task_save_send_err (sjob, reader, TSAVE_REQ_ABORT);
 		}
 		else
 		{
-			logmsg (errno, LOG_ERR,
-					"Could not open file %s",
-					sjob->basefname);
-			s_task_save_send_err (sjob, reader,
-					TSAVE_REQ_FAIL);
+			logmsg (errno, LOG_ERR, "Could not open files '%s.*'",
+				sjob->statfilename);
+			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
 		}
 
 		s_task_save_close (sjob);
 		return 0;
 	}
 
-	logmsg (0, LOG_INFO,
-		"Opened files %s%s%s.* for writing",
-		sjob->basefname,
-		strlen (sjob->measurement) == 0 ? "" : "-",
-		sjob->measurement);
+	logmsg (0, LOG_INFO, "Opened files '%s.*' for writing",
+		sjob->statfilename);
 
 	/* Unlink stat file to prevent permission errors later when writing */
-	int fok = access (sjob->basefname, F_OK);
+	int fok = access (sjob->statfilename, F_OK);
 	if (fok == 0)
 	{
-		rc = unlink (sjob->basefname);
+		rc = unlink (sjob->statfilename);
 		if (rc == -1)
 		{
-			logmsg (errno, LOG_ERR,
-				"Could not delete stat file");
-			s_task_save_send_err (sjob, reader,
-				TSAVE_REQ_FAIL);
+			logmsg (errno, LOG_ERR, "Could not delete stat file");
+			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
 
 			s_task_save_close (sjob);
 			return 0;
@@ -1402,8 +1369,7 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{
 #ifdef ENABLE_FULL_DEBUG
 #if 0
-		logmsg (0, LOG_DEBUG,
-			"Missed %hu at frame #%lu",
+		logmsg (0, LOG_DEBUG, "Missed %hu at frame #%lu",
 			missed, sjob->st.frames - 1);
 #endif
 #endif
@@ -1689,8 +1655,7 @@ done:
 		if (rc != 0)
 		{
 			status = TSAVE_REQ_EWRT;
-			logmsg (errno, LOG_ERR,
-				"Could not write stats");
+			logmsg (errno, LOG_ERR, "Could not write stats");
 		}
 
 		/* Convert them to hdf5. */
@@ -1755,7 +1720,7 @@ task_save_init (task_t* self)
 #endif
 
 	static struct s_task_save_data_t sjob;
-	sjob.fd = -1;
+	sjob.statfd = -1;
 
 	int rc = 0;
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
