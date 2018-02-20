@@ -36,8 +36,8 @@ At the moment we only handle one request at a time. Will block until done.
 
 2. **Measurement**
 
-   Name of hdf5 group relative to a hardcoded topmost group. If empty, no
-   conversion is done.
+   Name of hdf5 group relative to a hardcoded topmost group. It must be non-empty
+   if conversion is to be done (now or at a later request).
    
 3. **No. of ticks**
 
