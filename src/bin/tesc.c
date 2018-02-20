@@ -18,7 +18,10 @@
 #endif
 
 static char s_prog_name[PATH_MAX];
-#define OPTS_G       "Z:F:"
+#define OPTS_G       "Z:F:" /* processed by main */
+/* The options accepting arguments should be consistent across the
+ * different subcommands, i.e. if one command has 'c' with no argument,
+ * another one cannot have 'c:' with an argument */
 #define OPTS_R_ALL   "m:w:t:e:rosca"
 #define OPTS_L_TRACE "w:"
 #define OPTS_L_HIST  "n:"
@@ -30,7 +33,6 @@ s_usage (void)
 		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server> -F <filename> "
 		ANSI_FG_GREEN "<command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
 		"The format for <server> is <proto>://<host>:<port>\n"
-		"Command-specific options must follow command.\n"
 		"Allowed commands:\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
@@ -135,9 +137,14 @@ s_local_save_trace (const char* server, const char* filename,
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	for ( int opt = -1; (opt = getopt (argc, argv,
-		":" OPTS_G OPTS_L_TRACE)) != -1; )
+	while (optind < argc)
 	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_L_TRACE);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
 		switch (opt)
 		{
 			case 'Z':
@@ -154,6 +161,9 @@ s_local_save_trace (const char* server, const char* filename,
 			case '?':
 				s_invalid_opt (optopt);
 				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
 			default:
 				/* we forgot to handle an option */
 				assert (0);
@@ -273,9 +283,14 @@ s_local_save_hist (const char* server, const char* filename,
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	for ( int opt = -1; (opt = getopt (argc, argv,
-		":" OPTS_G OPTS_L_HIST)) != -1; )
+	while (optind < argc)
 	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_L_HIST);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
 		switch (opt)
 		{
 			case 'Z':
@@ -292,6 +307,9 @@ s_local_save_hist (const char* server, const char* filename,
 			case '?':
 				s_invalid_opt (optopt);
 				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
 			default:
 				/* we forgot to handle an option */
 				assert (0);
@@ -428,9 +446,14 @@ s_remote_save_all (const char* server, const char* filename,
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	for ( int opt = -1; (opt = getopt (argc, argv,
-		":" OPTS_G OPTS_R_ALL)) != -1; )
+	while (optind < argc)
 	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_R_ALL);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
 		switch (opt)
 		{
 			case 'Z':
@@ -478,7 +501,11 @@ s_remote_save_all (const char* server, const char* filename,
 			case '?':
 				s_invalid_opt (optopt);
 				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
 			default:
+				printf ("%c, %c, %d\n",opt,optopt, optind);
 				/* we forgot to handle an option */
 				assert (0);
 		}
@@ -497,20 +524,20 @@ s_remote_save_all (const char* server, const char* filename,
 		min_ticks = 1;
 
 	/* Proceed? */
-	if (status || convonly)
+	if (status)
 	{
-		printf ("Sending a %s request for remote filename "
+		printf ("Sending a status request for remote filename "
 			"'%s' and measurement group '%s'.\n",
-			status ? "status" : "conversion",
 			filename, measurement);
 	}
 	else
 	{
-		printf ("Sending a%s request for remote filename "
+		printf ("Sending a%s%s request for remote filename "
 			"'%s' and measurement group '%s'.\n"
 			"%sWill terminate after at least "
 			"%lu ticks and %lu events.\n",
 			async ? "n asynchronous" : "",
+			convonly ? "conversion" : "capture",
 			filename, measurement,
 			(ovrwtmode == R_ALL_HDF5_OVRWT_FILE) ?
 				"Will overwrite file.\n" : 
@@ -612,16 +639,35 @@ main (int argc, char **argv)
 	/* Command-line */
 	char server[1024] = {0};
 	char filename[PATH_MAX] = {0};
+	char cmd[64] = {0};
 
-	/* Handle missing arguments, but not unknown options here. */
 #ifdef GETOPT_DEBUG
 	for (int a = 0; a < argc; a++)
 		printf ("%s ", argv[a]);
 	puts ("");
 #endif
-	for ( int opt = -1; (opt = getopt (argc, argv,
-		":h" OPTS_G OPTS_R_ALL OPTS_L_TRACE OPTS_L_HIST)) != -1; )
+	while (optind < argc)
 	{
+#ifdef GETOPT_DEBUG
+			printf ("Processing option at index %d\n", optind);
+#endif
+		int opt = getopt (argc, argv,
+			"+:h" OPTS_G OPTS_L_TRACE OPTS_L_HIST OPTS_R_ALL);
+		if (opt == -1)
+		{
+#ifdef GETOPT_DEBUG
+			printf ("Stopped processing options at index %d\n", optind);
+#endif
+			/* We understand only one argument at the moment, cmd */
+			if (strlen (cmd) != 0)
+			{
+				fprintf (stderr, "Extra arguments\n");
+				exit (EXIT_FAILURE);
+			}
+			strncpy (cmd, argv[optind], sizeof (cmd));
+			optind++;
+			continue;
+		}
 		switch (opt)
 		{
 			case 'Z':
@@ -635,7 +681,7 @@ main (int argc, char **argv)
 			case 'h':
 				s_usage ();
 				exit (EXIT_SUCCESS);
-			case ':': /* missing argument to option */
+			case ':':
 				s_missing_arg (optopt);
 				exit (EXIT_FAILURE);
 		}
@@ -656,17 +702,11 @@ main (int argc, char **argv)
 	}
 
 	/* Get command argument. */
-	if (optind == argc)
+	if (strlen (cmd) == 0)
 	{
 		fprintf (stderr, "Missing command\n");
 		exit (EXIT_FAILURE);
 	}
-	else if (optind + 1 > argc)
-	{
-		fprintf (stderr, "Extra arguments\n");
-		exit (EXIT_FAILURE);
-	}
-	char* cmd = argv[optind];
 	optind = 1; /* reset getopt position */
 	int rc = 0;
 	if (strcmp (cmd, "remote_all") == 0)
