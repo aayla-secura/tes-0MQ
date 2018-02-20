@@ -1298,6 +1298,13 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	uint16_t esize = tespkt_esize (pkt);
 	esize = htofs (esize); /* in FPGA byte-order */
 	uint16_t paylen = flen - TES_HDR_LEN;
+#ifdef TSAVE_SAVE_HEADERS
+	uint16_t datlen = flen;
+	char* datstart = (char*)pkt;
+#else
+	uint16_t datlen = paylen;
+	char* datstart = (char*)pkt + TES_HDR_LEN;
+#endif
 
 	bool is_header = tespkt_is_header (pkt);
 	bool is_mca = tespkt_is_mca (pkt);
@@ -1315,7 +1322,7 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	struct s_task_save_aiobuf_t* aiodat = NULL; /* set later */
 #endif
 	struct s_task_save_fidx_t fidx;
-	fidx.length = paylen;
+	fidx.length = datlen;
 	fidx.esize = esize;
 	fidx.changed = 0;
 	fidx.ftype.SEQ = 0;
@@ -1491,7 +1498,7 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		}
 		else
 		{ /* ongoing multi-frame stream */
-			dbg_assert ( ! sjob->cur_stream.discard && missed == 0);
+			dbg_assert ( ! sjob->cur_stream.discard && missed == 0 );
 		}
 
 		sjob->cur_stream.cur_size += paylen;
@@ -1575,13 +1582,7 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 done:
 	/* **************** Write frame payload. **************** */
-#ifdef TSAVE_SAVE_HEADERS
-	jobrc = s_task_save_try_queue_aiobuf (aiodat, (char*)pkt,
-		flen);
-#else
-	jobrc = s_task_save_try_queue_aiobuf (aiodat,
-		(char*)pkt + TES_HDR_LEN, paylen);
-#endif
+	jobrc = s_task_save_try_queue_aiobuf (aiodat, datstart, datlen);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
