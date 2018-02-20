@@ -5,11 +5,15 @@
 #ifndef __TESD_H__INCLUDED__
 #define __TESD_H__INCLUDED__
 
+/* CPU_SET and friends */
 #ifdef linux
-#  define _GNU_SOURCE /* CPU_SET and friends */
+#  define _GNU_SOURCE
+#  include <pthread.h>
+#else
+#  include <pthread_np.h>
 #endif
+
 #include <sys/types.h>
-#include <pthread.h>
 #ifdef linux
 #  include <sched.h>
 #  define cpuset_t cpu_set_t
