@@ -46,9 +46,6 @@ At the moment we only handle one request at a time. Will block until done.
 
    The value is read as an **unsigned** int64.
 
-   Alternatively, if it is 0, the request is interpreted as a status request
-   and the reply that was sent previously for this filename is re-sent.
-
 4. **No. of events**
 
    The server will record all packets (including ethernet header) until at
@@ -70,13 +67,25 @@ At the moment we only handle one request at a time. Will block until done.
 
  * "1": reply when hdf5 conversion begins
 
+7. **Capture mode**
+
+ * "0": auto: capture and convert unless only status is requested
+
+ * "1": capture only: at least one of ticks or events must be given
+
+ * "2": convert only: neither ticks nor events can be given
+
+If neither ticks nor events is given **and** capture mode is auto, the
+request is interpreted as a status request and the reply that was sent
+previously for this filename is re-sent.
+
 A job will only terminate at receiving a tick, and only if both the minimum
 number of ticks and the minimum number of non-tick events has been recorded.
 
 As a consequence of how `zsock_recv` parses arguments, the client may omit
-frames corresponding to ignored arguments or arguments which are "0". Therefore
-to get a status of a file, only the filename and possibly measurement is
-required.
+frames corresponding to ignored arguments or arguments which are "0".
+Therefore to get a status of a file, only the filename and possibly
+measurement is required.
 
 #### Message frames in a reply
 
@@ -97,6 +106,8 @@ required.
  * "5": error while writing to files, some data was saved
 
  * "6": error while converting to hdf5 format
+
+ * "7": error while writing stats, capture ok, conversion aborted
 
 2. **No. of ticks written**
 

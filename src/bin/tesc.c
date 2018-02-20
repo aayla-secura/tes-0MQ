@@ -22,7 +22,7 @@ static char s_prog_name[PATH_MAX];
 /* The options accepting arguments should be consistent across the
  * different subcommands, i.e. if one command has 'c' with no argument,
  * another one cannot have 'c:' with an argument */
-#define OPTS_R_ALL   "m:w:t:e:rosca"
+#define OPTS_R_ALL   "m:w:t:e:rocCa"
 #define OPTS_L_TRACE "w:"
 #define OPTS_L_HIST  "n:"
 
@@ -38,14 +38,14 @@ s_usage (void)
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
 		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
-		              "                       "            "Default is 1.\n"
+		              "                       "            "Default is 0.\n"
 		ANSI_FG_RED   "    -e <ticks>         " ANSI_RESET "Save at least that many non-tick\n"
 		              "                       "            "events. Default is 0.\n"
 		ANSI_FG_RED   "    -r                 " ANSI_RESET "Rename any existing measurement\n"
 		              "                       "            "group of that name.\n"
 		ANSI_FG_RED   "    -o                 " ANSI_RESET "Overwrite entire hdf5 file.\n"
-		ANSI_FG_RED   "    -s                 " ANSI_RESET "Request status of filename.\n"
-		ANSI_FG_RED   "    -c                 " ANSI_RESET "Convert only, no capture.\n"
+		ANSI_FG_RED   "    -c                 " ANSI_RESET "Capture only, no conversion.\n"
+		ANSI_FG_RED   "    -C                 " ANSI_RESET "Convert only, no capture.\n"
 		ANSI_FG_RED   "    -a                 " ANSI_RESET "Asynchronous hdf5 conversion.\n"
 		"Only one of -o and -r can be given.\n"
 		"For status requests (-s) only measurement (-m) can be specified.\n\n"
@@ -118,7 +118,7 @@ s_prompt (void)
 
 /* -------------------- AVERAGE TRACE ------------------- */
 #define L_TRACE_REQ_OK    0 // accepted
-#define L_TRACE_REQ_INV   1 // malformed request
+#define L_TRACE_REQ_EINV   1 // malformed request
 #define L_TRACE_REQ_TOUT  2 // timeout error
 #define L_TRACE_REQ_PIC  "4"
 #define L_TRACE_REP_PIC "1c"
@@ -227,7 +227,7 @@ s_local_save_trace (const char* server, const char* filename,
 	printf ("\n");
 	switch (rep)
 	{
-		case L_TRACE_REQ_INV:
+		case L_TRACE_REQ_EINV:
 			printf ("Request was not understood\n");
 			break;
 		case L_TRACE_REQ_TOUT:
@@ -415,21 +415,25 @@ s_local_save_hist (const char* server, const char* filename,
 }
 
 /* -------------------- SAVE-TO-FILE -------------------- */
-#define R_ALL_REQ_OK    0 // accepted
-#define R_ALL_REQ_INV   1 // malformed request
-#define R_ALL_REQ_ABORT 2 // no such job (for status query) or file
+#define R_ALL_REQ_OK     0 // accepted
+#define R_ALL_REQ_EINV   1 // malformed request
+#define R_ALL_REQ_EABORT 2 // no such job (for status query) or file
 						  // exist (for no-overwrite)
-#define R_ALL_REQ_EPERM 3 // a filename is not allowed
-#define R_ALL_REQ_FAIL  4 // error initializing, nothing was written
-#define R_ALL_REQ_EWRT  5 // error while writing, less than minimum
+#define R_ALL_REQ_EPERM  3 // a filename is not allowed
+#define R_ALL_REQ_EFAIL  4 // error initializing, nothing was written
+#define R_ALL_REQ_EWRT   5 // error while writing, less than minimum
 						  // requested was saved
-#define R_ALL_REQ_ECONV 6 // error while converting to hdf5
+#define R_ALL_REQ_ECONV  6 // error while converting to hdf5
+#define R_ALL_REQ_EFIN   7 // error while writing stats
 #define R_ALL_REQ_PIC  "ss88111"
 #define R_ALL_REP_PIC "18888888"
 
 #define R_ALL_HDF5_OVRWT_RELINK 1 /* only move existing group to
                                    * /<RG>/overwritten/<group>_<timestamp> */
 #define R_ALL_HDF5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
+#define R_ALL_CAP_CONV_AUTO 0 // capture and convert unless status
+#define R_ALL_CAP_ONLY      1 // capture only
+#define R_ALL_CONV_ONLY     2 // convert only
 
 static int
 s_remote_save_all (const char* server, const char* filename,
@@ -437,7 +441,7 @@ s_remote_save_all (const char* server, const char* filename,
 {
 	char measurement[1024] = {0};
 	uint64_t min_ticks = 0, min_events = 0;
-	uint8_t ovrwtmode = 0, async = 0, status = 0, convonly = 0;
+	uint8_t ovrwtmode = 0, async = 0, capmode = 0;
 
 	/* Command-line */
 	char* buf = NULL;
@@ -489,11 +493,18 @@ s_remote_save_all (const char* server, const char* filename,
 				else
 					ovrwtmode = R_ALL_HDF5_OVRWT_FILE;
 				break;
-			case 's':
-				status = 1;
-				break;
 			case 'c':
-				convonly = 1;
+			case 'C':
+				if (capmode)
+				{
+					s_conflicting_opt ();
+					return -1;
+				}
+
+				if (opt == 'c')
+					capmode = R_ALL_CAP_ONLY;
+				else
+					capmode = R_ALL_CONV_ONLY;
 				break;
 			case 'a':
 				async = 1;
@@ -511,20 +522,8 @@ s_remote_save_all (const char* server, const char* filename,
 		}
 	}
 
-	/* Check for conflicting options. */
-	if ( ( (status || convonly) && (min_ticks || min_events) ) ||
-		(status && (async || ovrwtmode)) )
-	{
-		s_conflicting_opt ();
-		return -1;
-	}
-
-	/* Min ticks defaults to 1. */
-	if ( ! min_ticks && ! status && ! convonly )
-		min_ticks = 1;
-
 	/* Proceed? */
-	if (status)
+	if (capmode == R_ALL_CAP_CONV_AUTO && ! min_ticks && ! min_events)
 	{
 		printf ("Sending a status request for remote filename "
 			"'%s' and measurement group '%s'.\n",
@@ -532,12 +531,14 @@ s_remote_save_all (const char* server, const char* filename,
 	}
 	else
 	{
-		printf ("Sending a%s%s request for remote filename "
+		printf ("Sending a%s %s request for remote filename "
 			"'%s' and measurement group '%s'.\n"
 			"%sWill terminate after at least "
 			"%lu ticks and %lu events.\n",
 			async ? "n asynchronous" : "",
-			convonly ? "conversion" : "capture",
+			capmode == R_ALL_CONV_ONLY ? "conversion only" :
+				(capmode == R_ALL_CAP_ONLY ? "capture only" :
+				"capture"),
 			filename, measurement,
 			(ovrwtmode == R_ALL_HDF5_OVRWT_FILE) ?
 				"Will overwrite file.\n" : 
@@ -568,7 +569,7 @@ s_remote_save_all (const char* server, const char* filename,
 		min_events,
 		ovrwtmode,
 		async,
-		convonly);
+		capmode);
 	puts ("Waiting for reply");
 
 	uint8_t fstat;
@@ -591,17 +592,17 @@ s_remote_save_all (const char* server, const char* filename,
 	printf ("\n");
 	switch (fstat)
 	{
-		case R_ALL_REQ_INV:
+		case R_ALL_REQ_EINV:
 			printf ("Request was not understood\n");
 			break;
-		case R_ALL_REQ_ABORT:
+		case R_ALL_REQ_EABORT:
 			printf ("File %s\n", min_ticks ?
 				"exists" : "does not exist");
 			break;
 		case R_ALL_REQ_EPERM:
 			printf ("Filename is not allowed\n");
 			break;
-		case R_ALL_REQ_FAIL:
+		case R_ALL_REQ_EFAIL:
 			printf ("Unknown error while initializing\n\n");
 			break;
 		case R_ALL_REQ_EWRT:
@@ -609,6 +610,9 @@ s_remote_save_all (const char* server, const char* filename,
 			/* fallthrough */
 		case R_ALL_REQ_ECONV:
 			printf ("Unknown error while converting\n\n");
+			/* fallthrough */
+		case R_ALL_REQ_EFIN:
+			printf ("Unknown error while finalizing\n\n");
 			/* fallthrough */
 		case R_ALL_REQ_OK:
 			printf ("%s\n"
@@ -619,7 +623,7 @@ s_remote_save_all (const char* server, const char* filename,
 				"saved frames:   %lu\n"
 				"missed frames:  %lu\n"
 				"dropped frames: %lu\n",
-				status ? "Wrote" : "File contains",
+				(min_ticks || min_events) ? "Wrote" : "File contains",
 				ticks, events, traces, hists, frames, missed, dropped);
 			break;
 		default:

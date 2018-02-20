@@ -3,17 +3,27 @@
 #include "hdf5conv.h"
 
 /* See README */
-#define TSAVE_REQ_OK    0 // accepted
-#define TSAVE_REQ_INV   1 // malformed request
-#define TSAVE_REQ_ABORT 2 // no such job (for status query) or file
-                          // exist (for no-overwrite)
-#define TSAVE_REQ_EPERM 3 // a filename is not allowed
-#define TSAVE_REQ_FAIL  4 // error initializing, nothing was written
-#define TSAVE_REQ_EWRT  5 // error while writing, less than minimum
-                          // requested was saved
-#define TSAVE_REQ_ECONV 6 // error while converting to hdf5
+#define TSAVE_REQ_OK     0 // accepted
+#define TSAVE_REQ_EINV   1 // malformed request
+#define TSAVE_REQ_EABORT 2 // no such job (for status query) or file
+                           // exist (for no-overwrite)
+#define TSAVE_REQ_EPERM  3 // a filename is not allowed
+#define TSAVE_REQ_EFAIL  4 // error initializing, nothing was written
+#define TSAVE_REQ_EWRT   5 // error while writing, less than minimum
+                           // requested was saved
+#define TSAVE_REQ_ECONV  6 // error while converting to hdf5
+/* FIX: TO ADD to tesc and README */
+#define TSAVE_REQ_EFIN   7 // capture ok, error writing stats,
+                           // conversion aborted
 #define TSAVE_REQ_PIC  "ss88111"
 #define TSAVE_REP_PIC "18888888"
+
+/* Capture/conversion mode. Keep in mind status requests should default
+ * to all 0 and require only a filename and group, and that setting
+ * min_ticks or min_events should be enough to indicate capture. */
+#define TSAVE_CAP_CONV_AUTO 0 // capture and convert unless status
+#define TSAVE_CAP_ONLY      1 // capture only
+#define TSAVE_CONV_ONLY     2 // convert only
 
 #define TSAVE_FIDX_LEN 16 // frame index
 #define TSAVE_TIDX_LEN  8 // tick index
@@ -227,7 +237,7 @@ struct s_task_save_data_t
 	struct
 	{
 		struct s_task_save_tidx_t idx;
-		uint32_t nframes; // no. of event frames in this tick
+		uint32_t nframes;  // no. of event frames in this tick
 	} cur_tick;
 	uint8_t  prev_esize; // event size for previous event
 	uint8_t  prev_etype; // event type for previous event,
@@ -239,18 +249,20 @@ struct s_task_save_data_t
 		uint64_t min_events;  // cpature at least that many events
 		uint8_t  ovrwtmode;   // HDF5_OVRT_*, see hdf5conv.h
 		uint8_t  async;       // copy data to hdf5 in the background
-		uint8_t  convonly;    // only convert a previous capture
+		uint8_t  capmode;     // only convert a previous capture
 		char*    basefname;   // datafiles will be
 		                      // <basefname>-<measurement>.*
 		char*    measurement; // hdf5 group
 	};
-	bool     nocapture;  // set for convenience, request is for
-	                     // status or conversion
+	/* next three are set for convenience */
+	bool     nocapture;   // request is for status or conversion
+	bool     noconvert;   // request is for status or capture only
+	bool     nooverwrite; // overwrite data files
 
 	char     hdf5filename[PATH_MAX]; // full path of hdf5 file
 	char     statfilename[PATH_MAX]; // full path of stats file
-	int      statfd;        // fd for the statis file
-	bool     recording;  // wait for a tick before starting capture
+	int      statfd;      // fd for the statis file
+	bool     recording;   // wait for a tick before starting capture
 };
 
 /* Task initializer and finalizer. */
@@ -355,7 +367,7 @@ static int  s_task_save_is_req_valid (
 	if (sjob->basefname == NULL)
 	{
 		logmsg (0, LOG_ERR, "Invalid request");
-		return TSAVE_REQ_INV;
+		return TSAVE_REQ_EINV;
 	}
 
 	if (sjob->measurement == NULL)
@@ -367,13 +379,56 @@ static int  s_task_save_is_req_valid (
 		{
 			logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
 				"Cannot allocate memory");
-			return TSAVE_REQ_FAIL;
+			return TSAVE_REQ_EFAIL;
 		}
 		sjob->measurement[0] = '\0';
 	}
 
+	switch (sjob->ovrwtmode)
+	{
+		case HDF5_OVRWT_NONE:
+		case HDF5_OVRWT_RELINK:
+		case HDF5_OVRWT_FILE:
+			break;
+		default:
+			logmsg (0, LOG_ERR, "Invalid overwrite mode");
+			return TSAVE_REQ_EINV;
+	}
+
+	switch (sjob->capmode)
+	{
+		case TSAVE_CAP_CONV_AUTO:
+		case TSAVE_CAP_ONLY:
+		case TSAVE_CONV_ONLY:
+			break;
+		default:
+			logmsg (0, LOG_ERR, "Invalid capture mode");
+			return TSAVE_REQ_EINV;
+	}
+
 	/* Does it require capture? */
+	/* if min events was given, min ticks default to 1 */
+	if (sjob->min_events != 0 && sjob->min_ticks == 0)
+		sjob->min_ticks = 1;
 	sjob->nocapture = (sjob->min_ticks == 0);
+
+	if ( (sjob->capmode == TSAVE_CONV_ONLY && ! sjob->nocapture) ||
+		(sjob->capmode == TSAVE_CAP_ONLY && sjob->nocapture) )
+	{
+			logmsg (0, LOG_ERR, "Ambiguous request");
+			return TSAVE_REQ_EINV;
+	}
+
+	bool statusonly = (sjob->nocapture &&
+		sjob->capmode != TSAVE_CONV_ONLY);
+
+	/* Does it require conversion? */
+	sjob->noconvert = (statusonly ||
+		sjob->capmode == TSAVE_CAP_ONLY);
+
+	/* Should we overwrite data files. */
+	sjob->nooverwrite = (sjob->ovrwtmode == HDF5_OVRWT_NONE);
+
 	return TSAVE_REQ_OK;
 }
 
@@ -403,7 +458,7 @@ static int s_task_construct_filenames (
 			sjob->basefname,
 			strlen (sjob->measurement) == 0 ? "" : "-",
 			sjob->measurement);
-		return TSAVE_REQ_FAIL;
+		return TSAVE_REQ_EFAIL;
 	}
 	char* tmpfname_p = s_task_save_canonicalize_path (
 		tmpfname, sjob->statfilename, sjob->nocapture);
@@ -412,7 +467,7 @@ static int s_task_construct_filenames (
 		if (sjob->nocapture)
 		{
 			logmsg (0, LOG_INFO, "Job not found");
-			return TSAVE_REQ_ABORT;
+			return TSAVE_REQ_EABORT;
 		}
 		else
 		{
@@ -448,7 +503,7 @@ static int s_task_construct_filenames (
 		{
 			logmsg (rc == -1 ? errno : 0, LOG_ERR,
 				"Cannot construct filename for dataset");
-			return TSAVE_REQ_FAIL;
+			return TSAVE_REQ_EFAIL;
 		}
 	}
 
@@ -459,7 +514,7 @@ static int s_task_construct_filenames (
  * Opens the stream and index files.
  * It does not close any successfully opened files are closed if an
  * error occurs.
- * Returns 0 on success, -1 on error.
+ * Returns TSAVE_REQ_*
  */
 static int
 s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
@@ -485,10 +540,22 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
 		int rc = s_task_save_open_aiobuf (aiobuf, fmode);
 		if (rc == -1)
-			return -1;
+		{
+			if (sjob->nooverwrite)
+			{
+				logmsg (0, LOG_INFO, "Not going to overwrite");
+				return TSAVE_REQ_EABORT;
+			}
+			else
+			{
+				logmsg (errno, LOG_ERR, "Could not open files '%s.*'",
+					sjob->statfilename);
+				return TSAVE_REQ_EFAIL;
+			}
+		}
 	}
 
-	return 0;
+	return TSAVE_REQ_OK;
 }
 
 /*
@@ -578,7 +645,7 @@ s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 
 /*
  * Requests the index and data files be saved in hdf5 format.
- * Returns 0 on success, -1 on error.
+ * Returns TSAVE_REQ_*
  */
 static int
 s_task_save_conv_data (struct s_task_save_data_t* sjob)
@@ -603,7 +670,13 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 	};
 
 	int rc = hdf5_conv (&creq);
-	return (rc ? -1 : 0);
+	if (rc)
+	{
+		logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
+		return TSAVE_REQ_ECONV;
+	}
+
+	return TSAVE_REQ_OK;
 }
 
 /*
@@ -622,7 +695,7 @@ s_task_save_send_err (struct s_task_save_data_t* sjob,
 
 /*
  * Opens the stats file and reads stats. Closes it afterwards.
- * Returns 0 on success, -1 on error.
+ * Returns TSAVE_REQ_*
  */
 static int
 s_task_save_stats_read (struct s_task_save_data_t* sjob)
@@ -633,21 +706,28 @@ s_task_save_stats_read (struct s_task_save_data_t* sjob)
 
 	sjob->statfd = open (sjob->statfilename, O_RDONLY);
 	if (sjob->statfd == -1)
-		return -1;
+	{
+		logmsg (errno, LOG_ERR, "Could not open stats file");
+		/* The stat file is ensured to be present at this point. */
+		return TSAVE_REQ_EFAIL;
+	}
 
 	off_t rc = read (sjob->statfd, &sjob->st, TSAVE_STAT_LEN);
 	close (sjob->statfd);
 	sjob->statfd = -1;
 
 	if (rc != TSAVE_STAT_LEN)
-		return -1;
+	{
+		logmsg (errno, LOG_ERR, "Could not read stats");
+		return TSAVE_REQ_EFAIL;
+	}
 	
-	return 0;
+	return TSAVE_REQ_OK;
 }
 
 /*
  * Opens the stats file and writes stats. Closes it afterwards.
- * Returns 0 on success, -1 on error.
+ * Returns TSAVE_REQ_*
  */
 static int
 s_task_save_stats_write (struct s_task_save_data_t* sjob)
@@ -661,21 +741,27 @@ s_task_save_stats_write (struct s_task_save_data_t* sjob)
 		O_WRONLY | O_CREAT | O_EXCL,
 		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (sjob->statfd == -1)
-		return -1;
+	{
+		logmsg (errno, LOG_ERR, "Could not open stats file");
+		return TSAVE_REQ_EFIN;
+	}
 
 	off_t rc = write (sjob->statfd, &sjob->st, TSAVE_STAT_LEN);
 	close (sjob->statfd);
 	sjob->statfd = -1;
 
 	if (rc != TSAVE_STAT_LEN)
-		return -1;
+	{
+		logmsg (errno, LOG_ERR, "Could not write stats");
+		return TSAVE_REQ_EFIN;
+	}
 	
-	return 0;
+	return TSAVE_REQ_OK;
 }
 
 /*
  * Sends the statistics to the client and resets them.
- * Returns 0 on success, -1 on error.
+ * Returns TSAVE_REQ_*
  */
 static int
 s_task_save_stats_send (struct s_task_save_data_t* sjob,
@@ -703,7 +789,7 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob,
 	zstr_free (&sjob->measurement); /* nullifies the pointer */
 	sjob->recording = 0;
 
-	return rc;
+	return (rc ? TSAVE_REQ_EFIN : TSAVE_REQ_OK);
 }
 
 /*
@@ -982,7 +1068,7 @@ queue_as_is:
  *
  * If NULL is returned and errno is 0, it should be because the filename
  * is not allowed by us (i.e. outside of TSAVE_ROOT or ends with a
- * slash) or because mustexist is true and file does not exist.
+ * slash).
  */
 static char*
 s_task_save_canonicalize_path (const char* filename,
@@ -1166,7 +1252,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		&sjob->min_events,
 		&sjob->ovrwtmode,
 		&sjob->async,
-		&sjob->convonly);
+		&sjob->capmode);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or
 	   * a null frame (z) but message received did not match this
@@ -1183,7 +1269,30 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	/* Set the filenames and dataset names. */
+	if (sjob->nocapture)
+	{
+		logmsg (0, LOG_INFO,
+				"Received request for %s of '%s' and measurement '%s'%s",
+				sjob->noconvert ? "status" : "conversion",
+				sjob->basefname,
+				sjob->measurement,
+				( ! sjob->noconvert && sjob->async ) ?
+				". Convering asynchronously" : "");
+	}
+	else
+	{
+		logmsg (0, LOG_INFO,
+				"Received request to write %lu ticks and "
+				"%lu events to '%s' and measurement '%s'%s",
+				sjob->min_ticks,
+				sjob->min_events,
+				sjob->basefname,
+				sjob->measurement,
+				sjob->async ? ". Convering asynchronously" : "");
+	}
+
+	/* Set the filenames and dataset names, will detect if the stats file
+	 * is missing and we are not capturing, i.e. aborted job. */
 	rc = s_task_construct_filenames (sjob);
 	if (rc != TSAVE_REQ_OK)
 	{
@@ -1197,36 +1306,27 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	if (sjob->nocapture)
 	{
-		logmsg (0, LOG_INFO,
-			"Received request for %s of '%s.*'%s",
-			sjob->convonly ? "conversion" : "status",
-			sjob->statfilename,
-			(sjob->convonly && sjob->async) ?
-				". Convering asynchronously" : "");
-
-		if (sjob->convonly)
+		if ( ! sjob->noconvert )
 		{
 			rc = s_task_save_conv_data (sjob);
-			if (rc != 0)
+			if (rc != TSAVE_REQ_OK)
 			{
-				logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
-				s_task_save_send_err (sjob, reader, TSAVE_REQ_ECONV);
+				s_task_save_send_err (sjob, reader, rc);
 				return 0;
 			}
 		}
 
-	 /* Read in stats and send reply either way. */
+		/* Read in stats and send reply either way. */
 		rc = s_task_save_stats_read (sjob);
-		if (rc != 0)
+		if (rc != TSAVE_REQ_OK)
 		{
-			logmsg (errno, LOG_ERR, "Could not read stats");
-			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
+			s_task_save_send_err (sjob, reader, rc);
 			return 0;
 		}
 
 		rc = s_task_save_stats_send (sjob,
 			self->frontend, TSAVE_REQ_OK);
-		if (rc != 0)
+		if (rc != TSAVE_REQ_OK)
 		{
 			logmsg (0, LOG_NOTICE, "Could not send stats");
 		}
@@ -1239,35 +1339,16 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	/*                    Write query.                    */
 	/* -------------------------------------------------- */
 
-	logmsg (0, LOG_INFO,
-		"Received request to write %lu ticks and "
-		"%lu events to '%s.*'%s",
-		sjob->min_ticks,
-		sjob->min_events,
-		sjob->statfilename,
-		sjob->async ? ". Convering asynchronously" : "");
-
 	/* If not overwriting add O_EXCL, s_task_save_open_aiobuf will then
 	 * not unlink the data files and the open call will fail. */
 	mode_t fmode = O_RDWR | O_CREAT;
-	if (sjob->ovrwtmode == HDF5_OVRWT_NONE)
+	if (sjob->nooverwrite)
 		fmode |= O_EXCL;
 
 	rc = s_task_save_open (sjob, fmode);
-	if (rc == -1)
+	if (rc != TSAVE_REQ_OK)
 	{
-		if (sjob->ovrwtmode == HDF5_OVRWT_NONE && errno == EEXIST)
-		{
-			logmsg (0, LOG_INFO, "Not going to overwrite");
-			s_task_save_send_err (sjob, reader, TSAVE_REQ_ABORT);
-		}
-		else
-		{
-			logmsg (errno, LOG_ERR, "Could not open files '%s.*'",
-				sjob->statfilename);
-			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
-		}
-
+		s_task_save_send_err (sjob, reader, rc);
 		s_task_save_close (sjob);
 		return 0;
 	}
@@ -1283,7 +1364,7 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR, "Could not delete stat file");
-			s_task_save_send_err (sjob, reader, TSAVE_REQ_FAIL);
+			s_task_save_send_err (sjob, reader, TSAVE_REQ_EFAIL);
 
 			s_task_save_close (sjob);
 			return 0;
@@ -1650,25 +1731,14 @@ done:
 			 sjob->min_events > sjob->st.events ) ?
 			TSAVE_REQ_EWRT : TSAVE_REQ_OK );
 
-		/* Write stats. */
+		/* Write stats regardless of errors. */
 		int rc = s_task_save_stats_write (sjob);
-		if (rc != 0)
-		{
-			status = TSAVE_REQ_EWRT;
-			logmsg (errno, LOG_ERR, "Could not write stats");
-		}
+		if (status == TSAVE_REQ_OK)
+			status = rc;
 
-		/* Convert them to hdf5. */
-		if (strlen (sjob->measurement) != 0)
-		{
-			rc = s_task_save_conv_data (sjob);
-			if (rc != 0)
-			{
-				status = TSAVE_REQ_ECONV;
-				logmsg (errno, LOG_ERR,
-					"Could not convert data to hdf5");
-			}
-		}
+		/* Convert them to hdf5, only if all is ok until now. */
+		if ( status == TSAVE_REQ_OK && ! sjob->noconvert )
+			status = s_task_save_conv_data (sjob);
 
 		/* Send reply. */
 		s_task_save_stats_send (sjob, self->frontend, status);
