@@ -15,10 +15,10 @@
 #define TSAVE_REQ_PIC   "ss8811"
 #define TSAVE_REP_PIC "18888888"
 
-#define TSAVE_FIDX_LEN 16         // frame index
-#define TSAVE_TIDX_LEN  8         // tick index
-#define TSAVE_SIDX_LEN 16         // MCA and trace indices
-#define TSAVE_STAT_LEN 64         // job statistics
+#define TSAVE_FIDX_LEN 16 // frame index
+#define TSAVE_TIDX_LEN  8 // tick index
+#define TSAVE_SIDX_LEN 16 // MCA and trace indices
+#define TSAVE_STAT_LEN 64 // job statistics
 #ifndef TSAVE_ROOT
 #define TSAVE_ROOT "/media/data/captures/" // must have a trailing slash
 #endif
@@ -26,13 +26,8 @@
 #define TSAVE_REQUIRE_FILENAME // for now we don't generate filename
 // #define TSAVE_SINGLE_FILE      // save all payloads (with
 //                                // headers) to single .dat file
-#ifdef TSAVE_SINGLE_FILE
-#  ifndef TSAVE_SAVE_HEADERS
-#    define TSAVE_SAVE_HEADERS
-#  endif
-#endif
-// #define TSAVE_SAVE_HEADERS        // save headers in .*dat files
-// #define TSAVE_NO_BAD_FRAMES       // drop bad frames
+// #define TSAVE_SAVE_HEADERS     // save headers in .*dat files
+// #define TSAVE_NO_BAD_FRAMES    // drop bad frames
 
 /* Employ a buffer zone for asynchronous writing. We memcpy frames
  * into the bufzone, between its head and cursor (see
