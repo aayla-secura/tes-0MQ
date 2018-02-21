@@ -334,7 +334,12 @@ set_verbose (int level)
 	if (level >= 0)
 		is_verbose = (level ? 1 : 0);
 	return is_verbose;
-	
+}
+
+bool
+ami_daemon (void)
+{
+	return is_daemon;
 }
 
 int

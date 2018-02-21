@@ -99,6 +99,7 @@ int fork_and_run (daemon_fn* initializer, daemon_fn* action,
 void logmsg (int errnum, int priority, const char* format, ...);
 
 /*
+ * Set or get log_id.
  * If id is not NULL, set the log prefix for the calling thread. If
  * it is longer than 32 characters, it is truncated.
  * Returns a pointer to the thread-local static string containing
@@ -107,11 +108,18 @@ void logmsg (int errnum, int priority, const char* format, ...);
 char* set_logid (char* id);
 
 /*
+ * Set or get verbosity. It is not thread-specific.
  * If is_verbose < 0,  the current value is returned.
  * If is_verbose == 0, debugging messages are suppressed, 0 is
  * returned.
  * If be_verbose > 0,  they will be printed, 1 is returned.
  */
 bool set_verbose (int be_verbose);
+
+/*
+ * Returns 1 is process has been daemonized (using damonize).
+ * Returns 0 otherwise.
+ */
+bool ami_daemon (void);
 
 #endif
