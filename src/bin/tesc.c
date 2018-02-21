@@ -1,4 +1,5 @@
 #define _WITH_GETLINE
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <sys/mman.h>
 #include <assert.h>
 #include <czmq.h>
+#include "api.h"
 #include "ansicolors.h"
 
 #ifndef PATH_MAX
@@ -16,6 +18,8 @@
 #    define PATH_MAX 4096
 #  endif
 #endif
+
+typedef int (cmd_hn)(const char*, const char*, int, char**);
 
 static char s_prog_name[PATH_MAX];
 #define OPTS_G       "Z:F:" /* processed by main */
@@ -32,7 +36,8 @@ s_usage (void)
 	fprintf (stdout,
 		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server> -F <filename> "
 		ANSI_FG_GREEN "<command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
-		"The format for <server> is <proto>://<host>:<port>\n"
+		"The format for <server> is <proto>://<host>[:<port>]\n"
+		"Port defaults to the default port for the selected task.\n"
 		"Allowed commands:\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
@@ -117,16 +122,11 @@ s_prompt (void)
 }
 
 /* -------------------- AVERAGE TRACE ------------------- */
-#define L_TRACE_REQ_OK    0 // accepted
-#define L_TRACE_REQ_EINV   1 // malformed request
-#define L_TRACE_REQ_TOUT  2 // timeout error
-#define L_TRACE_REQ_PIC  "4"
-#define L_TRACE_REP_PIC "1c"
 #define L_TRACE_MAX_SIZE 65528U
 
 static int
 s_local_save_trace (const char* server, const char* filename,
-	int argc, char **argv)
+	int argc, char** argv)
 {
 	uint32_t timeout = 5;
 
@@ -210,12 +210,12 @@ s_local_save_trace (const char* server, const char* filename,
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Send the request */
-	zsock_send (sock, L_TRACE_REQ_PIC, timeout);
+	zsock_send (sock, TES_AVGTR_REQ_PIC, timeout);
 	puts ("Waiting for reply");
 
 	uint8_t rep;
 	zchunk_t* trace;
-	int rc = zsock_recv (sock, L_TRACE_REP_PIC, &rep, &trace);
+	int rc = zsock_recv (sock, TES_AVGTR_REP_PIC, &rep, &trace);
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -227,13 +227,13 @@ s_local_save_trace (const char* server, const char* filename,
 	printf ("\n");
 	switch (rep)
 	{
-		case L_TRACE_REQ_EINV:
+		case TES_AVGTR_REQ_EINV:
 			printf ("Request was not understood\n");
 			break;
-		case L_TRACE_REQ_TOUT:
+		case TES_AVGTR_REQ_ETOUT:
 			printf ("Request timed out\n");
 			break;
-		case L_TRACE_REQ_OK:
+		case TES_AVGTR_REQ_OK:
 			trsize = zchunk_size (trace);
 			printf ("Received %lu bytes of data\n",
 				trsize);
@@ -272,7 +272,7 @@ s_local_save_trace (const char* server, const char* filename,
 
 static int
 s_local_save_hist (const char* server, const char* filename,
-	int argc, char **argv)
+	int argc, char** argv)
 {
 	uint64_t num_hist = 1;
 
@@ -415,29 +415,10 @@ s_local_save_hist (const char* server, const char* filename,
 }
 
 /* -------------------- SAVE-TO-FILE -------------------- */
-#define R_ALL_REQ_OK     0 // accepted
-#define R_ALL_REQ_EINV   1 // malformed request
-#define R_ALL_REQ_EABORT 2 // no such job (for status query) or file
-						  // exist (for no-overwrite)
-#define R_ALL_REQ_EPERM  3 // a filename is not allowed
-#define R_ALL_REQ_EFAIL  4 // error initializing, nothing was written
-#define R_ALL_REQ_EWRT   5 // error while writing, less than minimum
-						  // requested was saved
-#define R_ALL_REQ_ECONV  6 // error while converting to hdf5
-#define R_ALL_REQ_EFIN   7 // error while writing stats
-#define R_ALL_REQ_PIC  "ss88111"
-#define R_ALL_REP_PIC "18888888"
-
-#define R_ALL_HDF5_OVRWT_RELINK 1 /* only move existing group to
-                                   * /<RG>/overwritten/<group>_<timestamp> */
-#define R_ALL_HDF5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
-#define R_ALL_CAP_CONV_AUTO 0 // capture and convert unless status
-#define R_ALL_CAP_ONLY      1 // capture only
-#define R_ALL_CONV_ONLY     2 // convert only
 
 static int
 s_remote_save_all (const char* server, const char* filename,
-	int argc, char **argv)
+	int argc, char** argv)
 {
 	char measurement[1024] = {0};
 	uint64_t min_ticks = 0, min_events = 0;
@@ -489,9 +470,9 @@ s_remote_save_all (const char* server, const char* filename,
 				}
 
 				if (opt == 'r')
-					ovrwtmode = R_ALL_HDF5_OVRWT_RELINK;
+					ovrwtmode = TES_H5_OVRWT_RELINK;
 				else
-					ovrwtmode = R_ALL_HDF5_OVRWT_FILE;
+					ovrwtmode = TES_H5_OVRWT_FILE;
 				break;
 			case 'c':
 			case 'C':
@@ -502,9 +483,9 @@ s_remote_save_all (const char* server, const char* filename,
 				}
 
 				if (opt == 'c')
-					capmode = R_ALL_CAP_ONLY;
+					capmode = TES_CAP_CAPONLY;
 				else
-					capmode = R_ALL_CONV_ONLY;
+					capmode = TES_CAP_CONVONLY;
 				break;
 			case 'a':
 				async = 1;
@@ -523,7 +504,7 @@ s_remote_save_all (const char* server, const char* filename,
 	}
 
 	/* Proceed? */
-	if (capmode == R_ALL_CAP_CONV_AUTO && ! min_ticks && ! min_events)
+	if (capmode == TES_CAP_AUTO && ! min_ticks && ! min_events)
 	{
 		printf ("Sending a status request for remote filename "
 			"'%s' and measurement group '%s'.\n",
@@ -536,13 +517,13 @@ s_remote_save_all (const char* server, const char* filename,
 			"%sWill terminate after at least "
 			"%lu ticks and %lu events.\n",
 			async ? "n asynchronous" : "",
-			capmode == R_ALL_CONV_ONLY ? "conversion only" :
-				(capmode == R_ALL_CAP_ONLY ? "capture only" :
+			capmode == TES_CAP_CONVONLY ? "conversion only" :
+				(capmode == TES_CAP_CAPONLY ? "capture only" :
 				"capture"),
 			filename, measurement,
-			(ovrwtmode == R_ALL_HDF5_OVRWT_FILE) ?
+			(ovrwtmode == TES_H5_OVRWT_FILE) ?
 				"Will overwrite file.\n" : 
-				(ovrwtmode == R_ALL_HDF5_OVRWT_RELINK) ?
+				(ovrwtmode == TES_H5_OVRWT_RELINK) ?
 					"Will backup measurement group.\n" : "",
 			min_ticks, min_events);
 	}
@@ -562,7 +543,7 @@ s_remote_save_all (const char* server, const char* filename,
 	}
 
 	/* Send the request */
-	zsock_send (sock, R_ALL_REQ_PIC,
+	zsock_send (sock, TES_CAP_REQ_PIC,
 		filename,
 		measurement,
 		min_ticks,
@@ -574,7 +555,7 @@ s_remote_save_all (const char* server, const char* filename,
 
 	uint8_t fstat;
 	uint64_t ticks, events, traces, hists, frames, missed, dropped;
-	int rc = zsock_recv (sock, R_ALL_REP_PIC,
+	int rc = zsock_recv (sock, TES_CAP_REP_PIC,
 		&fstat,
 		&ticks,
 		&events,
@@ -592,29 +573,29 @@ s_remote_save_all (const char* server, const char* filename,
 	printf ("\n");
 	switch (fstat)
 	{
-		case R_ALL_REQ_EINV:
+		case TES_CAP_REQ_EINV:
 			printf ("Request was not understood\n");
 			break;
-		case R_ALL_REQ_EABORT:
+		case TES_CAP_REQ_EABORT:
 			printf ("File %s\n", min_ticks ?
 				"exists" : "does not exist");
 			break;
-		case R_ALL_REQ_EPERM:
+		case TES_CAP_REQ_EPERM:
 			printf ("Filename is not allowed\n");
 			break;
-		case R_ALL_REQ_EFAIL:
+		case TES_CAP_REQ_EFAIL:
 			printf ("Unknown error while initializing\n\n");
 			break;
-		case R_ALL_REQ_EWRT:
+		case TES_CAP_REQ_EWRT:
 			printf ("Unknown error while writing\n\n");
 			/* fallthrough */
-		case R_ALL_REQ_ECONV:
+		case TES_CAP_REQ_ECONV:
 			printf ("Unknown error while converting\n\n");
 			/* fallthrough */
-		case R_ALL_REQ_EFIN:
+		case TES_CAP_REQ_EFIN:
 			printf ("Unknown error while finalizing\n\n");
 			/* fallthrough */
-		case R_ALL_REQ_OK:
+		case TES_CAP_REQ_OK:
 			printf ("%s\n"
 				"ticks:          %lu\n"
 				"other events:   %lu\n"
@@ -634,7 +615,7 @@ s_remote_save_all (const char* server, const char* filename,
 }
 
 int
-main (int argc, char **argv)
+main (int argc, char** argv)
 {
 	strncpy (s_prog_name, argv[0], sizeof (s_prog_name));
 	zsys_init ();
@@ -713,16 +694,39 @@ main (int argc, char **argv)
 	}
 	optind = 1; /* reset getopt position */
 	int rc = 0;
+	cmd_hn* callback = NULL;
+	char* defport = NULL;
 	if (strcmp (cmd, "remote_all") == 0)
-		rc = s_remote_save_all (server, filename, argc, argv);
+	{
+		callback = s_remote_save_all;
+		defport = TES_CAP_LPORT;
+	}
 	else if (strcmp (cmd, "local_trace") == 0)
-		rc = s_local_save_trace (server, filename, argc, argv);
+	{
+		callback = s_local_save_trace;
+		defport = TES_AVGTR_LPORT;
+	}
 	else if (strcmp (cmd, "local_hist") == 0)
-		rc = s_local_save_hist (server, filename, argc, argv);
+	{
+		callback = s_local_save_hist;
+		defport = TES_HIST_LPORT;
+	}
 	else
 	{
 		printf ("Unknown command %s\n", cmd);
-		rc = -1;
+		exit (EXIT_FAILURE);
 	}
+	assert (defport != NULL);
+	assert (callback != NULL);
+
+	/* Did user supply port? */
+	if (strchr (strchrnul (server, '/'), ':') == NULL)
+	{
+		printf ("Port defaults to %s\n", defport);
+		snprintf (server + strlen (server),
+			sizeof (server) - strlen (server), ":%s", defport);
+	}
+
+	rc = callback (server, filename, argc, argv);
 	exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 }

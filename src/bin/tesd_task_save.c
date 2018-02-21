@@ -2,70 +2,47 @@
 #include <aio.h>
 #include "hdf5conv.h"
 
-/* See README */
-#define TSAVE_REQ_OK     0 // accepted
-#define TSAVE_REQ_EINV   1 // malformed request
-#define TSAVE_REQ_EABORT 2 // no such job (for status query) or file
-                           // exist (for no-overwrite)
-#define TSAVE_REQ_EPERM  3 // a filename is not allowed
-#define TSAVE_REQ_EFAIL  4 // error initializing, nothing was written
-#define TSAVE_REQ_EWRT   5 // error while writing, less than minimum
-                           // requested was saved
-#define TSAVE_REQ_ECONV  6 // error while converting to hdf5
-/* FIX: TO ADD to tesc and README */
-#define TSAVE_REQ_EFIN   7 // capture ok, error writing stats,
-                           // conversion aborted
-#define TSAVE_REQ_PIC  "ss88111"
-#define TSAVE_REP_PIC "18888888"
-
-/* Capture/conversion mode. Keep in mind status requests should default
- * to all 0 and require only a filename and group, and that setting
- * min_ticks or min_events should be enough to indicate capture. */
-#define TSAVE_CAP_CONV_AUTO 0 // capture and convert unless status
-#define TSAVE_CAP_ONLY      1 // capture only
-#define TSAVE_CONV_ONLY     2 // convert only
-
-#define TSAVE_FIDX_LEN 16 // frame index
-#define TSAVE_TIDX_LEN  8 // tick index
-#define TSAVE_SIDX_LEN 16 // MCA and trace indices
-#define TSAVE_STAT_LEN 64 // job statistics
-#ifndef TSAVE_ROOT
-#define TSAVE_ROOT "/media/data/captures/" // must have a trailing slash
+#define FIDX_LEN 16 // frame index
+#define TIDX_LEN  8 // tick index
+#define SIDX_LEN 16 // MCA and trace indices
+#define STAT_LEN 64 // job statistics
+#ifndef DATAROOT
+#define DATAROOT "/media/data/captures/" // must have a trailing slash
 #endif
 
-#define TSAVE_REQUIRE_FILENAME // for now we don't generate filename
-// #define TSAVE_SINGLE_FILE      // save all payloads (with
+#define REQUIRE_FILENAME // for now we don't generate filename
+// #define SINGLE_FILE      // save all payloads (with
 //                                // headers) to single .dat file
-// #define TSAVE_SAVE_HEADERS     // save headers in .*dat files
-// #define TSAVE_NO_BAD_FRAMES    // drop bad frames
+// #define SAVE_HEADERS     // save headers in .*dat files
+// #define NO_BAD_FRAMES    // drop bad frames
 
 /* Employ a buffer zone for asynchronous writing. We memcpy frames
- * into the bufzone, between its head and cursor (see
- * s_task_save_data_t below) and queue batches with aio_write.
+ * into the bufzone, between its head and cursor (see s_data_t below)
+ * and queue batches with aio_write.
  * aio_write has significant overhead and is not worth queueing less
  * than ~2kB (it'd be much slower than synchronous write). */
-#define TSAVE_BUFSIZE 10485760UL // 10 MB
-#define TSAVE_MINSIZE 512000UL   // 500 kB
+#define BUFSIZE 10485760UL // 10 MB
+#define MINSIZE 512000UL   // 500 kB
 #ifdef ENABLE_FULL_DEBUG
-#  define TSAVE_HISTBINS 11
+#  define STAT_NBINS 11
 #endif
 
 /*
  * Transformed packet type byte: for the frame index
  */
-struct s_task_save_ftype_t
+struct s_ftype_t
 {
 	/* PT: */
-#define TSAVE_FTYPE_PEAK        0
-#define TSAVE_FTYPE_AREA        1
-#define TSAVE_FTYPE_PULSE       2
-#define TSAVE_FTYPE_TRACE_SGL   3
-#define TSAVE_FTYPE_TRACE_AVG   4
-#define TSAVE_FTYPE_TRACE_DP    5
-#define TSAVE_FTYPE_TRACE_DP_TR 6
-#define TSAVE_FTYPE_TICK        7
-#define TSAVE_FTYPE_MCA         8
-#define TSAVE_FTYPE_BAD         9
+#define FTYPE_PEAK        0
+#define FTYPE_AREA        1
+#define FTYPE_PULSE       2
+#define FTYPE_TRACE_SGL   3
+#define FTYPE_TRACE_AVG   4
+#define FTYPE_TRACE_DP    5
+#define FTYPE_TRACE_DP_TR 6
+#define FTYPE_TICK        7
+#define FTYPE_MCA         8
+#define FTYPE_BAD         9
 	uint8_t PT  : 4;
 	uint8_t     : 2; /* reserved */
 	uint8_t HDR : 1; /* header frame in multi-frame stream */
@@ -77,7 +54,7 @@ struct s_task_save_ftype_t
 /*
  * Statistics sent as a reply and saved to the file. 
  */
-struct s_task_save_stats_t
+struct s_stats_t
 {
 	uint64_t ticks;
 	uint64_t events;         // number of events written 
@@ -92,59 +69,59 @@ struct s_task_save_stats_t
 /*
  * A list of stream and index files.
  */
-#ifdef TSAVE_SINGLE_FILE
-#  define TSAVE_NUM_DSETS 5
+#ifdef SINGLE_FILE
+#  define NUM_DSETS 5
 #else
-#  define TSAVE_NUM_DSETS 8
+#  define NUM_DSETS 8
 #endif
-static struct s_task_save_dset_t
+static struct s_dset_t
 {
 	char* dataset;   // name of dataset inside hdf5 file
 	char* extension; // file extension
-} s_task_save_dsets[] = {
-#  define TSAVE_DSET_FIDX 0
+} s_dsets[] = {
+#  define DSET_FIDX 0
 	{ // frame index
 		.dataset = "fidx",
 		.extension = "fidx",
 	},
-#  define TSAVE_DSET_MIDX 1
+#  define DSET_MIDX 1
 	{ // MCA index
 		.dataset = "midx",
 		.extension = "midx",
 	},
-#  define TSAVE_DSET_TIDX 2
+#  define DSET_TIDX 2
 	{ // tick index
 		.dataset = "tidx",
 		.extension = "tidx",
 	},
-#  define TSAVE_DSET_RIDX 3
+#  define DSET_RIDX 3
 	{ // trace index
 		.dataset = "ridx",
 		.extension = "ridx",
 	},
-#ifdef TSAVE_SINGLE_FILE
-#  define TSAVE_DSET_ADAT 4
+#ifdef SINGLE_FILE
+#  define DSET_ADAT 4
 	{ // all payloads
 		.dataset = "all data",
 		.extension = "adat",
 	},
 #else
-#  define TSAVE_DSET_BDAT 4
+#  define DSET_BDAT 4
 	{ // bad payloads
 		.dataset = "bad",
 		.extension = "bdat",
 	},
-#  define TSAVE_DSET_MDAT 5
+#  define DSET_MDAT 5
 	{ // MCA payloads
 		.dataset = "mca",
 		.extension = "mdat",
 	},
-#  define TSAVE_DSET_TDAT 6
+#  define DSET_TDAT 6
 	{ // tick payloads
 		.dataset = "ticks",
 		.extension = "tdat",
 	},
-#  define TSAVE_DSET_EDAT 7
+#  define DSET_EDAT 7
 	{ // event payloads
 		.dataset = "events",
 		.extension = "edat",
@@ -155,15 +132,15 @@ static struct s_task_save_dset_t
 /*
  * Data related to a stream or index file, e.g. ticks or MCA frames.
  */
-struct s_task_save_aiobuf_t
+struct s_aiobuf_t
 {
 	struct aiocb aios;
 	struct
 	{
-		unsigned char* base; // mmapped, size of TSAVE_BUFSIZE
+		unsigned char* base; // mmapped, size of BUFSIZE
 		unsigned char* tail; // start address queued for aio_write
 		unsigned char* cur;  // address of next packet
-		unsigned char* ceil; // base + TSAVE_BUFSIZE
+		unsigned char* ceil; // base + BUFSIZE
 		size_t waiting;      // copied to buffer since last aio_write
 		size_t enqueued;     // queued for writing at last aio_write
 #ifdef ENABLE_FULL_DEBUG
@@ -171,7 +148,7 @@ struct s_task_save_aiobuf_t
 			size_t prev_enqueued;
 			size_t prev_waiting;
 			size_t last_written;
-			uint64_t batches[TSAVE_HISTBINS];
+			uint64_t batches[STAT_NBINS];
 			uint64_t failed_batches;
 			uint64_t num_skipped;
 			uint64_t num_blocked;
@@ -182,26 +159,26 @@ struct s_task_save_aiobuf_t
 	char   filename[PATH_MAX]; // name data/index file
 	char*  dataset;            // name of dataset inside hdf5 file
 	                           // points to one of the literal
-	                           // strings in s_task_save_dsets
+	                           // strings in s_dsets
 };
 
 /*
  * The frame index.
  * Flags mca, bad and seq are set in event type.
  */
-struct s_task_save_fidx_t
+struct s_fidx_t
 {
 	uint64_t start;   // frame's offset into its dat file
 	uint32_t length;  // payload's length
 	uint16_t esize;   // original event size
 	uint8_t  changed; // event frame differs from previous
-	struct s_task_save_ftype_t ftype; // see definition of struct
+	struct s_ftype_t ftype; // see definition of struct
 };
 
 /*
  * The tick index.
  */
-struct s_task_save_tidx_t
+struct s_tidx_t
 {
 	uint32_t start_frame; // frame number of first non-tick event
 	uint32_t stop_frame;  // frame number of last non-tick event
@@ -210,7 +187,7 @@ struct s_task_save_tidx_t
 /*
  * The MCA and trace indices. (the 's' is for 'stream')
  */
-struct s_task_save_sidx_t
+struct s_sidx_t
 {
 	uint64_t start;  // first byte of histogram/trace into dat file
 	uint64_t length; // length in bytes of histogram/trace
@@ -220,14 +197,14 @@ struct s_task_save_sidx_t
  * Data for the currently-saved file. min_ticks and basefname are
  * set when receiving a request from client.
  */
-struct s_task_save_data_t
+struct s_data_t
 {
-	struct s_task_save_stats_t st;
-	struct s_task_save_aiobuf_t aio[TSAVE_NUM_DSETS];
+	struct s_stats_t st;
+	struct s_aiobuf_t aio[NUM_DSETS];
 
 	struct
 	{ /* keep track of multi-frame streams */
-		struct s_task_save_sidx_t idx;
+		struct s_sidx_t idx;
 		size_t size;
 		size_t cur_size;
 		bool is_event; // i.e. is_trace, otherwise it's MCA
@@ -236,18 +213,18 @@ struct s_task_save_data_t
 
 	struct
 	{
-		struct s_task_save_tidx_t idx;
+		struct s_tidx_t idx;
 		uint32_t nframes;  // no. of event frames in this tick
 	} cur_tick;
 	uint8_t  prev_esize; // event size for previous event
 	uint8_t  prev_etype; // event type for previous event,
-	                     // see s_task_save_ftype_t
+	                     // see s_ftype_t
 
 	struct
 	{ /* given by client */
 		uint64_t min_ticks;   // cpature at least that many ticks
 		uint64_t min_events;  // cpature at least that many events
-		uint8_t  ovrwtmode;   // HDF5_OVRT_*, see hdf5conv.h
+		uint8_t  ovrwtmode;   // TES_H5_OVRT_*, see hdf5conv.h
 		uint8_t  async;       // copy data to hdf5 in the background
 		uint8_t  capmode;     // only convert a previous capture
 		char*    basefname;   // datafiles will be
@@ -266,51 +243,41 @@ struct s_task_save_data_t
 };
 
 /* Task initializer and finalizer. */
-static int   s_task_save_init_aiobuf (
-		struct s_task_save_aiobuf_t* aiobuf);
-static void  s_task_save_fin_aiobuf (
-		struct s_task_save_aiobuf_t* aiobuf);
+static int   s_init_aiobuf (struct s_aiobuf_t* aiobuf);
+static void  s_fin_aiobuf (struct s_aiobuf_t* aiobuf);
 
 /*
- * s_task_save_open and s_task_save_close deal with stream and index
- * files only. stats_* deal with the stats file/database.
- * s_task_save_stats_send should be called at the very end (after
- * processing is done.
+ * s_open and s_close deal with stream and index files only. stats_*
+ * deal with the stats file/database. s_stats_send should be called at
+ * the very end (after processing is done).
  */
 /* Job initializer and finalizer. */
-static int  s_task_save_is_req_valid (
-		struct s_task_save_data_t* sjob);
-static int  s_task_construct_filenames (
-		struct s_task_save_data_t* sjob);
-static int  s_task_save_open  (
-		struct s_task_save_data_t* sjob, mode_t fmode);
-static void s_task_save_close (struct s_task_save_data_t* sjob);
-static int  s_task_save_open_aiobuf (
-		struct s_task_save_aiobuf_t* aiobuf, mode_t fmode);
-static void s_task_save_close_aiobuf (
-		struct s_task_save_aiobuf_t* aiobuf);
-static int  s_task_save_conv_data (struct s_task_save_data_t* sjob);
-static void s_task_save_send_err (struct s_task_save_data_t* sjob,
-		zsock_t* frontend, uint8_t status);
+static int  s_is_req_valid (struct s_data_t* sjob);
+static int  s_task_construct_filenames (struct s_data_t* sjob);
+static int  s_open (struct s_data_t* sjob, mode_t fmode);
+static void s_close (struct s_data_t* sjob);
+static int  s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode);
+static void s_close_aiobuf (struct s_aiobuf_t* aiobuf);
+static int  s_conv_data (struct s_data_t* sjob);
+static void s_send_err (struct s_data_t* sjob,
+	zsock_t* frontend, uint8_t status);
 
 /* Statistics for a job. */
-static int s_task_save_stats_read (struct s_task_save_data_t* sjob);
-static int s_task_save_stats_write (struct s_task_save_data_t* sjob);
-static int s_task_save_stats_send (struct s_task_save_data_t* sjob,
-		zsock_t* frontend, uint8_t status);
+static int s_stats_read (struct s_data_t* sjob);
+static int s_stats_write (struct s_data_t* sjob);
+static int s_stats_send (struct s_data_t* sjob,
+	zsock_t* frontend, uint8_t status);
 
 /* Ongoing job helpers. */
-static void  s_task_save_flush (struct s_task_save_data_t* sjob);
-static int   s_task_save_try_queue_aiobuf (
-		struct s_task_save_aiobuf_t* aiobuf,
-		const char* buf, uint16_t len);
-static int   s_task_save_queue_aiobuf (
-		struct s_task_save_aiobuf_t* aiobuf, bool force);
-static char* s_task_save_canonicalize_path (const char* filename,
-		char* finalpath, bool mustexist);
+static void  s_flush (struct s_data_t* sjob);
+static int   s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
+	const char* buf, uint16_t len);
+static int   s_queue_aiobuf (struct s_aiobuf_t* aiobuf, bool force);
+static char* s_canonicalize_path (const char* filename,
+	char* finalpath, bool mustexist);
 
 #ifdef ENABLE_FULL_DEBUG
-static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob);
+static void  s_dbg_stats (struct s_data_t* sjob);
 #endif
 
 /* -------------------------------------------------------------- */
@@ -322,21 +289,21 @@ static void  s_task_save_dbg_stats (struct s_task_save_data_t* sjob);
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
+s_init_aiobuf (struct s_aiobuf_t* aiobuf)
 {
 	assert (aiobuf != NULL);
 
 	aiobuf->aios.aio_sigevent.sigev_notify = SIGEV_NONE;
 	aiobuf->aios.aio_fildes = -1;
 
-	void* buf = mmap (NULL, TSAVE_BUFSIZE, PROT_WRITE,
+	void* buf = mmap (NULL, BUFSIZE, PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buf == (void*)-1)
 		return -1;
 
 	aiobuf->bufzone.base = aiobuf->bufzone.tail =
 		aiobuf->bufzone.cur = (unsigned char*) buf;
-	aiobuf->bufzone.ceil = aiobuf->bufzone.base + TSAVE_BUFSIZE;
+	aiobuf->bufzone.ceil = aiobuf->bufzone.base + BUFSIZE;
 
 	return 0;
 }
@@ -345,29 +312,29 @@ s_task_save_init_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
  * munmap data for a stream or index file.
  */
 static void
-s_task_save_fin_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
+s_fin_aiobuf (struct s_aiobuf_t* aiobuf)
 {
 	assert (aiobuf != NULL);
 
 	/* Unmap bufzone */
 	if (aiobuf->bufzone.base != NULL)
 	{
-		munmap (aiobuf->bufzone.base, TSAVE_BUFSIZE);
+		munmap (aiobuf->bufzone.base, BUFSIZE);
 		aiobuf->bufzone.base = NULL;
 	}
 }
 
 /*
  * Check if request is valid, set useful internal flags.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
-static int  s_task_save_is_req_valid (
-		struct s_task_save_data_t* sjob)
+static int
+s_is_req_valid (struct s_data_t* sjob)
 {
 	if (sjob->basefname == NULL)
 	{
 		logmsg (0, LOG_ERR, "Invalid request");
-		return TSAVE_REQ_EINV;
+		return TES_CAP_REQ_EINV;
 	}
 
 	if (sjob->measurement == NULL)
@@ -379,31 +346,31 @@ static int  s_task_save_is_req_valid (
 		{
 			logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
 				"Cannot allocate memory");
-			return TSAVE_REQ_EFAIL;
+			return TES_CAP_REQ_EFAIL;
 		}
 		sjob->measurement[0] = '\0';
 	}
 
 	switch (sjob->ovrwtmode)
 	{
-		case HDF5_OVRWT_NONE:
-		case HDF5_OVRWT_RELINK:
-		case HDF5_OVRWT_FILE:
+		case TES_H5_OVRWT_NONE:
+		case TES_H5_OVRWT_RELINK:
+		case TES_H5_OVRWT_FILE:
 			break;
 		default:
 			logmsg (0, LOG_ERR, "Invalid overwrite mode");
-			return TSAVE_REQ_EINV;
+			return TES_CAP_REQ_EINV;
 	}
 
 	switch (sjob->capmode)
 	{
-		case TSAVE_CAP_CONV_AUTO:
-		case TSAVE_CAP_ONLY:
-		case TSAVE_CONV_ONLY:
+		case TES_CAP_AUTO:
+		case TES_CAP_CAPONLY:
+		case TES_CAP_CONVONLY:
 			break;
 		default:
 			logmsg (0, LOG_ERR, "Invalid capture mode");
-			return TSAVE_REQ_EINV;
+			return TES_CAP_REQ_EINV;
 	}
 
 	/* Does it require capture? */
@@ -412,33 +379,32 @@ static int  s_task_save_is_req_valid (
 		sjob->min_ticks = 1;
 	sjob->nocapture = (sjob->min_ticks == 0);
 
-	if ( (sjob->capmode == TSAVE_CONV_ONLY && ! sjob->nocapture) ||
-		(sjob->capmode == TSAVE_CAP_ONLY && sjob->nocapture) )
+	if ( (sjob->capmode == TES_CAP_CONVONLY && ! sjob->nocapture) ||
+		(sjob->capmode == TES_CAP_CAPONLY && sjob->nocapture) )
 	{
 			logmsg (0, LOG_ERR, "Ambiguous request");
-			return TSAVE_REQ_EINV;
+			return TES_CAP_REQ_EINV;
 	}
 
 	bool statusonly = (sjob->nocapture &&
-		sjob->capmode != TSAVE_CONV_ONLY);
+		sjob->capmode != TES_CAP_CONVONLY);
 
 	/* Does it require conversion? */
-	sjob->noconvert = (statusonly ||
-		sjob->capmode == TSAVE_CAP_ONLY);
+	sjob->noconvert = (statusonly || sjob->capmode == TES_CAP_CAPONLY);
 
 	/* Should we overwrite data files. */
-	sjob->nooverwrite = (sjob->ovrwtmode == HDF5_OVRWT_NONE);
+	sjob->nooverwrite = (sjob->ovrwtmode == TES_H5_OVRWT_NONE);
 
-	return TSAVE_REQ_OK;
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Set the stats, hdf5, index and data filenames as well as the dataset
  * names.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
-static int s_task_construct_filenames (
-		struct s_task_save_data_t* sjob)
+static int
+s_task_construct_filenames (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
@@ -458,21 +424,21 @@ static int s_task_construct_filenames (
 			sjob->basefname,
 			strlen (sjob->measurement) == 0 ? "" : "-",
 			sjob->measurement);
-		return TSAVE_REQ_EFAIL;
+		return TES_CAP_REQ_EFAIL;
 	}
-	char* tmpfname_p = s_task_save_canonicalize_path (
+	char* tmpfname_p = s_canonicalize_path (
 		tmpfname, sjob->statfilename, sjob->nocapture);
 	if (tmpfname_p == NULL)
 	{
 		if (sjob->nocapture)
 		{
 			logmsg (0, LOG_INFO, "Job not found");
-			return TSAVE_REQ_EABORT;
+			return TES_CAP_REQ_EABORT;
 		}
 		else
 		{
 			logmsg (errno, LOG_INFO, "Filename is not valid");
-			return TSAVE_REQ_EPERM;
+			return TES_CAP_REQ_EPERM;
 		}
 	}
 
@@ -481,43 +447,43 @@ static int s_task_construct_filenames (
 	if (strchr (sjob->measurement, '/') == NULL)
 	{ /* make sure measurement group does not contain a slash. */
 		snprintf (tmpfname, PATH_MAX, "%s.hdf5", sjob->basefname);
-		tmpfname_p = s_task_save_canonicalize_path (
+		tmpfname_p = s_canonicalize_path (
 			tmpfname, sjob->hdf5filename, 0);
 	}
 	if (tmpfname_p == NULL)
-	{ /* it had a slash or it was a symlink to outside TSAVE_ROOT */
+	{ /* it had a slash or it was a symlink to outside DATAROOT */
 		logmsg (errno, LOG_INFO, "HDF5 filename is not valid");
-		return TSAVE_REQ_EPERM;
+		return TES_CAP_REQ_EPERM;
 	}
 
 	/* Index and data files. */
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	for (int s = 0; s < NUM_DSETS ; s++)
 	{
-		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
-		aiobuf->dataset = s_task_save_dsets[s].dataset;
+		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
+		aiobuf->dataset = s_dsets[s].dataset;
 
 		rc = snprintf (aiobuf->filename, PATH_MAX, "%s.%s",
 			sjob->statfilename,
-			s_task_save_dsets[s].extension);
+			s_dsets[s].extension);
 		if (rc == -1 || (size_t)rc >= PATH_MAX)
 		{
 			logmsg (rc == -1 ? errno : 0, LOG_ERR,
 				"Cannot construct filename for dataset");
-			return TSAVE_REQ_EFAIL;
+			return TES_CAP_REQ_EFAIL;
 		}
 	}
-
-	return TSAVE_REQ_OK;
+  
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Opens the stream and index files.
  * It does not close any successfully opened files are closed if an
  * error occurs.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
 static int
-s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
+s_open (struct s_data_t* sjob, mode_t fmode)
 {
 	assert (sjob != NULL);
 
@@ -535,40 +501,40 @@ s_task_save_open (struct s_task_save_data_t* sjob, mode_t fmode)
 	dbg_assert (sjob->cur_tick.nframes == 0);
 
 	/* Open the data files. */
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	for (int s = 0; s < NUM_DSETS ; s++)
 	{
-		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
-		int rc = s_task_save_open_aiobuf (aiobuf, fmode);
+		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
+		int rc = s_open_aiobuf (aiobuf, fmode);
 		if (rc == -1)
 		{
 			if (sjob->nooverwrite)
 			{
 				logmsg (0, LOG_INFO, "Not going to overwrite");
-				return TSAVE_REQ_EABORT;
+				return TES_CAP_REQ_EABORT;
 			}
 			else
 			{
 				logmsg (errno, LOG_ERR, "Could not open files '%s.*'",
 					sjob->statfilename);
-				return TSAVE_REQ_EFAIL;
+				return TES_CAP_REQ_EFAIL;
 			}
 		}
 	}
 
-	return TSAVE_REQ_OK;
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Closes the stream and index files.
  */
 static void
-s_task_save_close (struct s_task_save_data_t* sjob)
+s_close (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
 
 	/* Close the data files. */
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
-		s_task_save_close_aiobuf (&sjob->aio[s]);
+	for (int s = 0; s < NUM_DSETS ; s++)
+		s_close_aiobuf (&sjob->aio[s]);
 }
 
 /*
@@ -576,8 +542,7 @@ s_task_save_close (struct s_task_save_data_t* sjob)
  * Returns 0 on success, -1 on error.
  */
 static int
-s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
-		mode_t fmode)
+s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode)
 {
 	assert (aiobuf != NULL);
 	assert (aiobuf->filename != NULL);
@@ -592,7 +557,7 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	/* If overwriting, unlink the file first to prevent permission
 	 * errors if owned by another user and to avoid writing outside of
 	 * root if data file is a symlink (it is not checked with
-	 * s_task_save_canonicalize_path). */
+	 * s_canonicalize_path). */
 	if (! (fmode & O_EXCL))
 	{
 		int fok = access (aiobuf->filename, F_OK);
@@ -617,7 +582,7 @@ s_task_save_open_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
  * Zero the aiocb struct.
  */
 static void
-s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
+s_close_aiobuf (struct s_aiobuf_t* aiobuf)
 {
 	assert (aiobuf != NULL);
 
@@ -644,15 +609,15 @@ s_task_save_close_aiobuf (struct s_task_save_aiobuf_t* aiobuf)
 
 /*
  * Requests the index and data files be saved in hdf5 format.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
 static int
-s_task_save_conv_data (struct s_task_save_data_t* sjob)
+s_conv_data (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
 
-	struct hdf5_dset_desc_t dsets[TSAVE_NUM_DSETS] = {0};
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	struct hdf5_dset_desc_t dsets[NUM_DSETS] = {0};
+	for (int s = 0; s < NUM_DSETS ; s++)
 	{
 		dsets[s].filename = sjob->aio[s].filename;
 		dsets[s].dsetname = sjob->aio[s].dataset;
@@ -663,30 +628,26 @@ s_task_save_conv_data (struct s_task_save_data_t* sjob)
 		.filename = sjob->hdf5filename,
 		.group = sjob->measurement,
 		.dsets = dsets,
-		.num_dsets = TSAVE_NUM_DSETS,
+		.num_dsets = NUM_DSETS,
 		.ovrwtmode = sjob->ovrwtmode,
 		.async = sjob->async,
 	};
 
 	int rc = hdf5_conv (&creq);
-	if (rc)
-	{
+	if (rc != TES_CAP_REQ_OK)
 		logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
-		return TSAVE_REQ_ECONV;
-	}
 
-	return TSAVE_REQ_OK;
+	return rc;
 }
 
 /*
  * Sends an error to client.
  */
 static void
-s_task_save_send_err (struct s_task_save_data_t* sjob,
+s_send_err (struct s_data_t* sjob,
 	zsock_t* frontend, uint8_t status)
 {
-	zsock_send (frontend, TSAVE_REP_PIC, status,
-		0, 0, 0, 0, 0, 0, 0);
+	zsock_send (frontend, TES_CAP_REP_PIC, status, 0, 0, 0, 0, 0, 0, 0);
 
 	zstr_free (&sjob->basefname);   /* nullifies the pointer */
 	zstr_free (&sjob->measurement); /* nullifies the pointer */
@@ -694,10 +655,10 @@ s_task_save_send_err (struct s_task_save_data_t* sjob,
 
 /*
  * Opens the stats file and reads stats. Closes it afterwards.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
 static int
-s_task_save_stats_read (struct s_task_save_data_t* sjob)
+s_stats_read (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
@@ -708,28 +669,28 @@ s_task_save_stats_read (struct s_task_save_data_t* sjob)
 	{
 		logmsg (errno, LOG_ERR, "Could not open stats file");
 		/* The stat file is ensured to be present at this point. */
-		return TSAVE_REQ_EFAIL;
+		return TES_CAP_REQ_EFAIL;
 	}
 
-	off_t rc = read (sjob->statfd, &sjob->st, TSAVE_STAT_LEN);
+	off_t rc = read (sjob->statfd, &sjob->st, STAT_LEN);
 	close (sjob->statfd);
 	sjob->statfd = -1;
 
-	if (rc != TSAVE_STAT_LEN)
+	if (rc != STAT_LEN)
 	{
 		logmsg (errno, LOG_ERR, "Could not read stats");
-		return TSAVE_REQ_EFAIL;
+		return TES_CAP_REQ_EFAIL;
 	}
 	
-	return TSAVE_REQ_OK;
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Opens the stats file and writes stats. Closes it afterwards.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
 static int
-s_task_save_stats_write (struct s_task_save_data_t* sjob)
+s_stats_write (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
@@ -742,35 +703,35 @@ s_task_save_stats_write (struct s_task_save_data_t* sjob)
 	if (sjob->statfd == -1)
 	{
 		logmsg (errno, LOG_ERR, "Could not open stats file");
-		return TSAVE_REQ_EFIN;
+		return TES_CAP_REQ_EFIN;
 	}
 
-	off_t rc = write (sjob->statfd, &sjob->st, TSAVE_STAT_LEN);
+	off_t rc = write (sjob->statfd, &sjob->st, STAT_LEN);
 	close (sjob->statfd);
 	sjob->statfd = -1;
 
-	if (rc != TSAVE_STAT_LEN)
+	if (rc != STAT_LEN)
 	{
 		logmsg (errno, LOG_ERR, "Could not write stats");
-		return TSAVE_REQ_EFIN;
+		return TES_CAP_REQ_EFIN;
 	}
 	
-	return TSAVE_REQ_OK;
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Sends the statistics to the client and resets them.
- * Returns TSAVE_REQ_*
+ * Returns TES_CAP_REQ_*
  */
 static int
-s_task_save_stats_send (struct s_task_save_data_t* sjob,
-		zsock_t* frontend, uint8_t status)
+s_stats_send (struct s_data_t* sjob,
+	zsock_t* frontend, uint8_t status)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
 	dbg_assert (sjob->statfd == -1); /* _read and _write close it */
 
-	int rc = zsock_send (frontend, TSAVE_REP_PIC,
+	int rc = zsock_send (frontend, TES_CAP_REP_PIC,
 		status,
 		sjob->st.ticks,
 		sjob->st.events,
@@ -780,7 +741,7 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob,
 		sjob->st.frames_lost,
 		sjob->st.frames_dropped);
 
-	memset (&sjob->st, 0, TSAVE_STAT_LEN);
+	memset (&sjob->st, 0, STAT_LEN);
 	memset (&sjob->cur_stream, 0, sizeof (sjob->cur_stream));
 	memset (&sjob->cur_tick, 0, sizeof (sjob->cur_tick));
 
@@ -788,22 +749,22 @@ s_task_save_stats_send (struct s_task_save_data_t* sjob,
 	zstr_free (&sjob->measurement); /* nullifies the pointer */
 	sjob->recording = 0;
 
-	return (rc ? TSAVE_REQ_EFIN : TSAVE_REQ_OK);
+	return (rc ? TES_CAP_REQ_EFIN : TES_CAP_REQ_OK);
 }
 
 /*
  * Blocks untils the aio jobs for all bufzones are ready.
  */
 static void
-s_task_save_flush (struct s_task_save_data_t* sjob)
+s_flush (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
 
 	int jobrc;
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	for (int s = 0; s < NUM_DSETS ; s++)
 	{
 		do {
-			jobrc = s_task_save_queue_aiobuf (&sjob->aio[s], 1);
+			jobrc = s_queue_aiobuf (&sjob->aio[s], 1);
 		} while (jobrc == EINPROGRESS);
 	}
 }
@@ -814,10 +775,10 @@ s_task_save_flush (struct s_task_save_data_t* sjob)
  * If there is no space for another packet, will block until it's
  * done.
  * Returns 0 on success or if nothing was queued.
- * Otherwise returns same as s_task_save_queue_aiobuf.
+ * Otherwise returns same as s_queue_aiobuf.
  */
 static int
-s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
+s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	const char* buf, uint16_t len)
 {
 	dbg_assert (aiobuf != NULL);
@@ -826,7 +787,7 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	dbg_assert (len > 0);
 
 	dbg_assert (aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
+		BUFSIZE - MAX_TES_FRAME_LEN);
 	dbg_assert (aiobuf->bufzone.cur >= aiobuf->bufzone.base);
 	dbg_assert (aiobuf->bufzone.tail >= aiobuf->bufzone.base);
 	dbg_assert (aiobuf->bufzone.cur < aiobuf->bufzone.ceil);
@@ -838,7 +799,7 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	dbg_assert (aiobuf->bufzone.cur == aiobuf->bufzone.tail
 		+ aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting -
 			((aiobuf->bufzone.cur < aiobuf->bufzone.tail) ?
-				 TSAVE_BUFSIZE : 0));
+				 BUFSIZE : 0));
 
 	/* Wrap cursor if needed */
 	int reserve = len - (aiobuf->bufzone.ceil - aiobuf->bufzone.cur);
@@ -851,8 +812,7 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	{
 		memcpy (aiobuf->bufzone.cur, buf, len - reserve); 
 		if (reserve > 0)
-			memcpy (aiobuf->bufzone.base,
-				buf + len - reserve, reserve); 
+			memcpy (aiobuf->bufzone.base, buf + len - reserve, reserve); 
 		aiobuf->bufzone.cur = aiobuf->bufzone.base + reserve;
 	}
 	aiobuf->bufzone.waiting += len;
@@ -860,13 +820,13 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 #if 1 /* 0 to skip writing */
 	/* If there is < MINSIZE waiting and the cursor hasn't wrapped
 	 * and there is stil space for more packets, wait. */
-	if (aiobuf->bufzone.waiting < TSAVE_MINSIZE && reserve < 0 &&
+	if (aiobuf->bufzone.waiting < MINSIZE && reserve < 0 &&
 		aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
-			TSAVE_BUFSIZE - MAX_TES_FRAME_LEN)
+			BUFSIZE - MAX_TES_FRAME_LEN)
 		return 0;
 
 	/* Try to queue next batch but don't force */
-	int jobrc = s_task_save_queue_aiobuf (aiobuf, 0);
+	int jobrc = s_queue_aiobuf (aiobuf, 0);
 #ifdef ENABLE_FULL_DEBUG
 	if (jobrc == EINPROGRESS)
 		aiobuf->bufzone.st.num_skipped++;
@@ -879,13 +839,12 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 	bool blocked = 0;
 #endif
 	while ( aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting >
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN &&
-		jobrc == EINPROGRESS )
+		BUFSIZE - MAX_TES_FRAME_LEN && jobrc == EINPROGRESS )
 	{
 #ifdef ENABLE_FULL_DEBUG
 		blocked = 1;
 #endif
-		jobrc = s_task_save_queue_aiobuf (aiobuf, 1);
+		jobrc = s_queue_aiobuf (aiobuf, 1);
 	}
 #ifdef ENABLE_FULL_DEBUG
 	if (blocked)
@@ -916,7 +875,7 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
 #endif /* skip writing */
 
 	dbg_assert (aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
-		TSAVE_BUFSIZE - MAX_TES_FRAME_LEN);
+		BUFSIZE - MAX_TES_FRAME_LEN);
 	return jobrc;
 }
 
@@ -936,8 +895,7 @@ s_task_save_try_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
  * is unexpected.
  */
 static int
-s_task_save_queue_aiobuf (struct s_task_save_aiobuf_t* aiobuf,
-		bool force)
+s_queue_aiobuf (struct s_aiobuf_t* aiobuf, bool force)
 {
 	dbg_assert (aiobuf != NULL);
 
@@ -994,8 +952,8 @@ prepare_next:
 #ifdef ENABLE_FULL_DEBUG
 	{
 		int bin = aiobuf->bufzone.enqueued *
-			(TSAVE_HISTBINS - 1) / TSAVE_BUFSIZE;
-		dbg_assert (bin >= 0 && bin < TSAVE_HISTBINS);
+			(STAT_NBINS - 1) / BUFSIZE;
+		dbg_assert (bin >= 0 && bin < STAT_NBINS);
 		aiobuf->bufzone.st.batches[bin]++;
 	}
 	aiobuf->bufzone.st.prev_waiting = aiobuf->bufzone.waiting;
@@ -1033,7 +991,7 @@ queue_as_is:
 	dbg_assert (aiobuf->bufzone.tail != aiobuf->bufzone.ceil);
 	/* Check if called in vain, should only happen at the end when
 	 * flushing or if we had queued a batch larger than
-	 * TSAVE_BUFSIZE - MAX_TES_FRAME_LEN. */
+	 * BUFSIZE - MAX_TES_FRAME_LEN. */
 	if (aiobuf->bufzone.enqueued == 0)
 	{
 		dbg_assert (aiobuf->bufzone.waiting == 0);
@@ -1053,24 +1011,24 @@ queue_as_is:
 }
 
 /*
- * Prepends TSAVE_ROOT to filename and canonicalizes the path via
+ * Prepends DATAROOT to filename and canonicalizes the path via
  * realpath.
  *
  * If mustexist is true, filename must exist and resolve to a path under
- * TSAVE_ROOT.
+ * DATAROOT.
  * If mustexist is false, directory part must resolve to a path under
- * TSAVE_ROOT (or TSAVE_ROOT). Any missing directories are created.
+ * DATAROOT (or DATAROOT). Any missing directories are created.
  *
  * On success saves the result in finalpath, which must be able to hold
  * PATH_MAX characters, and returns a pointer to finalpath.
  * On error, returns NULL.
  *
  * If NULL is returned and errno is 0, it should be because the filename
- * is not allowed by us (i.e. outside of TSAVE_ROOT or ends with a
+ * is not allowed by us (i.e. outside of DATAROOT or ends with a
  * slash).
  */
 static char*
-s_task_save_canonicalize_path (const char* filename,
+s_canonicalize_path (const char* filename,
 	char* finalpath, bool mustexist)
 {
 	assert (filename != NULL);
@@ -1084,7 +1042,7 @@ s_task_save_canonicalize_path (const char* filename,
 		return NULL;
 	}
 
-#ifdef TSAVE_REQUIRE_FILENAME
+#ifdef REQUIRE_FILENAME
 	if (filename[len - 1] == '/')
 	{
 		logmsg (0, LOG_DEBUG, "Filename ends with /");
@@ -1093,7 +1051,7 @@ s_task_save_canonicalize_path (const char* filename,
 #endif
 
 	char buf[PATH_MAX] = {0};
-	snprintf (buf, PATH_MAX, "%s%s", TSAVE_ROOT, filename);
+	snprintf (buf, PATH_MAX, "%s%s", DATAROOT, filename);
 
 	/* Check if the file exists first. */
 	errno = 0;
@@ -1102,8 +1060,7 @@ s_task_save_canonicalize_path (const char* filename,
 	{
 		errno = 0;
 		assert (rs == finalpath);
-		if ( memcmp (finalpath, TSAVE_ROOT,
-			strlen (TSAVE_ROOT)) != 0 )
+		if ( memcmp (finalpath, DATAROOT, strlen (DATAROOT)) != 0 )
 		{
 			logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
 				finalpath);
@@ -1126,10 +1083,10 @@ s_task_save_canonicalize_path (const char* filename,
 	if (errno != ENOENT)
 		return NULL;
 
-	/* Start from the top-most component (after TSAVE_ROOT) and
+	/* Start from the top-most component (after DATAROOT) and
 	 * create directories as needed. */
 	memset (buf, 0, PATH_MAX);
-	strcpy (buf, TSAVE_ROOT);
+	strcpy (buf, DATAROOT);
 
 	const char* cur_seg = filename;
 	const char* next_seg = NULL;
@@ -1168,7 +1125,7 @@ s_task_save_canonicalize_path (const char* filename,
 	assert (rs == finalpath);
 
 	/* Add the basename (realpath removes the trailing slash). */
-#ifdef TSAVE_REQUIRE_FILENAME
+#ifdef REQUIRE_FILENAME
 	assert (strlen (cur_seg) > 0);
 #else
 	/* TO DO: generate a filename is none is given. */
@@ -1183,7 +1140,7 @@ s_task_save_canonicalize_path (const char* filename,
 
 	snprintf (finalpath + len, PATH_MAX - len, "/%s", cur_seg);
 	errno = 0;
-	if ( memcmp (finalpath, TSAVE_ROOT, strlen (TSAVE_ROOT)) != 0)
+	if ( memcmp (finalpath, DATAROOT, strlen (DATAROOT)) != 0)
 	{
 		logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
 			finalpath);
@@ -1195,15 +1152,14 @@ s_task_save_canonicalize_path (const char* filename,
 
 #ifdef ENABLE_FULL_DEBUG
 static void
-s_task_save_dbg_stats (struct s_task_save_data_t* sjob)
+s_dbg_stats (struct s_data_t* sjob)
 {
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	for (int s = 0; s < NUM_DSETS ; s++)
 	{
-		struct s_task_save_aiobuf_t* aiobuf = &sjob->aio[s];
+		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
 		logmsg (0, LOG_DEBUG, "Dataset %s: ", aiobuf->dataset); 
-		uint64_t batches_tot = 0,
-			 steps = TSAVE_BUFSIZE / (TSAVE_HISTBINS - 1);
-		for (int b = 0 ; b < TSAVE_HISTBINS ; b++)
+		uint64_t batches_tot = 0, steps = BUFSIZE / (STAT_NBINS - 1);
+		for (int b = 0 ; b < STAT_NBINS ; b++)
 		{
 			logmsg (0, LOG_DEBUG,
 				"     %lu B to %lu B: %lu batches",
@@ -1234,17 +1190,16 @@ s_task_save_dbg_stats (struct s_task_save_data_t* sjob)
  * requests to save, opens the file and marks the task as active.
  */
 int
-task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
+task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
 
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
+	struct s_data_t* sjob = (struct s_data_t*) self->data;
 	dbg_assert ( ! sjob->recording );
 
-	int rc = zsock_recv (reader, TSAVE_REQ_PIC,
+	int rc = zsock_recv (reader, TES_CAP_REQ_PIC,
 		&sjob->basefname,
 		&sjob->measurement,
 		&sjob->min_ticks,
@@ -1261,10 +1216,10 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	/* Is the request understood? */
-	rc = s_task_save_is_req_valid (sjob);
-	if (rc != TSAVE_REQ_OK)
+	rc = s_is_req_valid (sjob);
+	if (rc != TES_CAP_REQ_OK)
 	{
-		s_task_save_send_err (sjob, reader, rc);
+		s_send_err (sjob, reader, rc);
 		return 0;
 	}
 
@@ -1293,9 +1248,9 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	/* Set the filenames and dataset names, will detect if the stats file
 	 * is missing and we are not capturing, i.e. aborted job. */
 	rc = s_task_construct_filenames (sjob);
-	if (rc != TSAVE_REQ_OK)
+	if (rc != TES_CAP_REQ_OK)
 	{
-		s_task_save_send_err (sjob, reader, rc);
+		s_send_err (sjob, reader, rc);
 		return 0;
 	}
 
@@ -1307,25 +1262,24 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		if ( ! sjob->noconvert )
 		{
-			rc = s_task_save_conv_data (sjob);
-			if (rc != TSAVE_REQ_OK)
+			rc = s_conv_data (sjob);
+			if (rc != TES_CAP_REQ_OK)
 			{
-				s_task_save_send_err (sjob, reader, rc);
+				s_send_err (sjob, reader, rc);
 				return 0;
 			}
 		}
 
 		/* Read in stats and send reply either way. */
-		rc = s_task_save_stats_read (sjob);
-		if (rc != TSAVE_REQ_OK)
+		rc = s_stats_read (sjob);
+		if (rc != TES_CAP_REQ_OK)
 		{
-			s_task_save_send_err (sjob, reader, rc);
+			s_send_err (sjob, reader, rc);
 			return 0;
 		}
 
-		rc = s_task_save_stats_send (sjob,
-			self->frontend, TSAVE_REQ_OK);
-		if (rc != TSAVE_REQ_OK)
+		rc = s_stats_send (sjob, self->frontend, TES_CAP_REQ_OK);
+		if (rc != TES_CAP_REQ_OK)
 		{
 			logmsg (0, LOG_NOTICE, "Could not send stats");
 		}
@@ -1338,17 +1292,17 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	/*                    Write query.                    */
 	/* -------------------------------------------------- */
 
-	/* If not overwriting add O_EXCL, s_task_save_open_aiobuf will then
+	/* If not overwriting add O_EXCL, s_open_aiobuf will then
 	 * not unlink the data files and the open call will fail. */
 	mode_t fmode = O_RDWR | O_CREAT;
 	if (sjob->nooverwrite)
 		fmode |= O_EXCL;
 
-	rc = s_task_save_open (sjob, fmode);
-	if (rc != TSAVE_REQ_OK)
+	rc = s_open (sjob, fmode);
+	if (rc != TES_CAP_REQ_OK)
 	{
-		s_task_save_send_err (sjob, reader, rc);
-		s_task_save_close (sjob);
+		s_send_err (sjob, reader, rc);
+		s_close (sjob);
 		return 0;
 	}
 
@@ -1363,9 +1317,9 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR, "Could not delete stat file");
-			s_task_save_send_err (sjob, reader, TSAVE_REQ_EFAIL);
+			s_send_err (sjob, reader, TES_CAP_REQ_EFAIL);
 
-			s_task_save_close (sjob);
+			s_close (sjob);
 			return 0;
 		}
 	}
@@ -1382,13 +1336,12 @@ task_save_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
  * files.
  */
 int
-task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
-		uint16_t missed, int err, task_t* self)
+task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
+	uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
 
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
+	struct s_data_t* sjob = (struct s_data_t*) self->data;
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! sjob->recording && is_tick )
@@ -1399,7 +1352,7 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if (err)
 	{
-#ifdef TSAVE_NO_BAD_FRAMES
+#ifdef NO_BAD_FRAMES
 		/* drop bad frames */
 		sjob->st.frames_dropped++;
 		return 0;
@@ -1412,7 +1365,7 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	uint16_t esize = tespkt_esize (pkt);
 	esize = htofs (esize); /* in FPGA byte-order */
 	uint16_t paylen = flen - TES_HDR_LEN;
-#ifdef TSAVE_SAVE_HEADERS
+#ifdef SAVE_HEADERS
 	uint16_t datlen = flen;
 	char* datstart = (char*)pkt;
 #else
@@ -1427,15 +1380,13 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	/* *************** Update tick and frame indices ***************
 	 * ***************** and choose the data file. ************** */
-	struct s_task_save_aiobuf_t* aiofidx =
-		&sjob->aio[TSAVE_DSET_FIDX];
-#ifdef TSAVE_SINGLE_FILE
-	struct s_task_save_aiobuf_t* aiodat =
-		&sjob->aio[TSAVE_DSET_ADAT];
+	struct s_aiobuf_t* aiofidx = &sjob->aio[DSET_FIDX];
+#ifdef SINGLE_FILE
+	struct s_aiobuf_t* aiodat = &sjob->aio[DSET_ADAT];
 #else
-	struct s_task_save_aiobuf_t* aiodat = NULL; /* set later */
+	struct s_aiobuf_t* aiodat = NULL; /* set later */
 #endif
-	struct s_task_save_fidx_t fidx;
+	struct s_fidx_t fidx;
 	fidx.length = datlen;
 	fidx.esize = esize;
 	fidx.changed = 0;
@@ -1459,31 +1410,30 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	/* Check packet type. */
 	if (err)
 	{
-		fidx.ftype.PT = TSAVE_FTYPE_BAD;
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_BDAT];
+		fidx.ftype.PT = FTYPE_BAD;
+#ifndef SINGLE_FILE
+		aiodat = &sjob->aio[DSET_BDAT];
 #endif
 	}
 	else if (is_mca)
 	{
-		fidx.ftype.PT = TSAVE_FTYPE_MCA;
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_MDAT];
+		fidx.ftype.PT = FTYPE_MCA;
+#ifndef SINGLE_FILE
+		aiodat = &sjob->aio[DSET_MDAT];
 #endif
 	}
 	else if (is_tick)
 	{
-		fidx.ftype.PT = TSAVE_FTYPE_TICK;
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_TDAT];
+		fidx.ftype.PT = FTYPE_TICK;
+#ifndef SINGLE_FILE
+		aiodat = &sjob->aio[DSET_TDAT];
 #endif
 
 		if (sjob->st.ticks > 0)
 		{
-			struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
-			jobrc = s_task_save_try_queue_aiobuf (
-				&sjob->aio[TSAVE_DSET_TIDX], (char*)tidx,
-				TSAVE_TIDX_LEN);
+			struct s_tidx_t* tidx = &sjob->cur_tick.idx;
+			jobrc = s_try_queue_aiobuf (
+				&sjob->aio[DSET_TIDX], (char*)tidx, TIDX_LEN);
 			if (jobrc < 0)
 				finishing = 1; /* error */
 		}
@@ -1493,11 +1443,11 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 	else
 	{
-#ifndef TSAVE_SINGLE_FILE
-		aiodat = &sjob->aio[TSAVE_DSET_EDAT];
+#ifndef SINGLE_FILE
+		aiodat = &sjob->aio[DSET_EDAT];
 #endif
 
-		struct s_task_save_tidx_t* tidx = &sjob->cur_tick.idx;
+		struct s_tidx_t* tidx = &sjob->cur_tick.idx;
 		const struct tespkt_event_type* etype = tespkt_etype (pkt);
 		uint8_t pt = linear_etype (etype->PKT, etype->TR);
 		fidx.ftype.PT = pt;
@@ -1631,25 +1581,24 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		}
 		else if (sjob->cur_stream.cur_size == sjob->cur_stream.size)
 		{ /* done, record the event */
-			struct s_task_save_aiobuf_t* aiosidx = NULL;
+			struct s_aiobuf_t* aiosidx = NULL;
 			if (is_trace)
 			{
-				aiosidx = &sjob->aio[TSAVE_DSET_RIDX];
+				aiosidx = &sjob->aio[DSET_RIDX];
 				sjob->st.events++;
 				sjob->st.traces++;
 			}
 			else
 			{
-				aiosidx = &sjob->aio[TSAVE_DSET_MIDX];
+				aiosidx = &sjob->aio[DSET_MIDX];
 				sjob->st.hists++;
 			}
 			sjob->cur_stream.idx.length = sjob->cur_stream.size;
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
 
-			jobrc = s_task_save_try_queue_aiobuf (aiosidx,
-				(char*)&sjob->cur_stream.idx,
-				TSAVE_SIDX_LEN);
+			jobrc = s_try_queue_aiobuf (aiosidx,
+				(char*)&sjob->cur_stream.idx, SIDX_LEN);
 			if (jobrc < 0)
 				finishing = 1; /* error */
 		}
@@ -1695,18 +1644,18 @@ task_save_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 done:
 	/* **************** Write frame payload. **************** */
-	jobrc = s_task_save_try_queue_aiobuf (aiodat, datstart, datlen);
+	jobrc = s_try_queue_aiobuf (aiodat, datstart, datlen);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
 	/* ***************** Write frame index. ***************** */
 
-	jobrc = s_task_save_try_queue_aiobuf (
-		aiofidx, (char*)&fidx, TSAVE_FIDX_LEN);
+	jobrc = s_try_queue_aiobuf (
+		aiofidx, (char*)&fidx, FIDX_LEN);
 	if (jobrc < 0)
 		finishing = 1; /* error */
 
-	dbg_assert ( sjob->st.frames * TSAVE_FIDX_LEN ==
+	dbg_assert ( sjob->st.frames * FIDX_LEN ==
 		aiofidx->size +
 		aiofidx->bufzone.waiting +
 		aiofidx->bufzone.enqueued );
@@ -1715,32 +1664,32 @@ done:
 	if (finishing)
 	{
 		/* Flush all buffers. */
-		s_task_save_flush (sjob);
+		s_flush (sjob);
 
 		logmsg (0, LOG_INFO,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
 #ifdef ENABLE_FULL_DEBUG
-		s_task_save_dbg_stats (sjob);
+		s_dbg_stats (sjob);
 #endif
 		/* Close stream and index files. */
-		s_task_save_close (sjob);
+		s_close (sjob);
 
 		uint8_t status = ( ( sjob->min_ticks > sjob->st.ticks ||
 			 sjob->min_events > sjob->st.events ) ?
-			TSAVE_REQ_EWRT : TSAVE_REQ_OK );
+			TES_CAP_REQ_EWRT : TES_CAP_REQ_OK );
 
 		/* Write stats regardless of errors. */
-		int rc = s_task_save_stats_write (sjob);
-		if (status == TSAVE_REQ_OK)
+		int rc = s_stats_write (sjob);
+		if (status == TES_CAP_REQ_OK)
 			status = rc;
 
 		/* Convert them to hdf5, only if all is ok until now. */
-		if ( status == TSAVE_REQ_OK && ! sjob->noconvert )
-			status = s_task_save_conv_data (sjob);
+		if ( status == TES_CAP_REQ_OK && ! sjob->noconvert )
+			status = s_conv_data (sjob);
 
 		/* Send reply. */
-		s_task_save_stats_send (sjob, self->frontend, status);
+		s_stats_send (sjob, self->frontend, status);
 
 		/* Enable polling on the reader and deactivate packet
 		 * handler. */
@@ -1756,52 +1705,41 @@ done:
  * Returns 0 on success, -1 on error.
  */
 int
-task_save_init (task_t* self)
+task_cap_init (task_t* self)
 {
 	assert (self != NULL);
-	assert (*(TSAVE_ROOT + strlen (TSAVE_ROOT) - 1) == '/');
-	assert (sizeof (struct s_task_save_stats_t) == TSAVE_STAT_LEN);
-	assert (sizeof (struct s_task_save_fidx_t) == TSAVE_FIDX_LEN);
-	assert (sizeof (struct s_task_save_tidx_t) == TSAVE_TIDX_LEN);
-	assert (sizeof (struct s_task_save_sidx_t) == TSAVE_SIDX_LEN);
-	assert (sizeof (s_task_save_dsets) ==
-		TSAVE_NUM_DSETS * sizeof (struct s_task_save_dset_t));
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_FIDX].extension,
-		"fidx", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_MIDX].extension,
-		"midx", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_TIDX].extension,
-		"tidx", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_RIDX].extension,
-		"ridx", 4) == 0);
-#ifdef TSAVE_SINGLE_FILE
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_ADAT].extension,
-		"adat", 4) == 0);
+	assert (*(DATAROOT + strlen (DATAROOT) - 1) == '/');
+	assert (sizeof (struct s_stats_t) == STAT_LEN);
+	assert (sizeof (struct s_fidx_t) == FIDX_LEN);
+	assert (sizeof (struct s_tidx_t) == TIDX_LEN);
+	assert (sizeof (struct s_sidx_t) == SIDX_LEN);
+	assert (sizeof (s_dsets) == NUM_DSETS * sizeof (struct s_dset_t));
+	assert (memcmp (s_dsets[DSET_FIDX].extension, "fidx", 4) == 0);
+	assert (memcmp (s_dsets[DSET_MIDX].extension, "midx", 4) == 0);
+	assert (memcmp (s_dsets[DSET_TIDX].extension, "tidx", 4) == 0);
+	assert (memcmp (s_dsets[DSET_RIDX].extension, "ridx", 4) == 0);
+#ifdef SINGLE_FILE
+	assert (memcmp (s_dsets[DSET_ADAT].extension, "adat", 4) == 0);
 #else
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_BDAT].extension,
-		"bdat", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_MDAT].extension,
-		"mdat", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_TDAT].extension,
-		"tdat", 4) == 0);
-	assert (memcmp (s_task_save_dsets[TSAVE_DSET_EDAT].extension,
-		"edat", 4) == 0);
+	assert (memcmp (s_dsets[DSET_BDAT].extension, "bdat", 4) == 0);
+	assert (memcmp (s_dsets[DSET_MDAT].extension, "mdat", 4) == 0);
+	assert (memcmp (s_dsets[DSET_TDAT].extension, "tdat", 4) == 0);
+	assert (memcmp (s_dsets[DSET_EDAT].extension, "edat", 4) == 0);
 #endif
 
-	static struct s_task_save_data_t sjob;
+	static struct s_data_t sjob;
 	sjob.statfd = -1;
 
 	int rc = 0;
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
+	for (int s = 0; s < NUM_DSETS ; s++)
 	{
-		rc = s_task_save_init_aiobuf (&sjob.aio[s]);
+		rc = s_init_aiobuf (&sjob.aio[s]);
 		if (rc != 0)
 			break;
 	}
 	if (rc != 0)
 	{
-		logmsg (errno, LOG_ERR,
-			"Cannot mmap %lu bytes", TSAVE_BUFSIZE);
+		logmsg (errno, LOG_ERR, "Cannot mmap %lu bytes", BUFSIZE);
 		return -1;
 	}
 
@@ -1816,26 +1754,24 @@ task_save_init (task_t* self)
  * written.
  */
 int
-task_save_fin (task_t* self)
+task_cap_fin (task_t* self)
 {
 	assert (self != NULL);
 
-	struct s_task_save_data_t* sjob =
-		(struct s_task_save_data_t*) self->data;
+	struct s_data_t* sjob = (struct s_data_t*) self->data;
 	assert (sjob != NULL);
 
 	int rc = 0;
 	if (sjob->basefname != NULL)
 	{ /* A job is in progress. _stats_send nullifies this. */
-		s_task_save_flush (sjob);
-		s_task_save_close (sjob);
-		rc  = s_task_save_stats_write (sjob);
-		rc |= s_task_save_stats_send  (sjob,
-			self->frontend, TSAVE_REQ_EWRT);
+		s_flush (sjob);
+		s_close (sjob);
+		rc  = s_stats_write (sjob);
+		rc |= s_stats_send  (sjob, self->frontend, TES_CAP_REQ_EWRT);
 	}
 
-	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
-		s_task_save_fin_aiobuf (&sjob->aio[s]);
+	for (int s = 0; s < NUM_DSETS ; s++)
+		s_fin_aiobuf (&sjob->aio[s]);
 
 	self->data = NULL;
 	return (rc ? -1 : 0);

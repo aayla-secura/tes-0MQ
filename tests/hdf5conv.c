@@ -1,6 +1,7 @@
 /* TO DO: test with mmapped files, in daemon mode */
 
 #include "hdf5conv.h"
+#include "api.h"
 #include "daemon_ng.h"
 #include "sys/types.h"
 #include "sys/stat.h"
@@ -14,9 +15,9 @@
 #define DATAFILE "/media/data/testcap"
 #define H5FNAME "/media/data/test.hdf5"
 #define MEASUREMENT "foo"
-// #define OVRWTMODE HDF5_OVRWT_NONE
-#define OVRWTMODE HDF5_OVRWT_RELINK
-// #define OVRWTMODE HDF5_OVRWT_FILE
+// #define OVRWTMODE TES_H5_OVRWT_NONE
+#define OVRWTMODE TES_H5_OVRWT_RELINK
+// #define OVRWTMODE TES_H5_OVRWT_FILE
 #define ASYNC 0
 #define DAEMONIZE 0
 

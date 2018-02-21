@@ -89,25 +89,32 @@ measurement is required.
 
 #### Message frames in a reply
 
+Some return codes, namely 1, 4 and 7 may indicate an error in either
+capture or conversion. This should be obvious from the time it took to
+receive the reply.
+
 1. **Error status**
 
  * "0": writing finished successfully (in case of write request) or
         status of a valid previous job was read (in case of status request)
 
- * "1": request was malformed
+ * "1": capture request was not understood or
+        conversion request was not understood (capture was successful)
  
  * "2": file exists (in case of a no-overwrite request) or
         file does not exist (in case of status request)
 
  * "3": filename did not resolve to an allowed path
 
- * "4": error initializing, nothing was written
+ * "4": error initializing capture, nothing was written or
+        error initializing conversion (capture was successful)
 
  * "5": error while writing to files, some data was saved
 
  * "6": error while converting to hdf5 format
 
- * "7": error while writing stats, capture ok, conversion aborted
+ * "7": error while writing stats (capture ok, conversion aborted) or
+        error deleting data files (conversion was successful)
 
 2. **No. of ticks written**
 

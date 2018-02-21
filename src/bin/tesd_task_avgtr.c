@@ -1,27 +1,18 @@
 #include "tesd_tasks.h"
 
-#define TAVGTR_REQ_OK    0 // accepted
-#define TAVGTR_REQ_INV   1 // malformed request
-#define TAVGTR_REQ_TOUT  2 // timeout
-#define TAVGTR_REQ_ERR   3 // dropped trace
-#define TAVGTR_REQ_PIC       "4"
-#define TAVGTR_REP_PIC_OK   "1b"
-#define TAVGTR_REP_PIC_FAIL  "1"
-#define TAVGTR_MAXSIZE 65528U // highest 16-bit number multiple of 8
-
 /*
  * Data for currently built average trace.
  */
-struct s_task_avgtr_data_t
+struct s_data_t
 {
 	int           timer;     // returned by zloop_timer
 	uint16_t      size;      // size of histogram including header
 	uint16_t      cur_size;  // number of received bytes so far
 	bool          recording; // discard all frames until next header
-	unsigned char buf[TAVGTR_MAXSIZE];
+	unsigned char buf[TES_AVGTR_MAXSIZE];
 };
 
-static zloop_timer_fn  s_task_avgtr_timeout_hn;
+static zloop_timer_fn  s_timeout_hn;
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
@@ -32,7 +23,7 @@ static zloop_timer_fn  s_task_avgtr_timeout_hn;
  * timeout error to the client.
  */
 static int
-s_task_avgtr_timeout_hn (zloop_t* loop, int timer_id, void* self_)
+s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -45,8 +36,8 @@ s_task_avgtr_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 	/* Send a timeout error to the client. */
 	logmsg (0, LOG_INFO,
 		"Average trace timed out");
-	zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-		TAVGTR_REQ_TOUT);
+	zsock_send (self->frontend, TES_AVGTR_REP_PIC,
+		TES_AVGTR_REQ_ETOUT, "", 0);
 
 	return 0;
 }
@@ -64,7 +55,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	uint32_t timeout;    
 
-	int rc = zsock_recv (reader, TAVGTR_REQ_PIC, &timeout);
+	int rc = zsock_recv (reader, TES_AVGTR_REQ_PIC, &timeout);
 	if (rc == -1)
 	{ /* would also return -1 if picture contained a pointer (p) or
 	   * a null frame (z) but message received did not match this
@@ -78,8 +69,8 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
-		zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-			TAVGTR_REQ_INV);
+		zsock_send (self->frontend, TES_AVGTR_REP_PIC,
+			TES_AVGTR_REQ_EINV, "", 0);
 		return 0;
 	}
 
@@ -88,16 +79,14 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		timeout);
 
 	/* Register a timer */
-	int tid = zloop_timer (loop, 1000 * timeout, 1,
-		s_task_avgtr_timeout_hn, self);
+	int tid = zloop_timer (loop, 1000 * timeout, 1, s_timeout_hn, self);
 	if (tid == -1)
 	{
 		logmsg (errno, LOG_ERR,
 			"Could not set a timer");
 		return TASK_ERROR;
 	}
-	struct s_task_avgtr_data_t* trace =
-		(struct s_task_avgtr_data_t*) self->data;
+	struct s_data_t* trace = (struct s_data_t*) self->data;
 	dbg_assert ( ! trace->recording );
 	trace->timer = tid;
 
@@ -123,8 +112,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! tespkt_is_trace_avg (pkt) )
 		return 0;
 
-	struct s_task_avgtr_data_t* trace =
-		(struct s_task_avgtr_data_t*) self->data;
+	struct s_data_t* trace = (struct s_data_t*) self->data;
 
 	if ( ! trace->recording && tespkt_is_header (pkt) )
 	{ /* start the trace */
@@ -143,7 +131,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		logmsg (0, LOG_DEBUG,
 			"Bad frame, error is %d", err);
 #endif
-		rep = TAVGTR_REQ_ERR;
+		rep = TES_AVGTR_REQ_EERR;
 		goto done;
 	}
 	
@@ -158,21 +146,21 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				"Mismatch in protocol sequence after byte %hu",
 				trace->cur_size);
 #endif
-			rep = TAVGTR_REQ_ERR;
+			rep = TES_AVGTR_REQ_EERR;
 			goto done;
 		}
 	}
 
 	/* Append the data, check current size. */
 	uint16_t paylen = flen - TES_HDR_LEN;
-	dbg_assert (trace->cur_size <= TAVGTR_MAXSIZE - paylen);
+	dbg_assert (trace->cur_size <= TES_AVGTR_MAXSIZE - paylen);
 	memcpy (trace->buf + trace->cur_size,
 		(char*)pkt + TES_HDR_LEN, paylen);
 
 	trace->cur_size += paylen;
 	if (trace->cur_size == trace->size)
 	{
-		rep = TAVGTR_REQ_OK;
+		rep = TES_AVGTR_REQ_OK;
 		goto done;
 	}
 
@@ -185,17 +173,17 @@ done:
 	/* Send the trace. */
 	switch (rep)
 	{
-		case TAVGTR_REQ_ERR:
+		case TES_AVGTR_REQ_EERR:
 			logmsg (0, LOG_INFO,
 				"Discarded average trace");
-			zsock_send (self->frontend, TAVGTR_REP_PIC_FAIL,
-				TAVGTR_REQ_ERR);
+			zsock_send (self->frontend, TES_AVGTR_REP_PIC,
+				TES_AVGTR_REQ_EERR, "", 0);
 			break;
-		case TAVGTR_REQ_OK:
+		case TES_AVGTR_REQ_OK:
 			logmsg (0, LOG_INFO,
 				"Average trace complete");
-			zsock_send (self->frontend, TAVGTR_REP_PIC_OK,
-				TAVGTR_REQ_OK, &trace->buf,
+			zsock_send (self->frontend, TES_AVGTR_REP_PIC,
+				TES_AVGTR_REQ_OK, &trace->buf,
 				trace->size);
 			break;
 		default:
@@ -217,7 +205,7 @@ task_avgtr_init (task_t* self)
 {
 	assert (self != NULL);
 
-	static struct s_task_avgtr_data_t trace;
+	static struct s_data_t trace;
 
 	self->data = &trace;
 	return 0;

@@ -4,6 +4,7 @@
  */
 
 #include "hdf5conv.h"
+#include "api.h"
 #include "daemon_ng.h"
 
 #ifdef linux
@@ -21,7 +22,7 @@
 #define INIT_TIMEOUT 5 /* in seconds */
 #define ROOT_GROUP  "capture"     /* relative to file */
 #define OVRWT_GROUP "overwritten" /* relative to file */
-#define NODELETE_TMP /* TO DO */
+#define NODELETE_TMP
 #define DATATYPE H5T_NATIVE_UINT_LEAST8
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */
@@ -110,7 +111,8 @@ s_get_grp (hid_t lid, const char* group, bool create)
  * error.
  */
 static hid_t
-s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid, const char* bkpgroup)
+s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid,
+	const char* bkpgroup)
 {
 	assert (group != NULL);
 	assert (lid > 0);
@@ -204,7 +206,7 @@ s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid, const char* bkpgroup)
  * On success buffer may be NULL if dataset should be empty, in
  * which case length is ensured to be 0. Otherwise length is ensured
  * to be positive and offset---to be non-negative.
- * Returns 0 on success, -1 on error.
+ * Returns TES_CAP_REQ_*
  */
 static int
 s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
@@ -217,7 +219,7 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 	assert (ddesc->buffer == NULL);
 	
 	if (ddesc->length == 0)
-		return 0;
+		return TES_CAP_REQ_OK;
 
 	/* Open the data file. */
 	int fd = open (ddesc->filename, O_RDONLY);
@@ -226,7 +228,7 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 		logmsg (errno, LOG_ERR,
 			"Could not open data file %s",
 			ddesc->filename);
-		return -1;
+		return TES_CAP_REQ_EFAIL;
 	}
 
 	/* Get its size. */
@@ -237,7 +239,7 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 			"Could not seek to end of file %s",
 			ddesc->filename);
 		close (fd);
-		return -1;
+		return TES_CAP_REQ_EFAIL;
 	}
 	
 	/* Check offset. */
@@ -247,7 +249,7 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 	{ /* file empty or abs(offset) too large */
 		ddesc->length = 0;
 		close (fd);
-		return 0;
+		return TES_CAP_REQ_OK;
 	}
 
 	assert (ddesc->offset >= 0);
@@ -268,19 +270,19 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 		logmsg (errno, LOG_ERR,
 			"Could not mmap file %s",
 			ddesc->filename);
-		return -1;
+		return TES_CAP_REQ_EFAIL;
 	}
 
 	/* Store the address. Remember to add offset when reading and
 	 * unmap offset+length (though unmapping is not necessary). */
 	ddesc->buffer = data;
 
-	return 0;
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Write data given in ddesc as a dataset inside group gid.
- * Returns 0 on success, -1 on error.
+ * Returns TES_CAP_REQ_*
  */
 static int
 s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
@@ -306,7 +308,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 	{
 		logmsg (0, LOG_ERR,
 			"Could not create dataspace");
-		return -1;
+		return TES_CAP_REQ_ECONV;
 	}
 	hid_t dset = H5Dcreate (gid, ddesc->dsetname, DATATYPE,
 		dspace, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
@@ -316,7 +318,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 			"Could not create dataset %s",
 			ddesc->dsetname);
 		H5Sclose (dspace);
-		return -1;
+		return TES_CAP_REQ_ECONV;
 	}
 
 	/* Check if dataset is empty. */
@@ -324,7 +326,7 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 	{
 		H5Dclose (dset);
 		H5Sclose (dspace);
-		return 0;
+		return TES_CAP_REQ_OK;
 	}
 
 	/* Write the data. */
@@ -342,14 +344,14 @@ s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 	H5Dclose (dset);
 	H5Sclose (dspace);
 
-	return (err < 0 ? -1 : 0);
+	return (err < 0 ? TES_CAP_REQ_ECONV : TES_CAP_REQ_OK);
 }
 
 /*
  * Open the hdf5 file, create the groups.
  * Open all dataset files and mmap them (calls s_map_file).
  * On success, save the file and dataset group ids in creq_data_.
- * Returns 0 on success, -1 on error.
+ * Returns TES_CAP_REQ_*
  */
 static int
 s_hdf5_init (void* creq_data_)
@@ -359,7 +361,7 @@ s_hdf5_init (void* creq_data_)
 	struct s_creq_data_t* creq_data =
 		(struct s_creq_data_t*)creq_data_;
 	struct hdf5_conv_req_t* creq = creq_data->creq;
-	bool ovrwt = (creq->ovrwtmode == HDF5_OVRWT_FILE);
+	bool ovrwt = (creq->ovrwtmode == TES_H5_OVRWT_FILE);
 
 	/* Check if hdf5 file exists. */
 	hid_t fid;
@@ -382,7 +384,7 @@ s_hdf5_init (void* creq_data_)
 				logmsg (errno, LOG_ERR,
 					"Cannot delete hdf5 file %s",
 					creq->filename);
-				return -1;
+				return TES_CAP_REQ_EFAIL;
 			}
 		}
 		logmsg (0, LOG_DEBUG,
@@ -398,7 +400,7 @@ s_hdf5_init (void* creq_data_)
 			"Could not %s hdf5 file %s",
 			(fok == 0 && ! ovrwt) ? "open" : "create",
 			creq->filename);
-		return -1;
+		return TES_CAP_REQ_EFAIL;
 	}
 
 	/* Open the root group. */
@@ -406,13 +408,13 @@ s_hdf5_init (void* creq_data_)
 	if (root_gid < 0)
 	{
 		H5Fclose (fid);
-		return -1;
+		return TES_CAP_REQ_EFAIL;
 	}
 	assert (root_gid > 0);
 
 	hid_t ovrwt_gid = -1;
 	char bkpgroup[PATH_MAX] = {0};
-	if (creq->ovrwtmode == HDF5_OVRWT_RELINK)
+	if (creq->ovrwtmode == TES_H5_OVRWT_RELINK)
 	{
 		/* Open the overwrite group. */
 		ovrwt_gid = s_get_grp (fid, OVRWT_GROUP, 1);
@@ -420,7 +422,7 @@ s_hdf5_init (void* creq_data_)
 		{
 			H5Gclose (root_gid);
 			H5Fclose (fid);
-			return -1;
+			return TES_CAP_REQ_EFAIL;
 		}
 		assert (ovrwt_gid > 0);
 
@@ -428,12 +430,11 @@ s_hdf5_init (void* creq_data_)
 		time_t tnow = time (NULL);
 		if (tnow == (time_t)-1)
 		{
-			logmsg (0, LOG_ERR,
-				"Could not get current time");
+			logmsg (0, LOG_ERR, "Could not get current time");
 			H5Gclose (root_gid);
 			H5Gclose (ovrwt_gid);
 			H5Fclose (fid);
-			return -1;
+			return TES_CAP_REQ_EFAIL;
 		}
 		int rc = snprintf (bkpgroup, PATH_MAX, "%s_%lu",
 			creq->group, tnow);
@@ -448,7 +449,7 @@ s_hdf5_init (void* creq_data_)
 			H5Gclose (root_gid);
 			H5Gclose (ovrwt_gid);
 			H5Fclose (fid);
-			return -1;
+			return TES_CAP_REQ_EFAIL;
 		}
 	}
 
@@ -462,7 +463,7 @@ s_hdf5_init (void* creq_data_)
 	if (client_gid <= 0)
 	{
 		H5Fclose (fid);
-		return -1;
+		return (client_gid == 0 ? TES_CAP_REQ_EABORT : TES_CAP_REQ_EFAIL);
 	}
 	assert (client_gid > 0);
 
@@ -474,23 +475,23 @@ s_hdf5_init (void* creq_data_)
 			continue;
 
 		int rc = s_map_file (ddesc, client_gid);
-		if (rc == -1)
+		if (rc != TES_CAP_REQ_OK)
 		{
 			H5Gclose (client_gid);
 			H5Fclose (fid);
-			return -1;
+			return rc;
 		}
 	}
 
 	/* Save the file and group id. */
 	creq_data->file_id = fid;
 	creq_data->group_id = client_gid;
-	return 0;
+	return TES_CAP_REQ_OK;
 }
 
 /*
  * Create all datasets (calls s_create_dset).
- * Returns 0 on success, -1 on error.
+ * Returns TES_CAP_REQ_*
  */
 static int
 s_hdf5_write (void* creq_data_)
@@ -507,7 +508,7 @@ s_hdf5_write (void* creq_data_)
 		struct hdf5_dset_desc_t* ddesc =
 			&creq_data->creq->dsets[d];
 		int rc = s_create_dset (ddesc, creq_data->group_id);
-		if (rc == -1)
+		if (rc != TES_CAP_REQ_OK)
 			break;
 	}
 
@@ -535,7 +536,7 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 		creq->num_dsets == 0)
 	{
 		logmsg (0, LOG_ERR, "Invalid request");
-		return -1;
+		return TES_CAP_REQ_EINV;
 	}
 	for (int d = 0; d < creq->num_dsets; d++)
 	{
@@ -552,7 +553,7 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 					 ddesc->length < 0 ) ) )
 		{
 			logmsg (0, LOG_ERR, "Invalid request");
-			return -1;
+			return TES_CAP_REQ_EINV;
 		}
 	}
 
@@ -564,32 +565,45 @@ hdf5_conv (struct hdf5_conv_req_t* creq)
 
 	/* If operating in asynchronous mode, fork here before opening
 	 * the files and signal parent before starting copy. */
-	int rc = -1;
+	int status = TES_CAP_REQ_OK;
 	if (creq->async)
 	{
-		rc = fork_and_run (s_hdf5_init, s_hdf5_write,
+		int rc = fork_and_run (s_hdf5_init, s_hdf5_write,
 			&creq_data, INIT_TIMEOUT);
+		if (rc == -1)
+			status = TES_CAP_REQ_EFAIL;
 	}
 	else
 	{
-		rc = s_hdf5_init (&creq_data);
-		if (rc == 0)
-			rc = s_hdf5_write (&creq_data);
+		status = s_hdf5_init (&creq_data);
+		if (status == TES_CAP_REQ_OK)
+			status = s_hdf5_write (&creq_data);
 	}
 
-	/* Unmap data. */
+	/* Unmap data and unlink files. */
 	for (int d = 0; d < creq->num_dsets; d++)
 	{
 		struct hdf5_dset_desc_t* ddesc = &creq->dsets[d];
-		if (ddesc->filename != NULL)
-		{ /* mmapped by us */
-			if (ddesc->buffer != NULL)
-			{
-				munmap (ddesc->buffer,
-					ddesc->offset + ddesc->length);
-				ddesc->buffer = NULL;
-			}
+		if (ddesc->filename == NULL)
+			continue;
+
+		/* mmapped by us */
+		if (ddesc->buffer != NULL)
+		{
+			munmap (ddesc->buffer,
+				ddesc->offset + ddesc->length);
+			ddesc->buffer = NULL;
 		}
+#ifndef NODELETE_TMP
+		if (status == TES_CAP_REQ_OK)
+		{
+			int rc = unlink (ddesc->filename)
+			if (rc == -1)
+				status = TES_CAP_REQ_EFIN;
+		}
+#endif
 	}
-	return rc;
+
+	/* Unlink files. */
+	return status;
 }

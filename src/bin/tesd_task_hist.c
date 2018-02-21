@@ -1,15 +1,9 @@
 #include "tesd_tasks.h"
 
-#ifndef TES_MCASIZE_BUG
-#define THIST_MAXSIZE 65528U // highest 16-bit number multiple of 8
-#else
-#define THIST_MAXSIZE 65576U
-#endif
-
 /*
  * Data for currently built histogram.
  */
-struct s_task_hist_data_t
+struct s_data_t
 {
 #ifdef ENABLE_FULL_DEBUG
 	uint64_t      published; // number of published histograms
@@ -25,7 +19,7 @@ struct s_task_hist_data_t
 	uint32_t      cur_size;  // number of received bytes so far
 #endif
 	bool          discard;   // discard all frames until next header
-	unsigned char buf[THIST_MAXSIZE];
+	unsigned char buf[TES_HIST_MAXSIZE];
 };
 
 /* -------------------------------------------------------------- */
@@ -50,8 +44,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! tespkt_is_mca (pkt) )
 		return 0;
 
-	struct s_task_hist_data_t* hist =
-		(struct s_task_hist_data_t*) self->data;
+	struct s_data_t* hist = (struct s_data_t*) self->data;
 
 	if ( ! tespkt_is_header (pkt) )
 	{
@@ -119,7 +112,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	/* Copy frame, check current size. */
 	uint16_t paylen = flen - TES_HDR_LEN;
-	dbg_assert (hist->cur_size <= THIST_MAXSIZE - paylen);
+	dbg_assert (hist->cur_size <= TES_HIST_MAXSIZE - paylen);
 	memcpy (hist->buf + hist->cur_size,
 		(char*)pkt + TES_HDR_LEN, paylen);
 
@@ -168,7 +161,7 @@ task_hist_init (task_t* self)
 {
 	assert (self != NULL);
 
-	static struct s_task_hist_data_t hist;
+	static struct s_data_t hist;
 	hist.discard = 1;
 
 	self->data = &hist;

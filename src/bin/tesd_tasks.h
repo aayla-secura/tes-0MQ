@@ -10,6 +10,7 @@
 #define __TESD_TASKS_H__INCLUDED__
 
 #include "tesd.h"
+#include "api.h"
 #include "net/tesif_reader.h"
 
 /* From netmap_user.h */
@@ -100,13 +101,13 @@ int  task_deactivate (task_t* self);
 
 /* ------------------------ TASK HANDLERS ----------------------- */
 
-/* Save to file */
-zloop_reader_fn task_save_req_hn;
-task_pkt_fn     task_save_pkt_hn;
-task_data_fn    task_save_init;
-task_data_fn    task_save_fin;
+/* Capture to file */
+zloop_reader_fn task_cap_req_hn;
+task_pkt_fn     task_cap_pkt_hn;
+task_data_fn    task_cap_init;
+task_data_fn    task_cap_fin;
 
-/* Average trace */
+/* Get average trace */
 zloop_reader_fn task_avgtr_req_hn;
 task_pkt_fn     task_avgtr_pkt_hn;
 task_data_fn    task_avgtr_init;
