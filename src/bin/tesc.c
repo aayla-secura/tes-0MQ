@@ -296,7 +296,7 @@ s_local_save_hist (const char* server, const char* filename,
 			case 'Z':
 			case 'F':
 				break;
-			case 'c':
+			case 'n':
 				num_hist = strtoul (optarg, &buf, 10);
 				if (strlen (buf) || num_hist == 0)
 				{
