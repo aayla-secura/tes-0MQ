@@ -565,7 +565,6 @@ static void
 s_task_save_close (struct s_task_save_data_t* sjob)
 {
 	assert (sjob != NULL);
-	assert (sjob->basefname != NULL);
 
 	/* Close the data files. */
 	for (int s = 0; s < TSAVE_NUM_DSETS ; s++)
