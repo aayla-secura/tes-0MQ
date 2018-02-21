@@ -1,8 +1,3 @@
-/*
- * TO DO:
- *  - delete data files after conversion
- */
-
 #include "hdf5conv.h"
 #include "api.h"
 #include "daemon_ng.h"
@@ -22,7 +17,7 @@
 #define INIT_TIMEOUT 5 /* in seconds */
 #define ROOT_GROUP  "capture"     /* relative to file */
 #define OVRWT_GROUP "overwritten" /* relative to file */
-#define NODELETE_TMP
+#define NODELETE_TMP /* don't delete data files */
 #define DATATYPE H5T_NATIVE_UINT_LEAST8
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */

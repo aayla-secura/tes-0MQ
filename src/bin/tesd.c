@@ -63,7 +63,9 @@
  * -----------------------------------------------------------------
  * ----------------------------- TO DO -----------------------------
  * -----------------------------------------------------------------
- * - chroot and drop privileges.
+ * - print statistics from another thread?
+ * - print statistics in color when in foreground
+ * - print statistics one second after receiving a SIGHUP
  */
 
 #include "tesd.h"
@@ -355,7 +357,7 @@ s_print_stats (zloop_t* loop, int timer_id, void* stats_)
 	stats->latest.skipped  = 0;
 
 #if 0
-	if ( ! is_daemon () )
+	if ( ! be_daemon () )
 	{
 		fflush (stdout);
 		fflush (stderr);
@@ -561,8 +563,8 @@ main (int argc, char **argv)
 	int rc;
 
 	/* Process command-line options. */
-	bool is_daemon = 1;
-	bool is_verbose = 0;
+	bool be_daemon = 1;
+	bool be_verbose = 0;
 	gid_t run_as_gid = 0;
 	uid_t run_as_uid = 0;
 	int opt;
@@ -598,10 +600,10 @@ main (int argc, char **argv)
 					s_usage (argv[0]);
 				break;
 			case 'f':
-				is_daemon = 0;
+				be_daemon = 0;
 				break;
 			case 'v':
-				is_verbose = 1;
+				be_verbose = 1;
 				break;
 			case 'h':
 			case '?':
@@ -620,7 +622,7 @@ main (int argc, char **argv)
 	{
 		sprintf (ifname_req, TES_IFNAME);
 	}
-	if (stat_period == -1 && ! is_daemon)
+	if (stat_period == -1 && ! be_daemon)
 	{
 		stat_period = UPDATE_INTERVAL;
 	}
@@ -628,8 +630,8 @@ main (int argc, char **argv)
 	struct data_t data = {0};
 	data.ifname_req = ifname_req;
 
-	set_verbose (is_verbose);
-	if (is_daemon)
+	set_verbose (be_verbose);
+	if (be_daemon)
 	{
 		/* Go into background. */
 		rc = daemonize (pidfile, s_init, &data, INIT_TOUT);
