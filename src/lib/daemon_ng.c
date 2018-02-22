@@ -293,8 +293,8 @@ logmsg (int errnum, int priority, const char* format, ...)
 	{
 		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
 		/* Thread-safe version of strerror. */
-#if (_POSIX_C_SOURCE >= 200112L) && !  _GNU_SOURCE
-		/* POSIX compliant, saves it in msg */
+#if ((_POSIX_C_SOURCE >= 200112L) && !  _GNU_SOURCE) || ! linux
+		/* POSIX compliant, returns int, saves it in msg */
 		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
 #else
 		/* GNU version, returns it and MAY save it in msg */
