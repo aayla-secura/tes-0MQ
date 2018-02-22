@@ -1,5 +1,7 @@
 #define _WITH_GETLINE
-#define _GNU_SOURCE
+#ifdef linux
+#  define _GNU_SOURCE /* strchrnul */
+#endif
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
