@@ -52,7 +52,8 @@
 #  define dbg_assert(...)
 #endif
 
-#include "net/tespkt.h"
+#include "net/tespkt.h" // defines TES_MCASIZE_BUG checked by api.h
+#include "api.h"
 
 #ifndef PATH_MAX
 #  ifdef MAXPATHLEN

@@ -10,7 +10,6 @@
 #define __TESD_TASKS_H__INCLUDED__
 
 #include "tesd.h"
-#include "api.h"
 #include "net/tesif_reader.h"
 
 /* From netmap_user.h */

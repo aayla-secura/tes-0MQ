@@ -54,6 +54,15 @@
 #include <assert.h>
 #endif
 
+#define TES_MCASIZE_BUG /* overflow bug, last_bin is too large */
+#ifndef TES_MCASIZE_BUG
+#  define TES_HIST_MAXSIZE 65528U // highest 16-bit number multiple of 8
+#else
+#  define TES_HIST_MAXSIZE 65576U
+#endif
+
+#define TES_AVGTR_MAXSIZE 65528U // highest 16-bit number multiple of 8
+
 typedef struct tespkt tespkt;
 
 /* -------------------------------------------------------------- */
