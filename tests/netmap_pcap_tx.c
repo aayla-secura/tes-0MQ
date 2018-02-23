@@ -14,10 +14,8 @@
 #define NM_IFNAME "vale0:vi0"
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
-#define NUM_LOOPS INT_MAX
-
-#ifndef VERBOSE
-#  define QUIET
+#ifndef NUM_LOOPS
+#  define NUM_LOOPS INT_MAX
 #endif
 
 int interrupted;
@@ -185,14 +183,14 @@ main (int argc, char** argv)
 		rc = tespkt_is_valid (pkt);
 		if (rc)
 		{
-#ifndef QUIET
-			fprintf (stderr, "Packet no. %d: ", p);
+#ifdef VERBOSE
+			fprintf (stderr, "Packet no. %lu: ", p);
 			tespkt_perror (stderr, rc);
 			dump_pkt ((void*)pkt, TES_HDR_LEN + 8);
 #endif
 			invalid++;
 		}
-#ifndef QUIET
+#ifdef VERBOSE
 		else
 		{
 			pkt_pretty_print (pkt, stdout, stderr);
@@ -250,13 +248,6 @@ main (int argc, char** argv)
 			if (tespkt_is_header (pkt))
 			{
 				assert (ptype != NULL);
-#ifndef QUIET
-				off_t pos = lseek (capfd, 0, SEEK_CUR);
-				printf ("Packet no. %lu (ends at offset 0x%lx): "
-					"new event stream for type %s, "
-					"previous count was %hu\n",
-					p, pos, ptype, *prev_n);
-#endif
 				*prev_n = 0;
 			}
 			(*prev_n)++;

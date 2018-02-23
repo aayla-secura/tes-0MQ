@@ -1,3 +1,8 @@
+/*
+ * TO FIX:
+ * MCA header not correctly constructed?
+ */
+
 #define TESPKT_DEBUG
 #include "net/tespkt.h"
 #include <stdio.h>
@@ -18,14 +23,16 @@
 #define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
 #define SRC_HW_ADDR "5a:ce:be:b7:b2:91"
 
-#define NUM_LOOPS INT_MAX
+#ifndef NUM_LOOPS
+#  define NUM_LOOPS INT_MAX
+#endif
 #ifndef WAIT_EVERY
 #  define WAIT_EVERY 50 /* will poll for 1ms every that many packets */
 #endif
 #ifndef NM_IFNAME
 #  define NM_IFNAME "vale0:vi0"
 #endif
-#define DUMP_ROW_LEN  8 /* how many bytes per row when dumping pkt */
+#define DUMP_ROW_LEN 16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN  5 /* how many digits to use for the offset */
 
 #ifndef PATH_MAX
@@ -34,10 +41,6 @@
 #  else
 #    define PATH_MAX 4096
 #  endif
-#endif
-
-#ifndef VERBOSE
-#  define QUIET
 #endif
 
 #define TESPKT_LEN
@@ -159,10 +162,11 @@ s_update_stats (tespkt* pkt, struct s_stats_t* stats)
 		int rc = tespkt_is_valid (pkt);
 		if (rc)
 		{
-#ifndef QUIET
-			fprintf (stderr, "Packet no. %d: ", stats->pkts);
+#ifdef VERBOSE
+			fprintf (stderr, "Packet no. %lu: ", stats->pkts);
 			tespkt_perror (stderr, rc);
-			s_dump_pkt ((void*)pkt, TES_HDR_LEN + 8);
+			s_dump_pkt ((void*)pkt, TES_HDR_LEN +
+				(tespkt_is_mca (pkt) && tespkt_is_header (pkt) ? 40 : 8));
 #endif
 			stats->invalid++;
 		}
