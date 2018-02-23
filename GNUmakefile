@@ -30,7 +30,7 @@ else  # unknown OS
 endif
 endif # end HDF5LIB == ""
 
-all: test main
+all: tests main
 
 ##################################################
 
@@ -61,7 +61,7 @@ $(LIB_DEST) $(BIN_DEST):
 
 ##################################################
 
-test: $(TEST_PROGS:%=$(BIN_DEST)/%)
+tests: $(TEST_PROGS:%=$(BIN_DEST)/%)
 
 # name of program should include any needed libraries
 $(BIN_DEST)/%: $(TEST_SRC)/%.o \
@@ -92,4 +92,4 @@ clean:
 		$(BIN_DEST)/* $(LIB_DEST)/*
 
 .DEFAULT_GOAL := main
-.PHONY: all main libs test clean install
+.PHONY: all main libs tests clean install
