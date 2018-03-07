@@ -487,7 +487,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	/* Write pid to a file. */
 	if (pidfile)
 	{
-		int fd = open (pidfile, O_CREAT | O_WRONLY,
+		int fd = open (pidfile, O_CREAT | O_TRUNC | O_WRONLY,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 		if (fd == -1)
 		{
