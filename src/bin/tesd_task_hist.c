@@ -66,38 +66,26 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	zstr_free (&hexstr);
 #endif
 
+	struct s_data_t* hist = (struct s_data_t*) self->data;
 	char* msgstr = zmsg_popstr (msg);
 	zmsg_destroy (&msg);
-	if (strlen(msgstr) == 0)
+	char stat = msgstr[0];
+	zstr_free (&msgstr);
+	if (stat == 0)
 	{
-		logmsg (0, LOG_DEBUG,
-			"Got an empty message");
-		zstr_free (&msgstr);
-		return 0;
-	}
-
-	struct s_data_t* hist = (struct s_data_t*) self->data;
-	if (msgstr[0] == 0)
-	{
-		logmsg (0, LOG_DEBUG,
-			"Last unsubscription with prefix %s", msgstr + 1);
 		dbg_assert (hist->nsubs > 0);
 		hist->nsubs--;
 	}
-	else if (msgstr[0] == 1)
+	else if (stat == 1)
 	{
-		logmsg (0, LOG_DEBUG,
-			"New subscription with prefix %s", msgstr + 1);
 		hist->nsubs++;
 	}
 	else
 	{
 		logmsg (0, LOG_DEBUG,
 			"Got a spurious message");
-		zstr_free (&msgstr);
 		return 0;
 	}
-	zstr_free (&msgstr);
 
 	if (hist->nsubs == 1)
 	{
