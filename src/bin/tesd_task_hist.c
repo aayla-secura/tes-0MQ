@@ -18,6 +18,7 @@ struct s_data_t
 	uint32_t      size;      // size of histogram including header
 	uint32_t      cur_size;  // number of received bytes so far
 #endif
+	uint32_t      nsubs;     // no. of subscribers at any time
 	bool          discard;   // discard all frames until next header
 	unsigned char buf[TES_HIST_MAXSIZE];
 };
@@ -25,6 +26,84 @@ struct s_data_t
 /* -------------------------------------------------------------- */
 /* ----------------------------- API ---------------------------- */
 /* -------------------------------------------------------------- */
+
+/*
+ * XPUB will receive a message of the form "\x01<prefix>" the first time
+ * a client subscribes to the port with a prefix <prefix>, and will
+ * receive a message of the form "\x00<prefix>" when the last client
+ * subscribed to <prefix> unsubscribes.
+ * It will also receive any message sent to the port (by an ill-behaved
+ * client) that does not begin with "\x00" or "\x01", these should be
+ * ignored.
+ */
+int
+task_hist_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
+{
+	dbg_assert (self_ != NULL);
+
+	task_t* self = (task_t*) self_;
+
+	zmsg_t* msg = zmsg_recv (reader);
+	if (msg == NULL)
+	{ /* this shouldn't happen */
+		logmsg (0, LOG_DEBUG, "Receive interrupted");
+		return TASK_ERROR;
+	}
+
+	if (zmsg_size (msg) != 1)
+	{
+		logmsg (0, LOG_DEBUG,
+			"Got a spurious %lu-frame message", zmsg_size(msg));
+		zmsg_destroy (&msg);
+		return 0;
+	}
+	char* msgstr = zmsg_popstr (msg);
+	zmsg_destroy (&msg);
+	if (strlen(msgstr) == 0)
+	{
+		logmsg (0, LOG_DEBUG,
+			"Got an empty message");
+		zstr_free (&msgstr);
+		return 0;
+	}
+
+	char stat = msgstr[0];
+	zstr_free (&msgstr);
+	struct s_data_t* hist = (struct s_data_t*) self->data;
+	if (stat == 0)
+	{
+		dbg_assert (hist->nsubs > 0);
+		hist->nsubs--;
+	}
+	else if (stat == 1)
+	{
+		dbg_assert (hist->nsubs > 0);
+		hist->nsubs++;
+	}
+	else
+	{
+		logmsg (0, LOG_DEBUG,
+			"Got a spurious message");
+		return 0;
+	}
+
+	if (hist->nsubs == 1)
+	{
+		logmsg (0, LOG_DEBUG,
+			"First subscription, activating");
+		/* Wakeup packet handler. */
+		task_activate (self);
+	}
+	else if (hist->nsubs == 0)
+	{
+		logmsg (0, LOG_DEBUG,
+			"Last unsubscription, deactivating");
+		/* Deactivate packet handler. */
+		task_deactivate (self);
+	}
+
+	return 0;
+}
 
 /*
  * Accumulates MCA frames and sends them out as soon as the last one
@@ -140,6 +219,9 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				hist->cur_size, rc);
 			return TASK_ERROR;
 		}
+		if (hist->published % 50)
+			logmsg (0, LOG_DEBUG,
+				"Published 50 more histogtams");
 #else
 		zmq_send (zsock_resolve (self->frontend),
 			hist->buf, hist->cur_size, 0);

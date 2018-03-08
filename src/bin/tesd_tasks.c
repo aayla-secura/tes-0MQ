@@ -66,20 +66,20 @@
  * TASK_ERROR.
  *
  * If the task wants to deactivate itself, it should call
- * s_task_deactivate. Alternatively it can return with TASK_SLEEP
+ * task_deactivate. Alternatively it can return with TASK_SLEEP
  * from within the pkt_handler. The task then won't be receiving
  * SIG_WAKEUP and its heads won't be synchronized with the real
  * heads.
  *
  * After talking to a client, if it needs to process packets again,
- * the task must reactivate via s_task_activate. Note that tasks
+ * the task must reactivate via task_activate. Note that tasks
  * which do not talk to clients have no way of reactivating
  * themselves, so their pkt_handler should never return with
  * TASK_SLEEP.
  *
  * The error, busy and active flags are handled by s_sig_hn and
  * s_task_shim. Tasks' handlers should only make use of
- * s_task_activate, s_task_deactivate and return codes (0,
+ * task_activate, task_deactivate and return codes (0,
  * TASK_SLEEP or TASK_ERROR).
  *
  * Tasks are defined in a static global array, see THE TASK LIST.
@@ -188,12 +188,12 @@ static task_t s_tasks[] = {
 		.automute       = 1,
 	},
 	{ // PUBLISH HIST
+		.client_handler = task_hist_sub_hn,
 		.pkt_handler    = task_hist_pkt_hn,
 		.data_init      = task_hist_init,
 		.data_fin       = task_hist_fin,
 		.front_addr     = "tcp://*:" TES_HIST_LPORT,
-		.front_type     = ZMQ_PUB,
-		.autoactivate   = 1,
+		.front_type     = ZMQ_XPUB,
 	}
 };
 
@@ -546,7 +546,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 			"Cannot set cpu affinity");
 	}
 	
-	/* Block signals in each tasks's thread */
+	/* Block signals in each tasks's thread. */
 	struct sigaction sa = {0};
 	sigfillset (&sa.sa_mask);
 	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
@@ -721,6 +721,7 @@ s_task_stop (task_t* self)
 	}
 
 	zsock_set_sndtimeo (self->shim, 0);
+	/* Task will exit after this. */
 	zsock_signal (self->shim, SIG_STOP);
 	/* Wait for the final signal from zactor's s_thread_shim.
 	 * zactor_destroy will send "$TERM" which will be ignored; not

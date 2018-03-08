@@ -119,6 +119,7 @@ task_data_fn    task_avgtr_init;
 task_data_fn    task_avgtr_fin;
 
 /* Publish histogram */
+zloop_reader_fn task_hist_sub_hn;
 task_pkt_fn     task_hist_pkt_hn;
 task_data_fn    task_hist_init;
 task_data_fn    task_hist_fin;
