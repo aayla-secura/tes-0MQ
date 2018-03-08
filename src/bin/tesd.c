@@ -699,6 +699,13 @@ main (int argc, char **argv)
 			"Cannot set cpu affinity");
 	}
 
+	/* Block all signals except SIGINT and SIGTERM */
+	struct sigaction sa = {0};
+	sigfillset (&sa.sa_mask);
+	sigdelset (&sa.sa_mask, SIGINT);
+	sigdelset (&sa.sa_mask, SIGTERM);
+	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
+
 	data.stat_period = stat_period;
 	rc = s_coordinator_body (&data);
 
