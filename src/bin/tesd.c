@@ -1,29 +1,29 @@
 /*
  * Also see README for the API.
  *
- *      -------           -------         -------    
- *      | REQ |           | SUB |         | REQ |           client
- *      -------           -------         -------    
- *         |                 |               |       
- *                                                     
- * --- save to file ---- histogram ---- average trace ------------
- *                                                     
- *         |                 |               |       
- *      -------           -------         -------     
- *      | REP |           | PUB |         | REP |     
- *      -------           -------         -------     
- *                                                    
- *      --------          --------        --------    
- *      | PAIR |          | PAIR |        | PAIR |    
- *      --------          --------        --------         server
- *         |                 |               |        
- *      ------------ task coordinator ------------
- *         |                 |               |        
- *      --------          --------        --------    
- *      | PAIR |          | PAIR |        | PAIR |            
- *      --------          --------        --------    
- * 
- * 
+ *  -------         -------        -------                          
+ *  | REQ |         | SUB |        | REQ |                    client
+ *  -------         -------        -------                          
+ *     |               |              |                             
+ *                                                                  
+ * save to file -- histogram -- average trace ----------------------
+ *                                                                  
+ *     |               |              |                             
+ *  -------         -------        -------                          
+ *  | REP |         | PUB |        | REP |                          
+ *  -------         -------        -------                          
+ *                                                                  
+ *  --------        --------       --------                         
+ *  | PAIR |        | PAIR |       | PAIR |                         
+ *  --------        --------       --------                   server
+ *     |               |              |                             
+ *  ----------- task coordinator -----------------------------------
+ *     |               |              |                             
+ *  --------        --------       --------                         
+ *  | PAIR |        | PAIR |       | PAIR |                         
+ *  --------        --------       --------                         
+ *
+ *
  *
  * -----------------------------------------------------------------
  * --------------------------- DEV NOTES ---------------------------
@@ -131,7 +131,7 @@ struct data_t
 
 static void s_usage (const char* self);
 static int s_prepare_if (const char* ifname_full);
-static int s_print_stats (zloop_t* loop, int timer_id, void* stats_);
+static int s_log_stats (zloop_t* loop, int timer_id, void* stats_);
 static int s_new_pkts_hn (zloop_t* loop,
 		zmq_pollitem_t* pitem, void* data_);
 static daemon_fn s_init;
@@ -295,10 +295,10 @@ s_prepare_if (const char* ifname_full)
 }
 
 /*
- * Print statistics (bandwidth, etc).
+ * Log statistics (bandwidth, etc).
  */
 static int
-s_print_stats (zloop_t* loop, int timer_id, void* stats_)
+s_log_stats (zloop_t* loop, int timer_id, void* stats_)
 {
 	dbg_assert (stats_ != NULL);
 	struct stats_t* stats = (struct stats_t*) stats_;
@@ -524,7 +524,7 @@ s_coordinator_body (void* data_)
 	{
 		/* Set the timer. */
 		rc = zloop_timer (loop, 1000 * data->stat_period, 0,
-			s_print_stats, &data->stats);
+			s_log_stats, &data->stats);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR, "Could not set a timer");
@@ -546,7 +546,7 @@ s_coordinator_body (void* data_)
 		logmsg (0, LOG_DEBUG, "Interrupted");
 	}
 
-	s_print_stats (NULL, 0, &data->stats);
+	s_log_stats (NULL, 0, &data->stats);
 
 cleanup:
 	tasks_destroy ();

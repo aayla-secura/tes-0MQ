@@ -17,10 +17,10 @@
 #define TES_CAP_REQ_PIC  "ss88111"
 #define TES_CAP_REP_PIC "18888888"
 
-#define TES_H5_OVRWT_NONE   0 /* error if /<RG>/<group> exists */
-#define TES_H5_OVRWT_RELINK 1 /* only move existing group to
-                              * /<RG>/overwritten/<group>_<timestamp> */
-#define TES_H5_OVRWT_FILE   2 /* overwrite entire hdf5 file */
+#define TES_H5_OVRWT_NONE   0 // error if /<RG>/<group> exists
+#define TES_H5_OVRWT_RELINK 1 // only move existing group to
+                              // /<RG>/overwritten/<group>_<timestamp>
+#define TES_H5_OVRWT_FILE   2 // overwrite entire hdf5 file
 
 /* Capture/conversion mode. Keep in mind status requests should default
  * to all 0 and require only a filename and group, and that setting

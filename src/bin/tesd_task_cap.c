@@ -12,7 +12,7 @@
 
 #define REQUIRE_FILENAME // for now we don't generate filename
 // #define SINGLE_FILE      // save all payloads (with
-//                                // headers) to single .dat file
+//                          // headers) to single .dat file
 // #define SAVE_HEADERS     // save headers in .*dat files
 // #define NO_BAD_FRAMES    // drop bad frames
 

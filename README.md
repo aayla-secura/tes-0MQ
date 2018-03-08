@@ -10,7 +10,7 @@ connected to the FPGA.
 
 The server accepts client requests on two [ØMQ](http://zeromq.org/) sockets. 
 
-## SAVE-TO-FILE REP INTERFACE
+## CAPTURE REP INTERFACE
 
 This interface accepts requests to save all received frames, until a given
 minimum number of tick frames and a given minimum number of events are seen, to
@@ -21,7 +21,7 @@ Messages are sent and read via `zsock_send` and `zsock_recv` respectively.
 These are simply multi-frame ØMQ messages, with each frame being a string
 representation of the value.
 
-Valid requests have a picture of "s881", replies have a picture of "18888888",
+Valid requests have a picture of "ss88111", replies have a picture of "18888888",
 as explained below.
 
 At the moment we only handle one request at a time. Will block until done.
@@ -144,7 +144,7 @@ receive the reply.
 This interface accepts requests to get the first average trace within
 a given time period.
 
-Valid requests have a picture of "4", replies have a picture of "1?".
+Valid requests have a picture of "4", replies have a picture of "1b".
 
 #### Message frames in a valid request
 

@@ -227,7 +227,7 @@ tasks_read (zloop_t* loop)
 		task_t* self = &s_tasks[t];
 		rc = zloop_reader (loop, zactor_sock(self->shim),
 			s_die_hn, NULL);
-		if (rc != 0)
+		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not register the zloop readers");
@@ -259,7 +259,7 @@ tasks_wakeup (void)
 		if (self->active && ! self->busy)
 		{
 			int rc = zsock_signal (self->shim, SIG_WAKEUP);
-			if (rc != 0)
+			if (rc == -1)
 			{
 				logmsg (errno, LOG_ERR,
 					"Could not signal task #%d", t);
@@ -568,7 +568,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 			goto cleanup;
 		}
 		rc = zsock_attach (self->frontend, self->front_addr, 1);
-		if (rc != 0)
+		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not bind the public interface");
