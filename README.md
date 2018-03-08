@@ -10,6 +10,41 @@ connected to the FPGA.
 
 The server accepts client requests on two [ØMQ](http://zeromq.org/) sockets. 
 
+## SERVER INFO REP INTERFACE
+
+This interface accepts requests to reply with and log statistics, such
+as bandwidth, missed packets etc.
+
+Valid requests have a picture of "4", replies have a picture of "1888888".
+
+#### Message frames in a valid request
+
+1. **Number of seconds**
+
+   How many seconds to accumulate stats for. It must be non-zero.
+
+   The value is read as an **unsigned** int32.
+
+#### Message frames in a reply
+
+1. **Error status**
+
+ * "0": OK, sending trace
+
+ * "1": invalid request
+
+2. **No. of processed packets**
+
+3. **No. of missed packets**
+
+4. **No. of invalid packets**
+
+5. **No. of ticks**
+
+6. **No. of MCA packets**
+
+7. **No. of trace packets**
+
 ## CAPTURE REP INTERFACE
 
 This interface accepts requests to save all received frames, until a given
@@ -21,8 +56,7 @@ Messages are sent and read via `zsock_send` and `zsock_recv` respectively.
 These are simply multi-frame ØMQ messages, with each frame being a string
 representation of the value.
 
-Valid requests have a picture of "ss88111", replies have a picture of "18888888",
-as explained below.
+Valid requests have a picture of "ss88111", replies have a picture of "18888888".
 
 At the moment we only handle one request at a time. Will block until done.
 

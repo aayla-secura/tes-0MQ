@@ -100,6 +100,12 @@ int  task_deactivate (task_t* self);
 
 /* ------------------------ TASK HANDLERS ----------------------- */
 
+/* Server info */
+zloop_reader_fn task_info_req_hn;
+task_pkt_fn     task_info_pkt_hn;
+task_data_fn    task_info_init;
+task_data_fn    task_info_fin;
+
 /* Capture to file */
 zloop_reader_fn task_cap_req_hn;
 task_pkt_fn     task_cap_pkt_hn;

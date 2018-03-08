@@ -2,6 +2,14 @@
 #ifndef __API_H__INCLUDED__
 #define __API_H__INCLUDED__
 
+/* Server info */
+#define TES_INFO_LPORT "55554"
+#define TES_INFO_REQ_OK    0 // accepted, reply/action follows
+#define TES_INFO_REQ_EINV  1 // malformed request
+
+#define TES_INFO_REQ_PIC       "4"
+#define TES_INFO_REP_PIC "1888888"
+
 /* Capture to file */
 #define TES_CAP_LPORT "55555"
 #define TES_CAP_REQ_OK     0 // accepted or all OK

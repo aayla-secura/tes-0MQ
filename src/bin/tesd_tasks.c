@@ -158,9 +158,18 @@ static int  s_task_dispatch (task_t* self, zloop_t* loop,
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
-#define NUM_TASKS 3
+#define NUM_TASKS 4
 static task_t s_tasks[] = {
-	{ // SAVE TO FILE 
+	{ // PACKET INFO
+		.client_handler = task_info_req_hn,
+		.pkt_handler    = task_info_pkt_hn,
+		.data_init      = task_info_init,
+		.data_fin       = task_info_fin,
+		.front_addr     = "tcp://*:" TES_INFO_LPORT,
+		.front_type     = ZMQ_REP,
+		.automute       = 1,
+	},
+	{ // CAPTURE
 		.client_handler = task_cap_req_hn,
 		.pkt_handler    = task_cap_pkt_hn,
 		.data_init      = task_cap_init,

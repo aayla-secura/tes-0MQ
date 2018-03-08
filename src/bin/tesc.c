@@ -28,6 +28,7 @@ static char s_prog_name[PATH_MAX];
 /* The options accepting arguments should be consistent across the
  * different subcommands, i.e. if one command has 'c' with no argument,
  * another one cannot have 'c:' with an argument */
+#define OPTS_S_INFO  "w:"
 #define OPTS_R_ALL   "m:w:t:e:rocCa"
 #define OPTS_L_TRACE "w:"
 #define OPTS_L_HIST  "n:"
@@ -36,13 +37,18 @@ static void
 s_usage (void)
 {
 	fprintf (stdout,
-		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server> -F <filename> "
+		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server>"
 		ANSI_FG_GREEN "<command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
 		"The format for <server> is <proto>://<host>[:<port>]\n"
 		"Port defaults to the default port for the selected task.\n"
 		"Allowed commands:\n\n"
+		ANSI_FG_GREEN "server_info" ANSI_RESET ": Gets packet rate statistics.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -w <seconds>       " ANSI_RESET "Number of seconds to accumulate for.\n"
+		              "                                     Default is 1.\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Remote filename.\n"
 		ANSI_FG_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
 		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
 		              "                       "            "Default is 0.\n"
@@ -58,11 +64,13 @@ s_usage (void)
 		"For status requests (-s) only measurement (-m) can be specified.\n\n"
 		ANSI_FG_GREEN "local_trace" ANSI_RESET ": Save average traces to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Local filename.\n"
 		ANSI_FG_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
 		              "                       "            "receive a timeout error if no trace arrives\n"
 		              "                       "            "in this period. Default is 5.\n\n"
 		ANSI_FG_GREEN "local_hist" ANSI_RESET ": Save histograms to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Local filename.\n"
 		ANSI_FG_RED   "    -n <count>         " ANSI_RESET "Save up to that many histograms.\n"
 		              "                       "            "Default is 1.\n",
 		s_prog_name
@@ -122,6 +130,113 @@ s_prompt (void)
 		printf ("Reply with 'y' or 'n': ");
 	} while (1);
 }
+/* --------------------- PACKET INFO -------------------- */
+
+static int
+s_server_info (const char* server, const char* filename,
+	int argc, char** argv)
+{
+	uint32_t timeout = 1;
+
+	/* Command-line */
+	char* buf = NULL;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	while (optind < argc)
+	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_S_INFO);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
+		switch (opt)
+		{
+			case 'Z':
+				break;
+			case 'w':
+				timeout = strtoul (optarg, &buf, 10);
+				if (strlen (buf))
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
+			default:
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+
+	/* Open the socket */
+	errno = 0;
+	zsock_t* sock = zsock_new_req (server);
+	if (sock == NULL)
+	{
+		if (errno)
+			perror ("Could not connect to the server");
+		else
+			fprintf (stderr, "Could not connect to the server\n");
+		return -1;
+	}
+
+	/* Send the request */
+	zsock_send (sock, TES_INFO_REQ_PIC, timeout);
+	puts ("Waiting for reply");
+
+	uint8_t rep;
+	uint64_t processed, missed, bad, ticks, mcas, traces;
+	int rc = zsock_recv (sock, TES_INFO_REP_PIC,
+		&rep,
+		&processed,
+		&missed,
+		&bad,
+		&ticks,
+		&mcas,
+		&traces); 
+	zsock_destroy (&sock);
+
+	if (rc == -1)
+		return -1;
+
+	/* Print reply */
+	printf ("\n");
+	switch (rep)
+	{
+		case TES_INFO_REQ_EINV:
+			printf ("Request was not understood\n");
+			break;
+		case TES_INFO_REQ_OK:
+			printf (
+				"processed packets: %lu\n"
+				"missed packets:    %lu\n"
+				"bad packets:       %lu\n"
+				"ticks packets:     %lu\n"
+				"mca packets:       %lu\n"
+				"trace packets:     %lu\n",
+				processed,
+				missed,
+				bad,
+				ticks,
+				mcas,
+				traces);
+			break;
+		default:
+			assert (0);
+	}
+
+	return 0;
+}
+
 
 /* -------------------- AVERAGE TRACE ------------------- */
 #define L_TRACE_MAX_SIZE 65528U
@@ -416,7 +531,7 @@ s_local_save_hist (const char* server, const char* filename,
 	return 0;
 }
 
-/* -------------------- SAVE-TO-FILE -------------------- */
+/* ------------------- REMOTE CAPTURE ------------------- */
 
 static int
 s_remote_save_all (const char* server, const char* filename,
@@ -639,7 +754,7 @@ main (int argc, char** argv)
 			printf ("Processing option at index %d\n", optind);
 #endif
 		int opt = getopt (argc, argv,
-			"+:h" OPTS_G OPTS_L_TRACE OPTS_L_HIST OPTS_R_ALL);
+			"+:h" OPTS_G OPTS_S_INFO OPTS_L_TRACE OPTS_L_HIST OPTS_R_ALL);
 		if (opt == -1)
 		{
 #ifdef GETOPT_DEBUG
@@ -681,12 +796,6 @@ main (int argc, char** argv)
 			"Type %s -h for help\n", s_prog_name);
 		exit (EXIT_FAILURE);
 	}
-	if (strlen (filename) == 0)
-	{
-		fprintf (stderr, "You must specify a filename.\n"
-			"Type %s -h for help\n", s_prog_name);
-		exit (EXIT_FAILURE);
-	}
 
 	/* Get command argument. */
 	if (strlen (cmd) == 0)
@@ -698,7 +807,15 @@ main (int argc, char** argv)
 	int rc = 0;
 	cmd_hn* callback = NULL;
 	char* defport = NULL;
-	if (strcmp (cmd, "remote_all") == 0)
+	bool require_filename = 1;
+
+	if (strcmp (cmd, "server_info") == 0)
+	{
+		callback = s_server_info;
+		defport = TES_INFO_LPORT;
+		require_filename = 0;
+	}
+	else if (strcmp (cmd, "remote_all") == 0)
 	{
 		callback = s_remote_save_all;
 		defport = TES_CAP_LPORT;
@@ -727,6 +844,13 @@ main (int argc, char** argv)
 		printf ("Port defaults to %s\n", defport);
 		snprintf (server + strlen (server),
 			sizeof (server) - strlen (server), ":%s", defport);
+	}
+
+	if (require_filename && (strlen (filename) == 0))
+	{
+		fprintf (stderr, "You must specify a filename.\n"
+				"Type %s -h for help\n", s_prog_name);
+		exit (EXIT_FAILURE);
 	}
 
 	rc = callback (server, filename, argc, argv);
