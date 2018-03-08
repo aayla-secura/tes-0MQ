@@ -57,6 +57,15 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		zmsg_destroy (&msg);
 		return 0;
 	}
+
+#ifdef ENABLE_FULL_DEBUG
+	zframe_t* f = zmsg_first (msg);
+	char* hexstr = zframe_strhex (f);
+	logmsg (0, LOG_DEBUG,
+		"Got message %s", hexstr);
+	zstr_free (&hexstr);
+#endif
+
 	char* msgstr = zmsg_popstr (msg);
 	zmsg_destroy (&msg);
 	if (strlen(msgstr) == 0)
@@ -67,25 +76,28 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-	char stat = msgstr[0];
-	zstr_free (&msgstr);
 	struct s_data_t* hist = (struct s_data_t*) self->data;
-	if (stat == 0)
+	if (msgstr[0] == 0)
 	{
+		logmsg (0, LOG_DEBUG,
+			"Last unsubscription with prefix %s", msgstr + 1);
 		dbg_assert (hist->nsubs > 0);
 		hist->nsubs--;
 	}
-	else if (stat == 1)
+	else if (msgstr[0] == 1)
 	{
-		dbg_assert (hist->nsubs > 0);
+		logmsg (0, LOG_DEBUG,
+			"New subscription with prefix %s", msgstr + 1);
 		hist->nsubs++;
 	}
 	else
 	{
 		logmsg (0, LOG_DEBUG,
 			"Got a spurious message");
+		zstr_free (&msgstr);
 		return 0;
 	}
+	zstr_free (&msgstr);
 
 	if (hist->nsubs == 1)
 	{
