@@ -378,27 +378,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	dbg_assert ( ! self->busy );
 	self->busy = 1;
 	
-#ifdef ENABLE_FULL_DEBUG
-	/* Catch bugs by receiving a message and asserting it's
-	 * a signal. zsock_wait discards messages until a signal
-	 * arrives. */
-	zmsg_t* msg = zmsg_recv (reader);
-	if (msg == NULL)
-	{
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return -1;
-	}
-	int sig = zmsg_signal (msg);
-	zmsg_destroy (&msg);
-	dbg_assert (sig >= 0);
-#else
 	int sig = zsock_wait (reader);
-	if (sig == -1)
-	{
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return -1;
-	}
-#endif
+	// if (sig == -1)
+	// { /* this shouldn't happen */
+	//   logmsg (0, LOG_DEBUG, "Receive interrupted");
+	//   return -1;
+	// }
+	
 	if (sig == SIG_STOP)
 	{
 		logmsg (0, LOG_DEBUG,
@@ -482,27 +468,12 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 {
 	dbg_assert (ignored == NULL);
 
-#ifdef ENABLE_FULL_DEBUG
-	/* Catch bugs by receiving a message and asserting it's
-	 * a signal. zsock_wait discards messages until a signal
-	 * arrives. */
-	zmsg_t* msg = zmsg_recv (reader);
-	if (msg == NULL)
-	{
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return -1;
-	}
-	int sig = zmsg_signal (msg);
-	zmsg_destroy (&msg);
-	dbg_assert (sig >= 0);
-#else
 	int sig = zsock_wait (reader);
-	if (sig == -1)
-	{
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return -1;
-	}
-#endif
+	// if (sig == -1)
+	// { /* this shouldn't happen */
+	//   logmsg (0, LOG_DEBUG, "Receive interrupted");
+	//   return -1;
+	// }
 
 	if (sig == SIG_DIED)
 	{
@@ -565,6 +536,11 @@ s_task_shim (zsock_t* pipe, void* self_)
 		logmsg ((rc > 0 ? rc : 0), LOG_WARNING,
 			"Cannot set cpu affinity");
 	}
+	
+	/* Block signals in each tasks's thread */
+	struct sigaction sa = {0};
+	sigfillset (&sa.sa_mask);
+	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
 	
 	zloop_t* loop = zloop_new ();
 	self->loop = loop;

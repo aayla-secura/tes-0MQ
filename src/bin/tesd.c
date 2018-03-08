@@ -73,7 +73,6 @@
 #include "net/tesif_manager.h"
 #include <sys/time.h>
 #include <syslog.h>
-#include <signal.h>
 #include <poll.h>
 #include <net/if.h> /* IFNAMSIZ */
 #include <sys/socket.h>
@@ -294,6 +293,7 @@ s_prepare_if (const char* ifname_full)
 
 	return 0;
 }
+
 /*
  * Print statistics (bandwidth, etc).
  */
