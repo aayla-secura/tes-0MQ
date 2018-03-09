@@ -24,6 +24,22 @@ struct s_data_t
 };
 
 /* -------------------------------------------------------------- */
+/* --------------------------- HELPERS -------------------------- */
+/* -------------------------------------------------------------- */
+
+static void
+s_clear (struct s_data_t* hist)
+{
+	dbg_assert (hist != NULL);
+
+	hist->nbins = 0;
+	hist->cur_nbins = 0;
+	hist->size = 0;
+	hist->cur_size = 0;
+	hist->discard = 0;
+}
+
+/* -------------------------------------------------------------- */
 /* ----------------------------- API ---------------------------- */
 /* -------------------------------------------------------------- */
 
@@ -92,6 +108,8 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		logmsg (0, LOG_DEBUG,
 			"First subscription, activating");
 		/* Wakeup packet handler. */
+		s_clear (hist);
+		hist->discard = 1;
 		task_activate (self);
 	}
 	else if (hist->nsubs == 0)
@@ -154,11 +172,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if (hist->discard)
 		{
 			/* Drop the previous one. */
-			hist->size = 0;
-			hist->nbins = 0;
-			hist->cur_size = 0;
-			hist->cur_nbins = 0;
-			hist->discard = 0;
+			s_clear (hist);
 #ifdef ENABLE_FULL_DEBUG
 			hist->dropped++;
 			logmsg (0, LOG_DEBUG,
@@ -227,10 +241,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			hist->buf, hist->cur_size, 0);
 #endif
 
-		hist->size = 0;
-		hist->nbins = 0;
-		hist->cur_size = 0;
-		hist->cur_nbins = 0;
+		s_clear (hist);
 		return 0;
 	}
 
