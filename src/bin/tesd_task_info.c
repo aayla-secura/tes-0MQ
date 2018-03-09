@@ -66,6 +66,8 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 		info->mcas,
 		info->traces);
 
+	memset (info, 0, sizeof (struct s_data_t));
+
 	return 0;
 }
 
