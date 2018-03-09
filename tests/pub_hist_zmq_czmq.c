@@ -6,23 +6,91 @@
 #include "net/tespkt.h"
 
 #define PUBADDR "@tcp://*:55565"
-#define WAIT_MSEC 200
+#define WAIT_MSEC 1000
 #define ADD_NOISE
+#define NBINS ((TES_HIST_MAXSIZE - MCA_HDR_LEN) / BIN_LEN)
 
-int main (int argc, char** argv)
+struct data_t
 {
+	zsock_t* sock;
+	int fd;
+};
+
+static int
+send_hist (zloop_t* loop, int tID, void* data_)
+{
+	struct data_t* data = (struct data_t*)data_;
+	char hist[TES_HIST_MAXSIZE] = {0};
+	ssize_t wrc = read (data->fd, hist, TES_HIST_MAXSIZE);
+	if (wrc == 0)
+	{
+		if (lseek (data->fd, 0, SEEK_SET) != 0)
+		{
+			fprintf (stderr, "Cannot seek to BOF\n");
+			return -1;
+		}
+		/* printf ("Starting over\n"); */
+		return send_hist (loop, tID, data_);
+	}
+	if (wrc == -1 || (size_t)wrc != TES_HIST_MAXSIZE)
+	{
+		if (wrc == -1)
+			perror ("read");
+		else
+			fprintf (stderr, "Read %lu bytes\n", wrc);
+		return -1;
+	}
+
+#ifdef ADD_NOISE
+	uint32_t* bin_p = (uint32_t*)(hist + MCA_HDR_LEN);
+	for (uint16_t bin_n = 0; bin_n < NBINS; bin_n++, bin_p++)
+	{
+		*bin_p += (int) (*bin_p * ((double)rand()/RAND_MAX - 0.5));
+	}
+	assert ((void*)bin_p == (void*)(hist + TES_HIST_MAXSIZE));
+#endif
+	int rc = zmq_send (zsock_resolve (data->sock),
+		hist, TES_HIST_MAXSIZE, 0);
+
+	return rc;
+}
+
+static int
+new_subscriber (zloop_t* loop, zsock_t* sock, void* arg)
+{
+	zmsg_t* msg = zmsg_recv (sock);
+	if (msg == NULL)
+		return -1;
+
+	printf ("Got a %lu-frame message\n", zmsg_size(msg));
+	zframe_t* frame = zmsg_first (msg);
+	while (frame != NULL)
+	{
+		char* fh = zframe_strhex (frame);
+		assert (fh != NULL);
+		printf ("Frame (%lu bytes long): %s\n", strlen (fh), fh);
+		zstr_free (&fh);
+		frame = zmsg_next (msg);
+	}
+
+	zmsg_destroy (&msg);
+	return 0;
+}
+
+int
+main (int argc, char** argv)
+{
+	struct data_t data = {0,};
 	if (argc != 2)
 		return -1;
-	zsys_init ();
-	zsys_catch_interrupts ();
 
-	int fd = open (argv[1], O_RDONLY);
-	if (fd == -1)
+	data.fd = open (argv[1], O_RDONLY);
+	if (data.fd == -1)
 	{
 		perror ("open");
 		return -1;
 	}
-	off_t hlen = lseek (fd, 0, SEEK_END);
+	off_t hlen = lseek (data.fd, 0, SEEK_END);
 	if (hlen == (off_t)-1 || (size_t)hlen % TES_HIST_MAXSIZE != 0)
 	{
 		fprintf (stderr,
@@ -30,54 +98,28 @@ int main (int argc, char** argv)
 		return -1;
 	}
 
-	zsock_t* frontend = zsock_new_pub (PUBADDR);
-	if (frontend == NULL)
+	data.sock = zsock_new_xpub (PUBADDR);
+	if (data.sock == NULL)
 	{
 		perror ("zsock_new");
+		close(data.fd);
 		return -1;
 	}
-	int rc = 0;
-	uint16_t nbins = (TES_HIST_MAXSIZE - MCA_HDR_LEN) / BIN_LEN;
-	while (!zsys_interrupted)
+	zloop_t* loop = zloop_new ();
+	if (loop == NULL)
 	{
-		char hist[TES_HIST_MAXSIZE] = {0};
-		ssize_t wrc = read (fd, hist, TES_HIST_MAXSIZE);
-		if (wrc == 0)
-		{
-			if (lseek (fd, 0, SEEK_SET) != 0)
-			{
-				fprintf (stderr, "Cannot seek to BOF\n");
-				rc = -1;
-				break;
-			}
-			continue;
-		}
-		if (wrc == -1 || (size_t)wrc != TES_HIST_MAXSIZE)
-		{
-			if (wrc == -1)
-				perror ("read");
-			else
-				fprintf (stderr, "Read %lu bytes\n", wrc);
-			rc = -1;
-			break;
-		}
-
-#ifdef ADD_NOISE
-		uint32_t* bin_p = (uint32_t*)(hist + MCA_HDR_LEN);
-		for (uint16_t bin_n = 0; bin_n < nbins; bin_n++, bin_p++)
-		{
-			*bin_p += (int) (*bin_p * ((double)rand()/RAND_MAX - 0.5));
-		}
-		assert ((void*)bin_p == (void*)(hist + TES_HIST_MAXSIZE));
-#endif
-		rc = zmq_send (zsock_resolve (frontend),
-			hist, TES_HIST_MAXSIZE, 0);
-		if (rc == -1)
-			break;
-
-		poll (NULL, 0, WAIT_MSEC);
+		perror ("zloop_new");
+		close(data.fd);
+		zsock_destroy (&data.sock);
+		return -1;
 	}
 
-	zsock_destroy (&frontend);
+	zloop_reader (loop, data.sock, new_subscriber, NULL);
+	zloop_timer (loop, WAIT_MSEC, 0, send_hist, &data);
+	int rc = zloop_start (loop);
+
+	close(data.fd);
+	zsock_destroy (&data.sock);
+	zloop_destroy (&loop);
 	return rc;
 }
