@@ -1142,10 +1142,12 @@ tespkt_is_valid (tespkt* pkt)
 		/* Event size should not be 0. */
 		if (esize == 0)
 			rc |= TES_EEVTSIZE;
-
-		/* Payload length should be a multiple of event size * 8. */
-		if ( (flen - TES_HDR_LEN) % (esize << 3) != 0 )
-			rc |= TES_EETHLEN;
+		else
+		{
+			/* Payload length should be a multiple of event size * 8. */
+			if ( (flen - TES_HDR_LEN) % (esize << 3) != 0 )
+				rc |= TES_EETHLEN;
+		}
 
 		/* Check event type as well as size for types with a fixed
 		 * size. */
