@@ -191,7 +191,7 @@ main (void)
 	sigemptyset (&sigact.sa_mask);
 	rc |= sigaction (SIGALRM, &sigact, NULL);
 
-	if (rc == -1)
+	if (rc != 0)
 	{
 		perror ("sigaction");
 		exit (EXIT_FAILURE);
