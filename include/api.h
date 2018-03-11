@@ -58,7 +58,7 @@
 /* Histogram is 2^10 + 1, both positive and negative delays (so max of
  * 9-bit delay info. True delay is 16-bit, so there will be overflow (on
  * both sides). */
-#define TES_JITTER_NBINS   1025 // including under-/overflow
-#define TES_JITTER_BIN_LEN    4 // uint32
+#define TES_JITTER_NBINS   1025UL // including under-/overflow
+#define TES_JITTER_MAXSIZE 4100UL // each bin is 4 bytes
 
 #endif
