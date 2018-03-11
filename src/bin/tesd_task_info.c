@@ -85,13 +85,11 @@ task_info_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	uint32_t timeout;
 
 	int rc = zsock_recv (frontend, TES_INFO_REQ_PIC, &timeout);
-	if (rc == -1)
-	{ /* would also return -1 if picture contained a pointer (p) or
-	   * a null frame (z) but message received did not match this
-	   * signature; this is irrelevant in this case */
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return TASK_ERROR;
-	}
+	/* Would also return -1 if picture contained a pointer (p) or a null
+	 * frame (z) but message received did not match this signature; this
+	 * is irrelevant in this case; we don't get interrupted, this should
+	 * not happen. */
+	assert (rc != -1);
 
 	/* Check timeout. */
 	if (timeout == 0)

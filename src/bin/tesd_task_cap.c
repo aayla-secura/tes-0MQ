@@ -1207,13 +1207,11 @@ task_cap_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		&sjob->ovrwtmode,
 		&sjob->async,
 		&sjob->capmode);
-	if (rc == -1)
-	{ /* would also return -1 if picture contained a pointer (p) or
-	   * a null frame (z) but message received did not match this
-	   * signature; this is irrelevant in this case */
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return TASK_ERROR;
-	}
+	/* Would also return -1 if picture contained a pointer (p) or a null
+	 * frame (z) but message received did not match this signature; this
+	 * is irrelevant in this case; we don't get interrupted, this should
+	 * not happen. */
+	assert (rc != -1);
 
 	/* Is the request understood? */
 	rc = s_is_req_valid (sjob);

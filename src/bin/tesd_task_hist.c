@@ -62,11 +62,8 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	task_t* self = (task_t*) self_;
 
 	zmsg_t* msg = zmsg_recv (frontend);
-	if (msg == NULL)
-	{ /* this shouldn't happen */
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return TASK_ERROR;
-	}
+	/* We don't get interrupted, this should not happen. */
+	assert (msg != NULL);
 
 	if (zmsg_size (msg) != 1)
 	{
