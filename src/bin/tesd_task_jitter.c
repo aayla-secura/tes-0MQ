@@ -10,10 +10,6 @@
 #define MAX_SIMULT_POINTS 16
 #define ENDP_REP 0
 #define ENDP_PUB 1
-#ifdef ENABLE_FULL_DEBUG
-#  define MAGIC_REQ_TICKS 0
-#  define MAGIC_REQ_REFCH UINT8_MAX
-#endif
 
 /* Add to delay, so bin 0 is underflow and middle bin is 0 delay. */
 #define BIN_OFFSET 512
@@ -44,7 +40,6 @@ struct s_data_t
 #ifdef ENABLE_FULL_DEBUG
 	uint64_t published;    // number of published histograms
 	uint64_t dropped;      // number of aborted histograms
-	bool     testing;      // magic request will enable this
 #endif
 	uint32_t nsubs;        // no. of subscribers at any time
 	uint32_t bins[TES_JITTER_NBINS];
@@ -93,9 +88,8 @@ s_save_points (struct s_data_t* hist)
 		if (bin > (int64_t)pt->delay_until)
 			bin = - pt->delay_until;
 
-#ifdef ENABLE_FULL_DEBUG
-		if (hist->testing)
-			logmsg (0, LOG_DEBUG, "Added a point at %ld", bin);
+#ifdef ENABLE_NUTS_DEBUGGING
+		logmsg (0, LOG_DEBUG, "Added a point at %ld", bin);
 #endif
 
 		bin += BIN_OFFSET;
@@ -156,15 +150,7 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	assert (rc != -1);
 
 	struct s_data_t* hist = (struct s_data_t*) self->data;
-#ifdef ENABLE_FULL_DEBUG
-	if (ticks == MAGIC_REQ_TICKS && ref_ch == MAGIC_REQ_REFCH)
-	{
-		ticks = 1;
-		ref_ch = 0;
-		hist->testing = 1;
-	}
-	else
-#endif
+	/* FIX: ticks == 0 and ref_ch == 0 is a status query */
 	/* FIX: how many channels are there? */
 	if (ticks == 0 || ref_ch > 1)
 	{
@@ -201,11 +187,8 @@ task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	task_t* self = (task_t*) self_;
 
 	zmsg_t* msg = zmsg_recv (frontend);
-	if (msg == NULL)
-	{ /* this shouldn't happen */
-		logmsg (0, LOG_DEBUG, "Receive interrupted");
-		return TASK_ERROR;
-	}
+	/* We don't get interrupted. */
+	assert (msg != NULL);
 
 	if (zmsg_size (msg) != 1)
 	{
@@ -322,16 +305,13 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! is_ref )
 		s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
 
-#ifdef ENABLE_FULL_DEBUG
-	if (hist->testing)
-	{
-		logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
-			ef->CH, is_tick ? " (tick)" : "       ", delay);
-		for (uint8_t p = 0; p < hist->cur_npts; p++)
-			logmsg (0, LOG_DEBUG, "Point %hhu delays: %hu, %hu",
-					p, hist->points[p].delay_since,
-					hist->points[p].delay_until);
-	}
+#ifdef ENABLE_NUTS_DEBUGGING
+	logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
+		ef->CH, is_tick ? " (tick)" : "       ", delay);
+	for (uint8_t p = 0; p < hist->cur_npts; p++)
+		logmsg (0, LOG_DEBUG, "Point %hhu delays: %hu, %hu",
+				p, hist->points[p].delay_since,
+				hist->points[p].delay_until);
 #endif
 
 	if (is_ref)
@@ -396,10 +376,6 @@ task_jitter_init (task_t* self)
 	/* Some defaults. */
 	hist.conf.ticks = 5;
 	hist.conf.ref_ch = 0;
-
-// #ifdef ENABLE_FULL_DEBUG
-// 	hist.testing = 1;
-// #endif
 
 	self->data = &hist;
 	return 0;
