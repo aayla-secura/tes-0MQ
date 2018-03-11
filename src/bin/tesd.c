@@ -78,7 +78,6 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
-#include "ansicolors.h"
 
 #ifdef linux
 #  define ifr_index ifr_ifindex
@@ -649,8 +648,12 @@ main (int argc, char **argv)
 		}
 	}
 
-	char log_id[16];
-	snprintf (log_id, sizeof (log_id), "[Coordinator] ");
+	char log_id[32];
+	if (be_daemon)
+		snprintf (log_id, sizeof (log_id), "[Coordinator] ");
+	else
+		snprintf (log_id, sizeof (log_id),
+			ANSI_FG_RED "[Coordinator] " ANSI_RESET);
 	set_logid (log_id);
 
 	/* Drop privileges, group first, then user, then check */

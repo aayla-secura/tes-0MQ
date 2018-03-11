@@ -54,6 +54,7 @@ struct _task_endpoint_t
 
 struct _task_t
 {
+	const char*   color;        // colored task logid in foreground mode
 	zloop_t*      loop;
 	task_pkt_fn*  pkt_handler;
 	task_data_fn* data_init;    // initialize data, perform checks

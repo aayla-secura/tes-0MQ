@@ -172,6 +172,7 @@ static task_t s_tasks[] = {
 				.automute  = 1,
 			},
 		},
+		.color       = ANSI_FG_YELLOW,
 	},
 	{ // CAPTURE
 		.pkt_handler = task_cap_pkt_hn,
@@ -185,6 +186,7 @@ static task_t s_tasks[] = {
 				.automute  = 1,
 			},
 		},
+		.color       = ANSI_FG_BLUE,
 	},
 	{ // GET AVG TRACE
 		.pkt_handler = task_avgtr_pkt_hn,
@@ -198,6 +200,7 @@ static task_t s_tasks[] = {
 				.automute  = 1,
 			},
 		},
+		.color       = ANSI_FG_GREEN,
 	},
 	{ // PUBLISH MCA HIST
 		.pkt_handler = task_hist_pkt_hn,
@@ -210,6 +213,7 @@ static task_t s_tasks[] = {
 				.type      = ZMQ_XPUB,
 			},
 		},
+		.color       = ANSI_FG_CYAN,
 	},
 	{ // PUBLISH JITTER HIST
 		.pkt_handler = task_jitter_pkt_hn,
@@ -227,6 +231,7 @@ static task_t s_tasks[] = {
 				.type      = ZMQ_XPUB,
 			},
 		},
+		.color       = ANSI_FG_MAGENTA,
 	}
 };
 
@@ -550,8 +555,12 @@ s_task_shim (zsock_t* pipe, void* self_)
 	assert (self->id > 0);
 
 	/* Set log prefix. */
-	char log_id[16];
-	snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
+	char log_id[32];
+	if (ami_daemon())
+		snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
+	else
+		snprintf (log_id, sizeof (log_id), "%s[Task #%d]%s     ",
+			self->color, self->id, ANSI_RESET);
 	set_logid (log_id);
 
 	/* Set CPU affinity. */
