@@ -25,6 +25,15 @@ struct s_conf_t
 	uint8_t  ref_ch; // reference channel
 };
 
+struct s_point_t
+{
+	/* Even though each frame's delay saturates at UINT16_MAX, we allow
+	 * for larger accumulated delay, so we select the correct overflow bin
+	 * (positive vs negative) more often. */
+	uint64_t delay_since; // delay since last reference
+	uint64_t delay_until; // delay until next reference
+};
+
 /*
  * Data for currently built histogram.
  */
@@ -40,19 +49,74 @@ struct s_data_t
 	uint32_t nsubs;        // no. of subscribers at any time
 	uint32_t bins[TES_JITTER_NBINS];
 	uint64_t ticks;        // number of ticks so far
-	struct {
-		uint16_t delay_since; // delay since last reference
-		uint16_t delay_until; // delay until next reference
-	} points[MAX_SIMULT_POINTS];
+	struct s_point_t points[MAX_SIMULT_POINTS];
 	uint8_t  cur_npts;     // no. of non-ref frames since last ref + 1
 	bool     publishing;   // discard all frames until first tick
 };
 
+static inline void s_add_to_since (struct s_point_t* pt, uint16_t delay);
+static inline void s_add_to_until (struct s_point_t* pt, uint16_t delay);
+static inline void s_save_points (struct s_data_t* hist);
 static void s_reset (struct s_data_t* hist);
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
 /* -------------------------------------------------------------- */
+
+static inline void
+s_add_to_since (struct s_point_t* pt, uint16_t delay)
+{
+		if (pt->delay_since + delay > UINT64_MAX)
+			pt->delay_since = UINT64_MAX;
+		else
+			pt->delay_since += delay;
+}
+
+static inline void
+s_add_to_until (struct s_point_t* pt, uint16_t delay)
+{
+		if (pt->delay_until + delay > UINT64_MAX)
+			pt->delay_until = UINT64_MAX;
+		else
+			pt->delay_until += delay;
+}
+
+static inline void
+s_save_points (struct s_data_t* hist)
+{
+	dbg_assert (hist != NULL);
+
+	for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
+	{
+		struct s_point_t* pt = &hist->points[p];
+		int64_t bin = pt->delay_since;
+		if (bin > (int64_t)pt->delay_until)
+			bin = - pt->delay_until;
+
+#ifdef ENABLE_FULL_DEBUG
+		if (hist->testing)
+			logmsg (0, LOG_DEBUG, "Added a point at %ld", bin);
+#endif
+
+		bin += BIN_OFFSET;
+		if (bin < 0)
+			bin = 0;
+		else if (bin >= TES_JITTER_NBINS)
+			bin = TES_JITTER_NBINS - 1;
+		
+		hist->bins[bin]++;
+#ifdef ENABLE_FULL_DEBUG
+		if (hist->bins[bin] == 0)
+			logmsg (0, LOG_WARNING, "Overflow of bin %hd", bin);
+#endif
+		pt->delay_since = 0;
+		pt->delay_until = 0;
+	}
+	/* Start accumulating delay for next non-reference frame. */
+	dbg_assert (hist->points[0].delay_until == 0);
+	hist->points[0].delay_since = 0;
+	hist->cur_npts = 1;
+}
 
 static void
 s_reset (struct s_data_t* hist)
@@ -187,7 +251,6 @@ task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		/* Wakeup packet handler. */
 		s_reset (hist);
 	 /* Wait for first reference frame. */
-		/* hist->points[0] = {.delay_since = 0, .delay_until = 0}; */
 		hist->points[0].delay_since = 0;
 		hist->points[0].delay_until = 0;
 		hist->cur_npts = 0;
@@ -205,14 +268,24 @@ task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 }
 
 /*
- * When a reference non-tick frame comes, it adds to delay_until and
- * saved all points being tracked.
+ * Reference frames are non-tick frames from the reference channel.
  *
- * When a non-reference non-tick frame comes a new point in the tracked
- * list is added with the delay_since of the previous one, and the delay
- * of the current frame is added to delay_since for all tracked points.
+ * At any time the number of currently tracked points is number of
+ * non-reference frames since last reference frame + 1 (the last point
+ * accumulating delays for the would-be-next non-reference point).
  *
- * When a tick comes it adds to the delay_since for all tracked points.
+ * Any frame adds its delay to the delay_until of all but the last
+ * currently tracked points.
+ *
+ * In addition to that:
+ *  - If the frame is a reference frame, it saves all but the last
+ *    tracked points to the histogram and resets them.
+ *  - If the frame is a non-reference frame its delay is added to the
+ *    delay_since of the last point (would-be-next non-reference point).
+ *    In addition to that:
+ *     - If the non-reference frame is not a tick, a new point in the
+ *       tracked list is added with the delay_since of the last one, and
+ *       the delay_until of 0. It is the new would-be-next point.
  */
 int
 task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
@@ -222,6 +295,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	struct s_data_t* hist = (struct s_data_t*) self->data;
 	dbg_assert (hist->cur_conf.ticks > 0);
+	dbg_assert (hist->cur_npts < MAX_SIMULT_POINTS);
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! hist->publishing && is_tick )
@@ -235,7 +309,20 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	uint16_t delay = tespkt_event_toff (pkt);
 	struct tespkt_event_flags* ef = tespkt_evt_fl (pkt);
+	bool is_ref = (ef->CH == hist->cur_conf.ref_ch && ! is_tick);
+	bool make_new = ( ! is_ref && ! is_tick );
 
+	if ( ! is_ref && hist->cur_npts == 0)
+		return 0; /* waiting for first ref since wake-up */
+
+	for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
+		s_add_to_until (&hist->points[p], delay);
+
+	/* Do this before printing debug info. */
+	if ( ! is_ref )
+		s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
+
+#ifdef ENABLE_FULL_DEBUG
 	if (hist->testing)
 	{
 		logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
@@ -245,76 +332,29 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 					p, hist->points[p].delay_since,
 					hist->points[p].delay_until);
 	}
-
-	if (ef->CH == hist->cur_conf.ref_ch && ! is_tick)
-	{ /* reference frame, save points */
-		/* Last entry in hist->points is to be discarded. */
-		dbg_assert (hist->cur_npts < MAX_SIMULT_POINTS);
-		for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
-		{
-			if ((uint64_t)hist->points[p].delay_until + delay > UINT16_MAX)
-				hist->points[p].delay_until = UINT16_MAX;
-			else
-				hist->points[p].delay_until += delay;
-
-			int64_t bin = hist->points[p].delay_since;
-			if (bin > (int64_t)hist->points[p].delay_until)
-				bin = - hist->points[p].delay_until;
-
-			if (hist->testing)
-				logmsg (0, LOG_DEBUG, "Added a point at %hd", bin);
-
-			bin += BIN_OFFSET;
-			if (bin < 0)
-				bin = 0;
-			else if (bin >= TES_JITTER_NBINS)
-				bin = TES_JITTER_NBINS - 1;
-			
-			hist->bins[bin]++;
-#ifdef ENABLE_FULL_DEBUG
-			if (hist->bins[bin] == 0)
-				logmsg (0, LOG_WARNING, "Overflow of bin %hd", bin);
 #endif
-			hist->points[p].delay_since = 0;
-			hist->points[p].delay_until = 0;
-		}
-		/* Start accumulating delay for next non-reference frame. */
-		dbg_assert (hist->points[0].delay_until == 0);
-		hist->cur_npts = 1;
-	}
-	else
-	{ /* non-reference frame */
-		if (hist->cur_npts == 0)
-			return 0; /* waiting for first ref since wake-up */
 
-		if ( ! is_tick )
-		{ /* a new point to keep track of */
-			if (hist->cur_npts < MAX_SIMULT_POINTS - 1)
-			{ /* last non-reference has the greatest delay, use it as a start */
-				hist->points[hist->cur_npts].delay_since =
-					hist->points[hist->cur_npts - 1].delay_since;
-				hist->points[hist->cur_npts].delay_until = 0;
-				if (hist->testing)
-					logmsg (0, LOG_DEBUG, "Added a new point");
-				hist->cur_npts++;
-			}
+	if (is_ref)
+		s_save_points (hist);
+	// else
+	//   s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
+
+	if (make_new)
+	{
+		if (hist->cur_npts < MAX_SIMULT_POINTS - 1)
+		{ /* last non-reference has the greatest delay, use it as a start */
+			struct s_point_t* new_ghost = &hist->points[hist->cur_npts];
+			new_ghost->delay_since = (new_ghost - 1)->delay_since;
+			new_ghost->delay_until = 0;
+			hist->cur_npts++;
+		}
 #ifdef ENABLE_FULL_DEBUG
-			else
-			{
-				logmsg (0, LOG_DEBUG,
-					"Too many non-reference frames since last reference");
-			}
-#endif
-		}
-
-		dbg_assert (hist->cur_npts < MAX_SIMULT_POINTS);
-		for (uint8_t p = 0; p < hist->cur_npts; p++)
+		else
 		{
-			if ((uint64_t)hist->points[p].delay_since + delay > UINT16_MAX)
-				hist->points[p].delay_since = UINT16_MAX;
-			else
-				hist->points[p].delay_since += delay;
+			logmsg (0, LOG_WARNING,
+				"Too many non-reference frames since last reference");
 		}
+#endif
 	}
 
 	if (hist->ticks == hist->cur_conf.ticks + 1)
@@ -357,9 +397,9 @@ task_jitter_init (task_t* self)
 	hist.conf.ticks = 5;
 	hist.conf.ref_ch = 0;
 
-#ifdef ENABLE_FULL_DEBUG
-	hist.testing = 1;
-#endif
+// #ifdef ENABLE_FULL_DEBUG
+// 	hist.testing = 1;
+// #endif
 
 	self->data = &hist;
 	return 0;
