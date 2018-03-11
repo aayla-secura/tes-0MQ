@@ -41,8 +41,8 @@ struct s_data_t
 	uint32_t bins[TES_JITTER_NBINS];
 	uint64_t ticks;        // number of ticks so far
 	struct {
-		uint16_t delay_since;	// delay since last reference
-		uint16_t delay_until;	// delay until next reference
+		uint16_t delay_since; // delay since last reference
+		uint16_t delay_until; // delay until next reference
 	} points[MAX_SIMULT_POINTS];
 	uint8_t  cur_npts;     // no. of non-ref frames since last ref + 1
 	bool     publishing;   // discard all frames until first tick
@@ -205,13 +205,14 @@ task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 }
 
 /*
- * When a reference frame comes, for all points having encountered a
- * non-reference frame (i.e. delay_since > 0), it adds to delay_until
- * and saves the point in the histogram.
+ * When a reference non-tick frame comes, it adds to delay_until and
+ * saved all points being tracked.
  *
- * When a non-reference frame comes
+ * When a non-reference non-tick frame comes a new point in the tracked
+ * list is added with the delay_since of the previous one, and the delay
+ * of the current frame is added to delay_since for all tracked points.
  *
- * When a tick comes
+ * When a tick comes it adds to the delay_since for all tracked points.
  */
 int
 task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
@@ -220,8 +221,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	dbg_assert (self != NULL);
 
 	struct s_data_t* hist = (struct s_data_t*) self->data;
-	if (hist->cur_conf.ticks == 0)
-		return TASK_SLEEP; /* not configured yet, no defaults */
+	dbg_assert (hist->cur_conf.ticks > 0);
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! hist->publishing && is_tick )
@@ -237,20 +237,28 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	struct tespkt_event_flags* ef = tespkt_evt_fl (pkt);
 
 	if (hist->testing)
+	{
 		logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
 			ef->CH, is_tick ? " (tick)" : "       ", delay);
+		for (uint8_t p = 0; p < hist->cur_npts; p++)
+			logmsg (0, LOG_DEBUG, "Point %hhu delays: %hu, %hu",
+					p, hist->points[p].delay_since,
+					hist->points[p].delay_until);
+	}
 
-	if (ef->CH == hist->cur_conf.ref_ch)
+	if (ef->CH == hist->cur_conf.ref_ch && ! is_tick)
 	{ /* reference frame, save points */
-
 		/* Last entry in hist->points is to be discarded. */
 		dbg_assert (hist->cur_npts < MAX_SIMULT_POINTS);
 		for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
 		{
-			hist->points[p].delay_until += delay;
+			if ((uint64_t)hist->points[p].delay_until + delay > UINT16_MAX)
+				hist->points[p].delay_until = UINT16_MAX;
+			else
+				hist->points[p].delay_until += delay;
 
-			int bin = hist->points[p].delay_since;
-			if (bin > hist->points[p].delay_until)
+			int64_t bin = hist->points[p].delay_since;
+			if (bin > (int64_t)hist->points[p].delay_until)
 				bin = - hist->points[p].delay_until;
 
 			if (hist->testing)
@@ -283,21 +291,30 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		{ /* a new point to keep track of */
 			if (hist->cur_npts < MAX_SIMULT_POINTS - 1)
 			{ /* last non-reference has the greatest delay, use it as a start */
-				hist->points[hist->cur_npts] = hist->points[hist->cur_npts - 1];
+				hist->points[hist->cur_npts].delay_since =
+					hist->points[hist->cur_npts - 1].delay_since;
+				hist->points[hist->cur_npts].delay_until = 0;
+				if (hist->testing)
+					logmsg (0, LOG_DEBUG, "Added a new point");
 				hist->cur_npts++;
 			}
 #ifdef ENABLE_FULL_DEBUG
 			else
 			{
 				logmsg (0, LOG_DEBUG,
-						"Too many non-reference frames since last reference");
+					"Too many non-reference frames since last reference");
 			}
 #endif
 		}
 
 		dbg_assert (hist->cur_npts < MAX_SIMULT_POINTS);
 		for (uint8_t p = 0; p < hist->cur_npts; p++)
-			hist->points[p].delay_since += delay;
+		{
+			if ((uint64_t)hist->points[p].delay_since + delay > UINT16_MAX)
+				hist->points[p].delay_since = UINT16_MAX;
+			else
+				hist->points[p].delay_since += delay;
+		}
 	}
 
 	if (hist->ticks == hist->cur_conf.ticks + 1)
@@ -336,10 +353,13 @@ task_jitter_init (task_t* self)
 	static struct s_data_t hist;
 	assert (sizeof (hist.bins[0]) == TES_JITTER_BIN_LEN);
 
-// #ifdef ENABLE_FULL_DEBUG
-// 	hist.conf.ticks = 2;
-// 	hist.testing = 1;
-// #endif
+	/* Some defaults. */
+	hist.conf.ticks = 5;
+	hist.conf.ref_ch = 0;
+
+#ifdef ENABLE_FULL_DEBUG
+	hist.testing = 1;
+#endif
 
 	self->data = &hist;
 	return 0;
