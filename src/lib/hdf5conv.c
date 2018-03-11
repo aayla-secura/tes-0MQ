@@ -141,10 +141,10 @@ s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid,
 			group, bkpgroup);
 
 		herr_t err = 0;
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= CAUTIOUS
 		/* Make sure backup destination does not exist. */
 		gid = s_get_grp (bkp_lid, bkpgroup, 0);
-		if (gid > 0);
+		if (gid > 0)
 		{
 			H5Gclose (gid);
 			err = -1;
@@ -156,10 +156,10 @@ s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid,
 				H5P_DEFAULT, H5P_DEFAULT);
 		if (err >= 0)
 			err = H5Ldelete (lid, group, H5P_DEFAULT);
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= CAUTIOUS
 		/* Make sure the old link is gone. */
 		gid = s_get_grp (lid, group, 0);
-		if (gid > 0);
+		if (gid > 0)
 		{
 			H5Gclose (gid);
 			err = -1;
@@ -206,8 +206,8 @@ s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid,
 static int
 s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 {
-#ifdef ENABLE_FULL_DEBUG
-	/* sleep (1); */
+#if DEBUG_LEVEL >= TESTING
+	sleep (1);
 #endif
 	assert (ddesc != NULL);
 	assert (ddesc->filename != NULL);
@@ -282,8 +282,8 @@ s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 static int
 s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 {
-#ifdef ENABLE_FULL_DEBUG
-	/* sleep (1); */
+#if DEBUG_LEVEL >= TESTING
+	sleep (1);
 #endif
 	assert (ddesc != NULL);
 	assert (ddesc->dsetname != NULL);

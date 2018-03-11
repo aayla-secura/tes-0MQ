@@ -36,26 +36,20 @@
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
 
-#include "daemon_ng.h"
+/* Debug levels. */
+#define NO_DEBUG      0
+#define CAUTIOUS      1
+#define TESTING       5
+#define VERBOSE      10
+#define ARE_YOU_NUTS 50 // expect output every ~1 packet
+#define DEBUG_LEVEL TESTING
 
-#define ENABLE_DEBUG
-#define ENABLE_FULL_DEBUG
-
-#ifdef ENABLE_FULL_DEBUG
-#  ifndef ENABLE_DEBUG
-#    define ENABLE_DEBUG
-#  endif
+#if DEBUG_LEVEL > NO_DEBUG
 #  define TESPKT_DEBUG
-#endif
-
-#ifdef ENABLE_DEBUG
 #  define dbg_assert(...) assert (__VA_ARGS__)
 #else
 #  define dbg_assert(...)
 #endif
-
-#include "net/tespkt.h" // defines TES_MCASIZE_BUG checked by api.h
-#include "api.h"
 
 #ifndef PATH_MAX
 #  ifdef MAXPATHLEN
@@ -68,5 +62,9 @@
 #ifndef NUM_RINGS
 #define NUM_RINGS 4 /* number of rx rings in interface */
 #endif
+
+#include "api.h"
+
+#include "daemon_ng.h"
 
 #endif

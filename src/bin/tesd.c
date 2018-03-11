@@ -31,7 +31,7 @@
  * input. Other errors are handled gracefully with messages to
  * clients and/or syslog or stderr/out. dbg_assert is used in
  * functions which are called very often (e.g. handlers) and is
- * a no-op unless ENABLE_DEBUG is defined.
+ * a no-op unless DEBUG_LEVEL > 0.
  *
  * There is a separate thread for each "task" (see tesd_tasks.c).
  * Tasks are started with tasks_start. Each task has read-only
@@ -354,14 +354,6 @@ s_log_stats (zloop_t* loop, int timer_id, void* stats_)
 	stats->latest.polled   = 0;
 	stats->latest.skipped  = 0;
 
-#if 0
-	if ( ! be_daemon () )
-	{
-		fflush (stdout);
-		fflush (stderr);
-	}
-#endif
-
 	return 0;
 }
 
@@ -555,7 +547,7 @@ cleanup:
 int
 main (int argc, char **argv)
 {
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= CAUTIOUS
 	tespkt_self_test ();
 #endif
 	int rc;

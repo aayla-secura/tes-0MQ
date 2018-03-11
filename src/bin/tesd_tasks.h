@@ -76,7 +76,7 @@ struct _task_t
 	bool        error;          // internal, see DEV NOTES
 	bool        busy;           // internal, see DEV NOTES
 	bool        active;         // internal, see DEV NOTES
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	struct
 	{
 		uint64_t wakeups;

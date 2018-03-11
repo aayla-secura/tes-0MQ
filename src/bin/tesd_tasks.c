@@ -448,7 +448,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	 * the PAIR socket and coming with a slight delay. */
 	if ( ! self->active )
 	{
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		if (self->dbg_stats.wakeups_inactive == 0)
 			logmsg (0, LOG_DEBUG,
 				"First inactive wakeup");
@@ -457,13 +457,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		self->busy = 0;
 		return 0;
 	}
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	self->dbg_stats.wakeups++;
 #endif
 	// self->busy = 1;
 
 	/* Process packets. */
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	bool first = 1;
 #endif
 	while (1)
@@ -477,13 +477,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		 */
 		if (next_ring_id < 0)
 		{
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 			if (first)
 				self->dbg_stats.wakeups_false++;
 #endif
 			break;
 		}
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		first = 0;
 #endif
 
@@ -702,7 +702,7 @@ cleanup:
 			frontend->sock != NULL; frontend++)
 		zsock_destroy (&frontend->sock);
 	logmsg (0, LOG_DEBUG, "Done");
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	logmsg (0, LOG_DEBUG,
 		"Woken up %lu times, %lu when not active, "
 		"%lu when no new packets, dispatched "
@@ -866,9 +866,9 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 
 	tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
 	dbg_assert ( self->heads[ring_id] != tes_ifring_tail (rxring) );
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	self->dbg_stats.rings_dispatched++;
-#if 0
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
 	if (missed)
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
@@ -885,7 +885,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	 * dispatch was called with this ring_id.
 	 */
 	uint16_t fseq_gap = 0;
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	bool first = 1;
 #endif
 	for ( ; self->heads[ring_id] != tes_ifring_tail (rxring);
@@ -904,7 +904,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		 * Check packet.
 		 */
 		int err = tespkt_is_valid (pkt);
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		if (err != 0)
 		{
 			logmsg (0, LOG_DEBUG,
@@ -916,7 +916,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		uint16_t flen = tespkt_flen (pkt);
 		if (flen > len)
 		{
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 			logmsg (0, LOG_DEBUG,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
@@ -928,7 +928,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		if (first)
 			dbg_assert (fseq_gap == missed);
 		first = 0;

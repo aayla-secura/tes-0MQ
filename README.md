@@ -6,7 +6,6 @@ The daemon is tested on Linux 4.13.0 and FreeBSD 11.0, and above. It requires
 connected to the FPGA.
 
 # API
----
 
 The server accepts client requests on two [ØMQ](http://zeromq.org/) sockets. 
 
@@ -251,7 +250,6 @@ by sending a message to the REP socket. Valid requests have a picture of
  * "1": invalid request
 
 # INSTALLATION
----
 
 To compile and install the client (`tesc`) and server (`tesd`):
 
@@ -278,7 +276,6 @@ To compile the test apps do `make test` or alternatively `make all` to compile
 everything. Test apps are not installed in the `PREFIX` location.
 
 # TO DO
----
 
 * Write REQ job statistics to a global database such that it can be looked up
   by filename, client IP or time frame.

@@ -37,7 +37,7 @@ struct s_data_t
 {
 	struct s_conf_t cur_conf; // current configuration
 	struct s_conf_t conf;     // to be applied at next hist
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	uint64_t published;    // number of published histograms
 	uint64_t dropped;      // number of aborted histograms
 #endif
@@ -88,7 +88,7 @@ s_save_points (struct s_data_t* hist)
 		if (bin > (int64_t)pt->delay_until)
 			bin = - pt->delay_until;
 
-#ifdef ENABLE_NUTS_DEBUGGING
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
 		logmsg (0, LOG_DEBUG, "Added a point at %ld", bin);
 #endif
 
@@ -99,7 +99,7 @@ s_save_points (struct s_data_t* hist)
 			bin = TES_JITTER_NBINS - 1;
 		
 		hist->bins[bin]++;
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		if (hist->bins[bin] == 0)
 			logmsg (0, LOG_WARNING, "Overflow of bin %hd", bin);
 #endif
@@ -198,7 +198,7 @@ task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		return 0;
 	}
 
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	zframe_t* f = zmsg_first (msg);
 	char* hexstr = zframe_strhex (f);
 	logmsg (0, LOG_DEBUG,
@@ -305,7 +305,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! is_ref )
 		s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
 
-#ifdef ENABLE_NUTS_DEBUGGING
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
 	logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
 		ef->CH, is_tick ? " (tick)" : "       ", delay);
 	for (uint8_t p = 0; p < hist->cur_npts; p++)
@@ -328,7 +328,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			new_ghost->delay_until = 0;
 			hist->cur_npts++;
 		}
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		else
 		{
 			logmsg (0, LOG_WARNING,
@@ -342,7 +342,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		int rc = zmq_send (
 			zsock_resolve (self->frontends[ENDP_PUB].sock),
 			(void*)hist->bins, TES_JITTER_NBINS * TES_JITTER_BIN_LEN, 0);
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,

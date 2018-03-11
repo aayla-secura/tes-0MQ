@@ -48,6 +48,7 @@
 
 /* Publish MCA histogram */
 #define TES_HIST_LPORT "55565"
+#include "net/tespkt.h" // defines TES_HIST_MAXSIZE
 
 /* Publish jitter histogram */
 #define TES_JITTER_REP_LPORT "55557"

@@ -125,7 +125,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	int rep = -1;
 	if (err)
 	{
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 		logmsg (0, LOG_DEBUG,
 			"Bad frame, error is %d", err);
 #endif
@@ -139,7 +139,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t cur_pseq = tespkt_pseq (pkt);
 		if ((uint16_t)(cur_pseq - self->prev_pseq_tr) != 1)
 		{ /* missed frames */
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
 			logmsg (0, LOG_DEBUG,
 				"Mismatch in protocol sequence after byte %hu",
 				trace->cur_size);

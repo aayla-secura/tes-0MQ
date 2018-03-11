@@ -381,11 +381,6 @@ s_local_save_trace (const char* server, const char* filename,
 }
 
 /* ---------------------- HISTOGRAM --------------------- */
-#if 0 /* FIX */
-#define L_HIST_MAX_SIZE 65528U
-#else
-#define L_HIST_MAX_SIZE 65576U
-#endif
 
 static int
 s_local_save_hist (const char* server, const char* filename,
@@ -437,7 +432,7 @@ s_local_save_hist (const char* server, const char* filename,
 	/* Proceed? */
 	printf ("Will save %lu histogram%s to local file '%s'.\n"
 		"Maximum total size is %lu.\n",
-		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*L_HIST_MAX_SIZE);
+		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*TES_HIST_MAXSIZE);
 	if ( s_prompt () )
 		return -1;
 
@@ -474,7 +469,7 @@ s_local_save_hist (const char* server, const char* filename,
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Allocate space */
-	int rc = posix_fallocate (fd, fsize, num_hist*L_HIST_MAX_SIZE);
+	int rc = posix_fallocate (fd, fsize, num_hist*TES_HIST_MAXSIZE);
 	if (rc)
 	{
 		errno = rc; /* posix_fallocate does not set it */
@@ -488,7 +483,7 @@ s_local_save_hist (const char* server, const char* filename,
 	/* TO DO: map starting at the last page boundary before end of
 	 * file. */
 	unsigned char* map = (unsigned char*)mmap (NULL,
-		fsize + num_hist*L_HIST_MAX_SIZE, PROT_WRITE, MAP_SHARED, fd, 0);
+		fsize + num_hist*TES_HIST_MAXSIZE, PROT_WRITE, MAP_SHARED, fd, 0);
 	if (map == (void*)-1)
 	{
 		perror ("Could not mmap file");
@@ -504,13 +499,13 @@ s_local_save_hist (const char* server, const char* filename,
 	for (; ! zsys_interrupted && h < num_hist; h++)
 	{
 		rc = zmq_recv (sock_h, map + fsize + hsize,
-			L_HIST_MAX_SIZE, 0);
+			TES_HIST_MAXSIZE, 0);
 		if (rc == -1)
 		{
 			perror ("Could not write to file");
 			break;
 		}
-		else if ((size_t)rc > L_HIST_MAX_SIZE)
+		else if ((size_t)rc > TES_HIST_MAXSIZE)
 		{
 			fprintf (stderr,
 				"Frame is too large: %lu bytes", (size_t)rc);
@@ -523,7 +518,7 @@ s_local_save_hist (const char* server, const char* filename,
 			h, (num_hist > 1)? "s" : "");
 
 	zsock_destroy (&sock);
-	munmap (map, num_hist*L_HIST_MAX_SIZE);
+	munmap (map, num_hist*TES_HIST_MAXSIZE);
 	rc = ftruncate (fd, fsize + hsize);
 	if (rc == -1)
 		perror ("Could not truncate file");

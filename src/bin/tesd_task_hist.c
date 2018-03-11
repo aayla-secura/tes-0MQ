@@ -5,7 +5,7 @@
  */
 struct s_data_t
 {
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	uint64_t      published; // number of published histograms
 	uint64_t      dropped;   // number of aborted histograms
 #endif
@@ -73,7 +73,7 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		return 0;
 	}
 
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 	zframe_t* f = zmsg_first (msg);
 	char* hexstr = zframe_strhex (f);
 	logmsg (0, LOG_DEBUG,
@@ -172,7 +172,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		{
 			/* Drop the previous one. */
 			s_clear (hist);
-#ifdef ENABLE_FULL_DEBUG
+#if DEBUG_LEVEL >= VERBOSE
 			hist->dropped++;
 			logmsg (0, LOG_DEBUG,
 				"Discarded %lu out of %lu histograms so far",
@@ -215,11 +215,10 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		dbg_assert (hist->cur_size == hist->size);
 
 		/* Send the histogram */
-#ifdef ENABLE_FULL_DEBUG
-		hist->published++;
 		int rc = zmq_send (
 			zsock_resolve (self->frontends[0].sock),
 			hist->buf, hist->cur_size, 0);
+#if DEBUG_LEVEL >= VERBOSE
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
@@ -233,12 +232,11 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				hist->cur_size, rc);
 			return TASK_ERROR;
 		}
+
+		hist->published++;
 		if (hist->published % 50)
 			logmsg (0, LOG_DEBUG,
 				"Published 50 more histogtams");
-#else
-		zmq_send (zsock_resolve (self->frontends[0].sock),
-			hist->buf, hist->cur_size, 0);
 #endif
 
 		s_clear (hist);
