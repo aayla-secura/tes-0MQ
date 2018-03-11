@@ -150,22 +150,24 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	assert (rc != -1);
 
 	struct s_data_t* hist = (struct s_data_t*) self->data;
-	/* FIX: ticks == 0 and ref_ch == 0 is a status query */
 	/* FIX: how many channels are there? */
 	if (ticks == 0 || ref_ch > 1)
 	{
 		logmsg (0, LOG_INFO,
-			"Received a malformed request");
-		zsock_send (frontend, TES_JITTER_REP_PIC, TES_JITTER_REQ_EINV);
-		return 0;
+			"Received an invalid request");
+	}
+	else
+	{
+		logmsg (0, LOG_INFO,
+			"Using channel %u as reference, publishing each %lu ticks",
+			ref_ch, ticks);
+
+		hist->conf.ref_ch = ref_ch;
+		hist->conf.ticks = ticks;
 	}
 
-	logmsg (0, LOG_INFO,
-		"Using channel %u as reference, publishing each %lu ticks",
-		ref_ch, ticks);
-
-	hist->conf.ref_ch = ref_ch;
-	hist->conf.ticks = ticks;
+	zsock_send (frontend, TES_JITTER_REP_PIC,
+		hist->conf.ref_ch, hist->conf.ticks);
 
 	return 0;
 }

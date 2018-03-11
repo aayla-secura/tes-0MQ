@@ -51,11 +51,9 @@
 #include "net/tespkt.h" // defines TES_HIST_MAXSIZE
 
 /* Publish jitter histogram */
-#define TES_JITTER_REP_LPORT "55557"
-#define TES_JITTER_REQ_OK    0 // accepted
-#define TES_JITTER_REQ_EINV  1 // malformed request
 #define TES_JITTER_REQ_PIC "18"
-#define TES_JITTER_REP_PIC  "1"
+#define TES_JITTER_REP_PIC "18"
+#define TES_JITTER_REP_LPORT "55557"
 #define TES_JITTER_PUB_LPORT "55567"
 /* Histogram is 2^10 + 1, both positive and negative delays (so max of
  * 9-bit delay info. True delay is 16-bit, so there will be overflow (on

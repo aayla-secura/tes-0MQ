@@ -237,17 +237,20 @@ by sending a message to the REP socket. Valid requests have a picture of
 
    The value is read as an **unsigned** int8.
 
-1. **Ticks**
+2. **Ticks**
 
    The value is read as an **unsigned** int64.
 
 #### Message frames in a reply
 
-1. **Error status**
+1. **Set reference channel**
 
- * "0": OK, sending trace
+2. **Set ticks**
 
- * "1": invalid request
+The reply indicates the values after they are set. Request with ticks =
+0 OR reference channel > 1 is not valid and will return the current
+setting without change. Any other request should change the settings and
+be echoed back. The new settings will take effect at the next histogram.
 
 # INSTALLATION
 
