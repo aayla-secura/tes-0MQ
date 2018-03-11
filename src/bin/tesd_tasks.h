@@ -56,7 +56,7 @@ struct _task_t
 {
 	zloop_t*      loop;
 	task_pkt_fn*  pkt_handler;
-	task_data_fn* data_init;    // initialize data
+	task_data_fn* data_init;    // initialize data, perform checks
 	task_data_fn* data_fin;     // cleanup data
 	void*         data;         // task-specific
 	zactor_t*     shim;         // coordinator's end of the pipe,
@@ -126,10 +126,17 @@ task_pkt_fn     task_avgtr_pkt_hn;
 task_data_fn    task_avgtr_init;
 task_data_fn    task_avgtr_fin;
 
-/* Publish histogram */
+/* Publish MCA histogram */
 zloop_reader_fn task_hist_sub_hn;
 task_pkt_fn     task_hist_pkt_hn;
 task_data_fn    task_hist_init;
 task_data_fn    task_hist_fin;
+
+/* Publish jitter histogram */
+zloop_reader_fn task_jitter_req_hn;
+zloop_reader_fn task_jitter_sub_hn;
+task_pkt_fn     task_jitter_pkt_hn;
+task_data_fn    task_jitter_init;
+task_data_fn    task_jitter_fin;
 
 #endif

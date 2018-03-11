@@ -29,6 +29,7 @@
 #include <string.h>
 #include <signal.h>
 #include <limits.h>
+#include <stdint.h>
 #include <errno.h>
 #include <assert.h>
 

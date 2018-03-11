@@ -158,7 +158,7 @@ static int  s_task_dispatch (task_t* self, zloop_t* loop,
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
-#define NUM_TASKS 4
+#define NUM_TASKS 5
 static task_t s_tasks[] = {
 	{ // PACKET INFO
 		.pkt_handler = task_info_pkt_hn,
@@ -199,7 +199,7 @@ static task_t s_tasks[] = {
 			},
 		},
 	},
-	{ // PUBLISH HIST
+	{ // PUBLISH MCA HIST
 		.pkt_handler = task_hist_pkt_hn,
 		.data_init   = task_hist_init,
 		.data_fin    = task_hist_fin,
@@ -207,6 +207,23 @@ static task_t s_tasks[] = {
 			{
 				.handler   = task_hist_sub_hn,
 				.addresses = "tcp://*:" TES_HIST_LPORT,
+				.type      = ZMQ_XPUB,
+			},
+		},
+	},
+	{ // PUBLISH JITTER HIST
+		.pkt_handler = task_jitter_pkt_hn,
+		.data_init   = task_jitter_init,
+		.data_fin    = task_jitter_fin,
+		.frontends   = {
+			{
+				.handler   = task_jitter_req_hn,
+				.addresses = "tcp://*:" TES_JITTER_REP_LPORT,
+				.type      = ZMQ_REP,
+			},
+			{
+				.handler   = task_jitter_sub_hn,
+				.addresses = "tcp://*:" TES_JITTER_PUB_LPORT,
 				.type      = ZMQ_XPUB,
 			},
 		},

@@ -204,10 +204,51 @@ Valid requests have a picture of "4", replies have a picture of "1b".
 
    Empty in case of timeout error. Otherwise---the full trace.
 
-## HISTOGRAM PUB INTERFACE
+## MCA HISTOGRAM PUB INTERFACE
 
-This socket publishes ZMQ single-frame messages, each message contains one full
-histogram (MCA stream). You can receive these with `zmq_recv` for example.
+This interface publishes ZMQ single-frame messages, each message
+contains one full histogram (MCA stream). You can receive these with
+`zmq_recv` for example.
+
+## JITTER HISTOGRAM REP+PUB INTERFACE
+
+This interface publishes ZMQ single-frame messages, each message
+contains one full histogram, representing the jitter between two
+channels and constructed over a configurable number of ticks. The
+histogram has a fixed number of bins, each of width 1. The reference
+channel is also configurable. Each point in the histogram corresponds to
+a frame of the non-reference channel. If it falls in the positive bin
+range, it gives the delay (in units of 4ns) since the last reference
+channel frame. If it falls in the negative bin range, it gives the delay
+(in units of 4ns) until the next reference channel frame. There is only
+one entry for each non-reference frame: the smallest absolute value of
+the two possibilities being taken. (i.e. if the delay since the last
+reference is smaller than the delay before the next reference, the
+positive entry is taken, and vice versa).
+
+You can receive these histograms with `zmq_recv` for example.
+
+Reference channel and number of ticks to accumulate over is configured
+by sending a message to the REP socket. Valid requests have a picture of
+"18", replies have a picture of "1".
+
+#### Message frames in a valid request
+
+1. **Reference channel**
+
+   The value is read as an **unsigned** int8.
+
+1. **Ticks**
+
+   The value is read as an **unsigned** int64.
+
+#### Message frames in a reply
+
+1. **Error status**
+
+ * "0": OK, sending trace
+
+ * "1": invalid request
 
 # INSTALLATION
 ---

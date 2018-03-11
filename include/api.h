@@ -46,7 +46,20 @@
 #define TES_AVGTR_REQ_PIC  "4"
 #define TES_AVGTR_REP_PIC "1b"
 
-/* Publish histogram */
+/* Publish MCA histogram */
 #define TES_HIST_LPORT "55565"
+
+/* Publish jitter histogram */
+#define TES_JITTER_REP_LPORT "55557"
+#define TES_JITTER_REQ_OK    0 // accepted
+#define TES_JITTER_REQ_EINV  1 // malformed request
+#define TES_JITTER_REQ_PIC "18"
+#define TES_JITTER_REP_PIC  "1"
+#define TES_JITTER_PUB_LPORT "55567"
+/* Histogram is 2^10 + 1, both positive and negative delays (so max of
+ * 9-bit delay info. True delay is 16-bit, so there will be overflow (on
+ * both sides). */
+#define TES_JITTER_NBINS   1025 // including under-/overflow
+#define TES_JITTER_BIN_LEN    4 // uint32
 
 #endif
