@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 #include <poll.h>
 #include <signal.h>
 #include <syslog.h>
@@ -31,16 +32,19 @@
 #include <errno.h>
 #include <assert.h>
 
-#define MAX_MSG_LEN    512
-#define MIN_ERR_LEN     10
-#define MAX_LOG_ID_LEN  32
+#define MAX_MSG_LEN         512
+#define MIN_ERR_LEN          10
+#define MAX_LOG_ID_LEN       32
+#define MAX_LOG_TIMEFMT_LEN  16
+#define MAX_LOG_TIME_LEN     64
 
 #define DAEMON_OK_MSG  "0"
 #define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000 /* deafault */
 
-static bool is_daemon;
-static bool is_verbose;
+static int is_daemon;
+static int is_verbose;
+static char time_fmt[MAX_LOG_TIMEFMT_LEN];
 static __thread char log_id[MAX_LOG_ID_LEN];
 
 static rlim_t s_get_max_fd (void);
@@ -305,8 +309,24 @@ logmsg (int errnum, int priority, const char* format, ...)
 #endif
 	}
 
+	char curtime[MAX_LOG_TIME_LEN] = {0};
+	if (strlen (time_fmt) != 0)
+	{
+		time_t now = time(NULL);
+		struct tm tm_now;
+		struct tm* tm_now_p = localtime_r (&now, &tm_now);
+		if (tm_now_p != NULL)
+		{
+			size_t wrc = strftime (curtime, MAX_LOG_TIME_LEN - 2,
+				time_fmt, &tm_now);
+			if (wrc == 0)
+				curtime[0] = '\0'; /* error */
+			else
+				strncpy (curtime + wrc, ": ", MAX_LOG_TIME_LEN - wrc);
+		}
+	}
 	if (is_daemon)
-		syslog (priority, "%s%s", log_id, msg);
+		syslog (priority, "%s%s%s", curtime, log_id, msg);
 	else
 	{
 		FILE* outbuf;
@@ -315,9 +335,24 @@ logmsg (int errnum, int priority, const char* format, ...)
 		else
 			outbuf = stdout;
 
-		fprintf (outbuf, "%s%s\n", log_id, msg);
+		fprintf (outbuf, "%s%s%s\n", curtime, log_id, msg);
 	}
 	va_end (args);
+}
+
+char*
+set_time_fmt (const char* fmt)
+{
+	if (fmt != NULL)
+	{
+		int rc = snprintf (time_fmt, MAX_LOG_TIMEFMT_LEN, "%s", fmt);
+		if (rc >= MAX_LOG_TIMEFMT_LEN &&
+			time_fmt[MAX_LOG_TIMEFMT_LEN - 1] == '%')
+		{ /* got truncated in the middle of a format specifier */
+			time_fmt[MAX_LOG_TIMEFMT_LEN - 1] = '\0';
+		}
+	}
+	return time_fmt;
 }
 
 char*
@@ -328,7 +363,7 @@ set_logid (char* id)
 	return log_id;
 }
 
-bool
+int
 set_verbose (int level)
 {
 	if (level >= 0)
@@ -336,7 +371,7 @@ set_verbose (int level)
 	return is_verbose;
 }
 
-bool
+int
 ami_daemon (void)
 {
 	return is_daemon;

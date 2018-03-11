@@ -647,6 +647,7 @@ main (int argc, char **argv)
 	}
 	else
 	{
+		set_time_fmt ("%b %d %H:%M:%S");
 		rc = s_init (&data);
 		if (rc == -1)
 		{

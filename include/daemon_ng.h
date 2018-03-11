@@ -1,8 +1,6 @@
 #ifndef __DAEMON_NG_H_INCLUDED__
 #define __DAEMON_NG_H_INCLUDED__
 
-#include <czmq_prelude.h> // bool type
-
 /*
  * Forking and logging functions.
  *
@@ -90,6 +88,9 @@ int fork_and_run (daemon_fn* initializer, daemon_fn* action,
  *
  * If verbose is false, debugging messages are always suppressed.
  *
+ * Messages may be prefixed by the current time, if a time format is set
+ * via set_time_fmt.
+ *
  * Messages are prefixed by <logid>, which is thread-specific and
  * set via set_logid.
  *
@@ -99,7 +100,16 @@ int fork_and_run (daemon_fn* initializer, daemon_fn* action,
 void logmsg (int errnum, int priority, const char* format, ...);
 
 /*
- * Set or get log_id.
+ * Set or get log time_format.
+ * If fmt is not NULL, set the time format. If the format is longer than
+ * 16 characters, it is truncated. If resulting time string is longer
+ * than 62 bytes, it is truncated.
+ * Returns a pointer to the currently set time format.
+ */
+char* set_time_fmt (const char* fmt);
+
+/*
+ * Set or get <logid>.
  * If id is not NULL, set the log prefix for the calling thread. If
  * it is longer than 32 characters, it is truncated.
  * Returns a pointer to the thread-local static string containing
@@ -109,17 +119,17 @@ char* set_logid (char* id);
 
 /*
  * Set or get verbosity. It is not thread-specific.
- * If is_verbose < 0,  the current value is returned.
- * If is_verbose == 0, debugging messages are suppressed, 0 is
+ * If be_verbose < 0,  the current value is returned.
+ * If be_verbose == 0, debugging messages are suppressed, 0 is
  * returned.
  * If be_verbose > 0,  they will be printed, 1 is returned.
  */
-bool set_verbose (int be_verbose);
+int set_verbose (int be_verbose);
 
 /*
  * Returns 1 is process has been daemonized (using damonize).
  * Returns 0 otherwise.
  */
-bool ami_daemon (void);
+int ami_daemon (void);
 
 #endif
