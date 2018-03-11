@@ -34,26 +34,36 @@
 #define TASK_SLEEP  1
 #define TASK_ERROR -1
 
+/* Shorthand */
 typedef struct _task_t task_t;
+typedef struct _task_endpoint_t task_endp_t;
 
 typedef int (task_data_fn)(task_t*);
 typedef int (task_pkt_fn)(zloop_t*, tespkt*,
 		uint16_t, uint16_t, int, task_t*);
 
+struct _task_endpoint_t
+{
+	zloop_reader_fn* handler;
+	const char* addresses;      // comma-separated
+	zsock_t*    sock;
+	const int   type;           // one of ZMQ_*
+	bool        automute;       // s_task_(de)activate will
+	                            // enable/disable handler
+};
+
 struct _task_t
 {
-	zloop_reader_fn* client_handler;
-	zloop_t*         loop;
-	task_pkt_fn*        pkt_handler;
-	task_data_fn*       data_init; // initialize data
-	task_data_fn*       data_fin;  // cleanup data
-	void*       data;           // task-specific
-	zactor_t*   shim;           // coordinator's end of the pipe,
+	zloop_t*      loop;
+	task_pkt_fn*  pkt_handler;
+	task_data_fn* data_init;    // initialize data
+	task_data_fn* data_fin;     // cleanup data
+	void*         data;         // task-specific
+	zactor_t*     shim;         // coordinator's end of the pipe,
 	                            // signals sent on behalf of
 	                            // coordinator go here
-	zsock_t*    frontend;       // clients
-	const char* front_addr;     // the socket addresses
-	const int   front_type;     // one of ZMQ_*
+#define MAX_FRONTENDS 16
+	task_endp_t frontends[MAX_FRONTENDS];
 	int         id;             // the task ID
 	tes_ifdesc* ifd;            // netmap interface
 	uint32_t    heads[NUM_RINGS]; // per-ring task's head
@@ -61,8 +71,6 @@ struct _task_t
 	uint16_t    prev_fseq;      // previous frame sequence
 	uint16_t    prev_pseq_mca;  // previous MCA protocol sequence
 	uint16_t    prev_pseq_tr;   // previous trace protocol sequence
-	bool        automute;       // s_task_(de)activate will
-	                            // enable/disable client_handler
 	bool        autoactivate;   // s_task_shim will activate task
 	bool        just_activated; // first packet after activation
 	bool        error;          // internal, see DEV NOTES

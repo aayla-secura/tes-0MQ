@@ -1190,7 +1190,7 @@ s_dbg_stats (struct s_data_t* sjob)
  * requests to save, opens the file and marks the task as active.
  */
 int
-task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
+task_cap_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -1199,7 +1199,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	struct s_data_t* sjob = (struct s_data_t*) self->data;
 	dbg_assert ( ! sjob->recording );
 
-	int rc = zsock_recv (reader, TES_CAP_REQ_PIC,
+	int rc = zsock_recv (frontend, TES_CAP_REQ_PIC,
 		&sjob->basefname,
 		&sjob->measurement,
 		&sjob->min_ticks,
@@ -1219,7 +1219,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	rc = s_is_req_valid (sjob);
 	if (rc != TES_CAP_REQ_OK)
 	{
-		s_send_err (sjob, reader, rc);
+		s_send_err (sjob, frontend, rc);
 		return 0;
 	}
 
@@ -1250,7 +1250,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	rc = s_task_construct_filenames (sjob);
 	if (rc != TES_CAP_REQ_OK)
 	{
-		s_send_err (sjob, reader, rc);
+		s_send_err (sjob, frontend, rc);
 		return 0;
 	}
 
@@ -1265,7 +1265,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			rc = s_conv_data (sjob);
 			if (rc != TES_CAP_REQ_OK)
 			{
-				s_send_err (sjob, reader, rc);
+				s_send_err (sjob, frontend, rc);
 				return 0;
 			}
 		}
@@ -1274,11 +1274,11 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		rc = s_stats_read (sjob);
 		if (rc != TES_CAP_REQ_OK)
 		{
-			s_send_err (sjob, reader, rc);
+			s_send_err (sjob, frontend, rc);
 			return 0;
 		}
 
-		rc = s_stats_send (sjob, self->frontend, TES_CAP_REQ_OK);
+		rc = s_stats_send (sjob, frontend, TES_CAP_REQ_OK);
 		if (rc != TES_CAP_REQ_OK)
 		{
 			logmsg (0, LOG_NOTICE, "Could not send stats");
@@ -1301,7 +1301,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	rc = s_open (sjob, fmode);
 	if (rc != TES_CAP_REQ_OK)
 	{
-		s_send_err (sjob, reader, rc);
+		s_send_err (sjob, frontend, rc);
 		s_close (sjob);
 		return 0;
 	}
@@ -1317,14 +1317,14 @@ task_cap_req_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR, "Could not delete stat file");
-			s_send_err (sjob, reader, TES_CAP_REQ_EFAIL);
+			s_send_err (sjob, frontend, TES_CAP_REQ_EFAIL);
 
 			s_close (sjob);
 			return 0;
 		}
 	}
 
-	/* Disable polling on the reader until the job is done. Wakeup
+	/* Disable polling on the frontend until the job is done. Wakeup
 	 * packet handler. */
 	task_activate (self);
 
@@ -1689,9 +1689,9 @@ done:
 			status = s_conv_data (sjob);
 
 		/* Send reply. */
-		s_stats_send (sjob, self->frontend, status);
+		s_stats_send (sjob, self->frontends[0].sock, status);
 
-		/* Enable polling on the reader and deactivate packet
+		/* Enable polling on the frontend and deactivate packet
 		 * handler. */
 		return TASK_SLEEP;
 	}
@@ -1767,7 +1767,8 @@ task_cap_fin (task_t* self)
 		s_flush (sjob);
 		s_close (sjob);
 		rc  = s_stats_write (sjob);
-		rc |= s_stats_send  (sjob, self->frontend, TES_CAP_REQ_EWRT);
+		rc |= s_stats_send  (
+			sjob, self->frontends[0].sock, TES_CAP_REQ_EWRT);
 	}
 
 	for (int s = 0; s < NUM_DSETS ; s++)

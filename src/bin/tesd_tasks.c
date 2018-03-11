@@ -29,8 +29,8 @@
  * current frame sequences mod 2^16) is passed to the pkt_handler.
  * s_sig_hn also takes care of updating the task's head.
  *
- * If the task defines a public interface address, s_task_shim will
- * open the socket, and if it defines a client handler, it will
+ * If the task defines public frontend addresses, s_task_shim will
+ * open the socket, and if the frontend defines a handler, it will
  * register it with the task's loop. Each task has a pointer for its
  * own data.
  *
@@ -40,26 +40,26 @@
  *
  * Tasks defined with the autoactivate flag on are activated before
  * entering the loop. Otherwise the task should activate itself from
- * within its initializer or in its client frontend handler.
+ * within its initializer or in its frontend handlers.
  *
- * Tasks defined with the automute flag must have a client_handler.
- * The handler will then be deregistered from the loop upon task
- * activation, and registered again upon deactivation.
+ * Each frontend defined with the automute flag will have its handler
+ * deregistered from the loop upon task activation, and registered again
+ * upon deactivation.
  *
  * Right after the loop terminates, s_task_shim will call the task
  * finalizer, so it can cleanup its data and possibly send final
  * messages to clients.
  *
- * The actual task is done inside client_handler and pkt_handler.
+ * The actual task is done inside the frontend handlers and pkt_handler.
  *
- *   client_handler processes messages on the public socket. If
- *   front_addr is not set, the task has no public interface.
+ *   each frontend handler processes messages on the public socket. If
+ *   if no frontend is set, the task has no public interface.
  *
  *   pkt_handler is called by the generic socket reader for each
  *   packet in each ring and does whatever.
  *
- * Both handlers have access to the zloop so they can enable or
- * disable readers (e.g. the client_handler can disable itself after
+ * All handlers have access to the zloop so they can enable or
+ * disable readers (e.g. a frontend handler can disable itself after
  * receiving a job and the pkt_handler can re-enable it when done).
  *
  * If either handler encounters a fatal error, it returns with
@@ -161,39 +161,55 @@ static int  s_task_dispatch (task_t* self, zloop_t* loop,
 #define NUM_TASKS 4
 static task_t s_tasks[] = {
 	{ // PACKET INFO
-		.client_handler = task_info_req_hn,
-		.pkt_handler    = task_info_pkt_hn,
-		.data_init      = task_info_init,
-		.data_fin       = task_info_fin,
-		.front_addr     = "tcp://*:" TES_INFO_LPORT,
-		.front_type     = ZMQ_REP,
-		.automute       = 1,
+		.pkt_handler = task_info_pkt_hn,
+		.data_init   = task_info_init,
+		.data_fin    = task_info_fin,
+		.frontends   = {
+			{
+				.handler   = task_info_req_hn,
+				.addresses = "tcp://*:" TES_INFO_LPORT,
+				.type      = ZMQ_REP,
+				.automute  = 1,
+			},
+		},
 	},
 	{ // CAPTURE
-		.client_handler = task_cap_req_hn,
-		.pkt_handler    = task_cap_pkt_hn,
-		.data_init      = task_cap_init,
-		.data_fin       = task_cap_fin,
-		.front_addr     = "tcp://*:" TES_CAP_LPORT,
-		.front_type     = ZMQ_REP,
-		.automute       = 1,
+		.pkt_handler = task_cap_pkt_hn,
+		.data_init   = task_cap_init,
+		.data_fin    = task_cap_fin,
+		.frontends   = {
+			{
+				.handler   = task_cap_req_hn,
+				.addresses = "tcp://*:" TES_CAP_LPORT,
+				.type      = ZMQ_REP,
+				.automute  = 1,
+			},
+		},
 	},
 	{ // GET AVG TRACE
-		.client_handler = task_avgtr_req_hn,
-		.pkt_handler    = task_avgtr_pkt_hn,
-		.data_init      = task_avgtr_init,
-		.data_fin       = task_avgtr_fin,
-		.front_addr     = "tcp://*:" TES_AVGTR_LPORT,
-		.front_type     = ZMQ_REP,
-		.automute       = 1,
+		.pkt_handler = task_avgtr_pkt_hn,
+		.data_init   = task_avgtr_init,
+		.data_fin    = task_avgtr_fin,
+		.frontends   = {
+			{
+				.handler   = task_avgtr_req_hn,
+				.addresses = "tcp://*:" TES_AVGTR_LPORT,
+				.type      = ZMQ_REP,
+				.automute  = 1,
+			},
+		},
 	},
 	{ // PUBLISH HIST
-		.client_handler = task_hist_sub_hn,
-		.pkt_handler    = task_hist_pkt_hn,
-		.data_init      = task_hist_init,
-		.data_fin       = task_hist_fin,
-		.front_addr     = "tcp://*:" TES_HIST_LPORT,
-		.front_type     = ZMQ_XPUB,
+		.pkt_handler = task_hist_pkt_hn,
+		.data_init   = task_hist_init,
+		.data_fin    = task_hist_fin,
+		.frontends   = {
+			{
+				.handler   = task_hist_sub_hn,
+				.addresses = "tcp://*:" TES_HIST_LPORT,
+				.type      = ZMQ_XPUB,
+			},
+		},
 	}
 };
 
@@ -336,8 +352,12 @@ task_activate (task_t* self)
 {
 	assert (self != NULL);
 
-	if (self->automute)
-		zloop_reader_end (self->loop, self->frontend);
+	for (task_endp_t* frontend = &self->frontends[0];
+			frontend->handler != NULL; frontend++)
+	{
+		if (frontend->automute)
+			zloop_reader_end (self->loop, frontend->sock);
+	}
 
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
@@ -351,15 +371,19 @@ task_activate (task_t* self)
 int
 task_deactivate (task_t* self)
 {
-	if (self->automute)
+	for (task_endp_t* frontend = &self->frontends[0];
+			frontend->handler != NULL; frontend++)
 	{
-		int rc = zloop_reader (self->loop, self->frontend,
-			self->client_handler, self);
-		if (rc == -1)
+		if (frontend->automute)
 		{
-			logmsg (errno, LOG_ERR,
-				"Could not re-enable the zloop reader");
-			return TASK_ERROR;
+			int rc = zloop_reader (self->loop, frontend->sock,
+					frontend->handler, self);
+			if (rc == -1)
+			{
+				logmsg (errno, LOG_ERR,
+						"Could not re-enable the zloop reader");
+				return TASK_ERROR;
+			}
 		}
 	}
 
@@ -565,44 +589,51 @@ s_task_shim (zsock_t* pipe, void* self_)
 	// self->error = 1;
 	// goto cleanup;
 
-	/* Open the public interface */
-	if (self->front_addr != NULL)
+	/* Open the public interfaces */
+	for (task_endp_t* frontend = &self->frontends[0];
+			frontend->handler != NULL; frontend++)
 	{
-		self->frontend = zsock_new (self->front_type);
-		if (self->frontend == NULL)
+		if (frontend->addresses != NULL)
 		{
-			logmsg (errno, LOG_ERR,
-				"Could not open the public interface");
-			self->error = 1;
-			goto cleanup;
+			frontend->sock = zsock_new (frontend->type);
+			if (frontend->sock == NULL)
+			{
+				logmsg (errno, LOG_ERR,
+					"Could not open the public interfaces");
+				self->error = 1;
+				goto cleanup;
+			}
+			rc = zsock_attach (frontend->sock, frontend->addresses, 1);
+			if (rc == -1)
+			{
+				logmsg (errno, LOG_ERR,
+					"Could not bind the public interfaces");
+				self->error = 1;
+				goto cleanup;
+			}
+			logmsg (0, LOG_INFO,
+				"Listening on port(s) %s", frontend->addresses);
+
+			if (frontend->handler != NULL)
+			{
+				rc = zloop_reader (loop, frontend->sock,
+					frontend->handler, self);
+				if (rc == -1)
+				{
+					logmsg (errno, LOG_ERR,
+						"Could not register the zloop frontend readers");
+					self->error = 1;
+					goto cleanup;
+				}
+			}
 		}
-		rc = zsock_attach (self->frontend, self->front_addr, 1);
-		if (rc == -1)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not bind the public interface");
-			self->error = 1;
-			goto cleanup;
-		}
-		logmsg (0, LOG_INFO,
-			"Listening on port(s) %s", self->front_addr);
 	}
-	/* Register the readers */
-	if (self->automute)
-		assert (self->frontend != NULL &&
-			self->client_handler != NULL);
 
 	rc = zloop_reader (loop, pipe, s_sig_hn, self);
-	if (self->client_handler != NULL)
-	{
-		assert (self->frontend != NULL);
-		rc |= zloop_reader (loop, self->frontend,
-			self->client_handler, self);
-	}
-	if (rc != 0)
+	if (rc == -1)
 	{
 		logmsg (errno, LOG_ERR,
-			"Could not register the zloop readers");
+			"Could not register the zloop PAIR reader");
 		self->error = 1;
 		goto cleanup;
 	}
@@ -650,7 +681,9 @@ cleanup:
 		dbg_assert (self->data == NULL);
 	}
 	zloop_destroy (&loop);
-	zsock_destroy (&self->frontend);
+	for (task_endp_t* frontend = &self->frontends[0];
+			frontend->sock != NULL; frontend++)
+		zsock_destroy (&frontend->sock);
 	logmsg (0, LOG_DEBUG, "Done");
 #ifdef ENABLE_FULL_DEBUG
 	logmsg (0, LOG_DEBUG,

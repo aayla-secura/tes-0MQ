@@ -23,6 +23,8 @@ struct s_data_t
 	unsigned char buf[TES_HIST_MAXSIZE];
 };
 
+static void s_clear (struct s_data_t* hist);
+
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
 /* -------------------------------------------------------------- */
@@ -53,13 +55,13 @@ s_clear (struct s_data_t* hist)
  * ignored.
  */
 int
-task_hist_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
+task_hist_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
 
-	zmsg_t* msg = zmsg_recv (reader);
+	zmsg_t* msg = zmsg_recv (frontend);
 	if (msg == NULL)
 	{ /* this shouldn't happen */
 		logmsg (0, LOG_DEBUG, "Receive interrupted");
@@ -218,7 +220,8 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		/* Send the histogram */
 #ifdef ENABLE_FULL_DEBUG
 		hist->published++;
-		int rc = zmq_send (zsock_resolve (self->frontend),
+		int rc = zmq_send (
+			zsock_resolve (self->frontends[0].sock),
 			hist->buf, hist->cur_size, 0);
 		if (rc == -1)
 		{
@@ -237,7 +240,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			logmsg (0, LOG_DEBUG,
 				"Published 50 more histogtams");
 #else
-		zmq_send (zsock_resolve (self->frontend),
+		zmq_send (zsock_resolve (self->frontends[0].sock),
 			hist->buf, hist->cur_size, 0);
 #endif
 
