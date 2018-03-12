@@ -275,7 +275,7 @@ Both client and server will print usage when given the '-h' option.
 
 #### TEST APPLICATIONS
 
-To compile the test apps do `make test` or alternatively `make all` to compile
+To compile the test apps do `make tests` or alternatively `make all` to compile
 everything. Test apps are not installed in the `PREFIX` location.
 
 # TO DO
