@@ -29,9 +29,10 @@ static char s_prog_name[PATH_MAX];
  * different subcommands, i.e. if one command has 'c' with no argument,
  * another one cannot have 'c:' with an argument */
 #define OPTS_S_INFO  "w:"
+#define OPTS_J_CONF  "t:R:"
 #define OPTS_R_ALL   "m:w:t:e:rocCa"
 #define OPTS_L_TRACE "w:"
-#define OPTS_L_HIST  "n:"
+#define OPTS_L_HIST  "n:" /* both jitter and mca */
 
 static void
 s_usage (void)
@@ -46,13 +47,19 @@ s_usage (void)
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -w <seconds>       " ANSI_RESET "Number of seconds to accumulate for.\n"
 		              "                                     Default is 1.\n\n"
+		ANSI_FG_GREEN "jitter_conf" ANSI_RESET ": Configure or query jitter histogram configuration.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Number of ticks to accumulate for.\n"
+		              "                                     Default is 0 (query setting).\n\n"
+		ANSI_FG_RED   "    -R <channel>       " ANSI_RESET "Event channel to trigger on.\n"
+		              "                                     Default is 0.\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Remote filename.\n"
 		ANSI_FG_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
 		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
 		              "                       "            "Default is 0.\n"
-		ANSI_FG_RED   "    -e <ticks>         " ANSI_RESET "Save at least that many non-tick\n"
+		ANSI_FG_RED   "    -e <evens>         " ANSI_RESET "Save at least that many non-tick\n"
 		              "                       "            "events. Default is 0.\n"
 		ANSI_FG_RED   "    -r                 " ANSI_RESET "Rename any existing measurement\n"
 		              "                       "            "group of that name.\n"
@@ -68,7 +75,7 @@ s_usage (void)
 		ANSI_FG_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
 		              "                       "            "receive a timeout error if no trace arrives\n"
 		              "                       "            "in this period. Default is 5.\n\n"
-		ANSI_FG_GREEN "local_hist" ANSI_RESET ": Save histograms to a local file.\n"
+		ANSI_FG_GREEN "local_mca" ANSI_RESET ": Save histograms to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Local filename.\n"
 		ANSI_FG_RED   "    -n <count>         " ANSI_RESET "Save up to that many histograms.\n"
@@ -130,6 +137,7 @@ s_prompt (void)
 		printf ("Reply with 'y' or 'n': ");
 	} while (1);
 }
+
 /* --------------------- PACKET INFO -------------------- */
 
 static int
@@ -237,9 +245,101 @@ s_server_info (const char* server, const char* filename,
 	return 0;
 }
 
+/* --------------------- JITTER CONF -------------------- */
+
+static int
+s_jitter_conf (const char* server, const char* filename,
+	int argc, char** argv)
+{
+	uint64_t ticks = 0;
+	uint8_t ref_ch = 0;
+
+	/* Command-line */
+	char* buf = NULL;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	while (optind < argc)
+	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_J_CONF);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
+		switch (opt)
+		{
+			case 'Z':
+			case 'F':
+				break;
+			case 't':
+			case 'R':
+				if (opt == 't')
+					ticks = strtoul (optarg, &buf, 10);
+				else
+					ref_ch = strtoul (optarg, &buf, 10);
+
+				if (strlen (buf))
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
+			default:
+				printf ("%c, %c, %d\n",opt,optopt, optind);
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+
+	/* Proceed? */
+	if (ticks > 0)
+	{
+		printf ("Configuring jitter to accumulate over %lu ticks"
+				"and trigger on channel %hhu\n", ticks, ref_ch);
+		if ( s_prompt () )
+			return -1;
+	}
+
+	/* Open the socket */
+	errno = 0;
+	zsock_t* sock = zsock_new_req (server);
+	if (sock == NULL)
+	{
+		if (errno)
+			perror ("Could not connect to the server");
+		else
+			fprintf (stderr, "Could not connect to the server\n");
+		return -1;
+	}
+
+	/* Send the request */
+	zsock_send (sock, TES_JITTER_REQ_PIC, ref_ch, ticks);
+	puts ("Waiting for reply");
+
+	int rc = zsock_recv (sock, TES_CAP_REP_PIC, &ref_ch, &ticks);
+	zsock_destroy (&sock);
+
+	if (rc == -1)
+		return -1;
+
+	/* Print reply */
+	printf ("\n");
+	printf ("Set values are: ticks = %lu, ref channel = %hhu\n",
+		ticks, ref_ch);
+
+	return 0;
+}
 
 /* -------------------- AVERAGE TRACE ------------------- */
-#define L_TRACE_MAX_SIZE 65528U
 
 static int
 s_local_save_trace (const char* server, const char* filename,
@@ -384,7 +484,7 @@ s_local_save_trace (const char* server, const char* filename,
 
 static int
 s_local_save_hist (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char** argv, size_t max_size)
 {
 	uint64_t num_hist = 1;
 
@@ -432,7 +532,7 @@ s_local_save_hist (const char* server, const char* filename,
 	/* Proceed? */
 	printf ("Will save %lu histogram%s to local file '%s'.\n"
 		"Maximum total size is %lu.\n",
-		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*TES_HIST_MAXSIZE);
+		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*max_size);
 	if ( s_prompt () )
 		return -1;
 
@@ -469,7 +569,7 @@ s_local_save_hist (const char* server, const char* filename,
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Allocate space */
-	int rc = posix_fallocate (fd, fsize, num_hist*TES_HIST_MAXSIZE);
+	int rc = posix_fallocate (fd, fsize, num_hist*max_size);
 	if (rc)
 	{
 		errno = rc; /* posix_fallocate does not set it */
@@ -483,7 +583,8 @@ s_local_save_hist (const char* server, const char* filename,
 	/* TO DO: map starting at the last page boundary before end of
 	 * file. */
 	unsigned char* map = (unsigned char*)mmap (NULL,
-		fsize + num_hist*TES_HIST_MAXSIZE, PROT_WRITE, MAP_SHARED, fd, 0);
+		fsize + num_hist*max_size,
+		PROT_WRITE, MAP_SHARED, fd, 0);
 	if (map == (void*)-1)
 	{
 		perror ("Could not mmap file");
@@ -498,14 +599,13 @@ s_local_save_hist (const char* server, const char* filename,
 	assert (sock_h != NULL);
 	for (; ! zsys_interrupted && h < num_hist; h++)
 	{
-		rc = zmq_recv (sock_h, map + fsize + hsize,
-			TES_HIST_MAXSIZE, 0);
+		rc = zmq_recv (sock_h, map + fsize + hsize, max_size, 0);
 		if (rc == -1)
 		{
 			perror ("Could not write to file");
 			break;
 		}
-		else if ((size_t)rc > TES_HIST_MAXSIZE)
+		else if ((size_t)rc > max_size)
 		{
 			fprintf (stderr,
 				"Frame is too large: %lu bytes", (size_t)rc);
@@ -518,12 +618,32 @@ s_local_save_hist (const char* server, const char* filename,
 			h, (num_hist > 1)? "s" : "");
 
 	zsock_destroy (&sock);
-	munmap (map, num_hist*TES_HIST_MAXSIZE);
+	munmap (map, num_hist*max_size);
 	rc = ftruncate (fd, fsize + hsize);
 	if (rc == -1)
 		perror ("Could not truncate file");
 	close (fd);
 	return 0;
+}
+
+/* -------------------- MCA HISTOGRAM ------------------- */
+
+static int
+s_local_save_mca (const char* server, const char* filename,
+	int argc, char** argv)
+{
+	return s_local_save_hist (server, filename,
+		argc, argv, TES_HIST_MAXSIZE);
+}
+
+/* ------------------ JITTER HISTOGRAM ------------------ */
+
+static int
+s_local_save_jitter (const char* server, const char* filename,
+	int argc, char** argv)
+{
+	return s_local_save_hist (server, filename,
+		argc, argv, TES_JITTER_SIZE);
 }
 
 /* ------------------- REMOTE CAPTURE ------------------- */
@@ -749,7 +869,7 @@ main (int argc, char** argv)
 			printf ("Processing option at index %d\n", optind);
 #endif
 		int opt = getopt (argc, argv,
-			"+:h" OPTS_G OPTS_S_INFO OPTS_L_TRACE OPTS_L_HIST OPTS_R_ALL);
+			"+:h" OPTS_G OPTS_S_INFO OPTS_J_CONF OPTS_L_TRACE OPTS_L_HIST OPTS_R_ALL);
 		if (opt == -1)
 		{
 #ifdef GETOPT_DEBUG
@@ -799,7 +919,6 @@ main (int argc, char** argv)
 		exit (EXIT_FAILURE);
 	}
 	optind = 1; /* reset getopt position */
-	int rc = 0;
 	cmd_hn* callback = NULL;
 	char* defport = NULL;
 	bool require_filename = 1;
@@ -808,6 +927,12 @@ main (int argc, char** argv)
 	{
 		callback = s_server_info;
 		defport = TES_INFO_LPORT;
+		require_filename = 0;
+	}
+	else if (strcmp (cmd, "jitter_conf") == 0)
+	{
+		callback = s_jitter_conf;
+		defport = TES_JITTER_REP_LPORT;
 		require_filename = 0;
 	}
 	else if (strcmp (cmd, "remote_all") == 0)
@@ -820,10 +945,15 @@ main (int argc, char** argv)
 		callback = s_local_save_trace;
 		defport = TES_AVGTR_LPORT;
 	}
-	else if (strcmp (cmd, "local_hist") == 0)
+	else if (strcmp (cmd, "local_mca") == 0)
 	{
-		callback = s_local_save_hist;
+		callback = s_local_save_mca;
 		defport = TES_HIST_LPORT;
+	}
+	else if (strcmp (cmd, "local_jitter") == 0)
+	{
+		callback = s_local_save_jitter;
+		defport = TES_JITTER_PUB_LPORT;
 	}
 	else
 	{
@@ -848,6 +978,6 @@ main (int argc, char** argv)
 		exit (EXIT_FAILURE);
 	}
 
-	rc = callback (server, filename, argc, argv);
+	int rc = callback (server, filename, argc, argv);
 	exit (rc ? EXIT_FAILURE : EXIT_SUCCESS);
 }

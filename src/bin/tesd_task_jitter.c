@@ -343,7 +343,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	{ /* publish histogram */
 		int rc = zmq_send (
 			zsock_resolve (self->frontends[ENDP_PUB].sock),
-			(void*)hist->bins, TES_JITTER_MAXSIZE, 0);
+			(void*)hist->bins, TES_JITTER_SIZE, 0);
 #if DEBUG_LEVEL >= VERBOSE
 		if (rc == -1)
 		{
@@ -373,7 +373,7 @@ task_jitter_init (task_t* self)
 	assert (BIN_OFFSET == (TES_JITTER_NBINS - 1) / 2);
 
 	static struct s_data_t hist;
-	assert (sizeof (hist.bins) == TES_JITTER_MAXSIZE);
+	assert (sizeof (hist.bins) == TES_JITTER_SIZE);
 
 	/* Some defaults. */
 	hist.conf.ticks = 5;

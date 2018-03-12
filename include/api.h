@@ -45,6 +45,7 @@
 #define TES_AVGTR_REQ_EERR  3 // dropped trace
 #define TES_AVGTR_REQ_PIC  "4"
 #define TES_AVGTR_REP_PIC "1b"
+// #define TES_AVGTR_MAXSIZE 65528U
 
 /* Publish MCA histogram */
 #define TES_HIST_LPORT "55565"
@@ -58,7 +59,7 @@
 /* Histogram is 2^10 + 1, both positive and negative delays (so max of
  * 9-bit delay info. True delay is 16-bit, so there will be overflow (on
  * both sides). */
-#define TES_JITTER_NBINS   1025UL // including under-/overflow
-#define TES_JITTER_MAXSIZE 4100UL // each bin is 4 bytes
+#define TES_JITTER_NBINS 1025UL // including under-/overflow
+#define TES_JITTER_SIZE  4100UL // each bin is 4 bytes
 
 #endif
