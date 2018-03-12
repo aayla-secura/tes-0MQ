@@ -7,7 +7,7 @@ connected to the FPGA.
 
 # API
 
-The server accepts client requests on two [ØMQ](http://zeromq.org/) sockets. 
+The server talks to clients over [ØMQ](http://zeromq.org/) sockets. 
 
 ## SERVER INFO REP INTERFACE
 
