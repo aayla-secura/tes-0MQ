@@ -42,7 +42,9 @@
 #define TESTING       5
 #define VERBOSE      10
 #define ARE_YOU_NUTS 50 // expect output every ~1 packet
-#define DEBUG_LEVEL TESTING
+#ifndef DEBUG_LEVEL
+#  define DEBUG_LEVEL TESTING
+#endif
 
 #if DEBUG_LEVEL > NO_DEBUG
 #  define TESPKT_DEBUG
