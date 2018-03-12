@@ -34,8 +34,10 @@
 #endif
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
-#define TICK_EVERY 10
-#define WAIT_NSEC 100000000
+#define TICK_EVERY 1000
+#define FORCE_SAME_EVERY 100
+#define MAX_DELAY 500
+#define WAIT_NSEC 1000000
 
 static void
 dump_pkt (const unsigned char* pkt, uint32_t len)
@@ -116,6 +118,7 @@ main (void)
 	pfd.fd = nmd->fd;
 	pfd.events = POLLOUT;
 
+	int next_is_nonref = 1;
 	while ( ! interrupted )
 	{
 		rc = poll (&pfd, 1, 1000);
@@ -153,14 +156,14 @@ main (void)
 			/* Toss a coin for channel 0 vs 1 */
 			struct tespkt_event_hdr* eh =
 				(struct tespkt_event_hdr*)(void*) &pkt.body;
-			uint8_t ch	= (int) ((double)rand () * 2 / RAND_MAX);
-			assert (ch < 3);
-			if (ch == 2)
-				ch = 1;
+			uint8_t ch = next_is_nonref;
+			if ((int)((double)rand() * FORCE_SAME_EVERY / RAND_MAX) != 0 )
+				next_is_nonref ^= 1;
 			eh->flags.CH = ch;
 
 			/* Get random delay */
-			uint16_t delay	= (int) ((double)rand () * UINT16_MAX / RAND_MAX);
+			uint16_t delay	= (int) (
+				(double)rand () * MAX_DELAY / RAND_MAX);
 			eh->toff = delay;
 		}
 
