@@ -622,6 +622,9 @@ main (int argc, char **argv)
 	set_verbose (be_verbose);
 	if (be_daemon)
 	{
+		logmsg (0, LOG_INFO,
+			"Going to background, pidfile is '%s'", pidfile);
+
 		/* Go into background. */
 		rc = daemonize (pidfile, s_init, &data, INIT_TOUT);
 		if (rc == -1)
@@ -633,8 +636,6 @@ main (int argc, char **argv)
 
 		/* Start syslog. */
 		openlog ("TES server", 0, LOG_DAEMON);
-		logmsg (0, LOG_DEBUG,
-			"Wrote pid to file '%s'", pidfile);
 	}
 	else
 	{
