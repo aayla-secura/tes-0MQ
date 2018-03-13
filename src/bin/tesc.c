@@ -75,7 +75,7 @@ s_usage (void)
 		ANSI_FG_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
 		              "                       "            "receive a timeout error if no trace arrives\n"
 		              "                       "            "in this period. Default is 5.\n\n"
-		ANSI_FG_GREEN "local_mca" ANSI_RESET ": Save histograms to a local file.\n"
+		ANSI_FG_GREEN "local_mca | local_jitter" ANSI_RESET ": Save histograms to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Local filename.\n"
 		ANSI_FG_RED   "    -n <count>         " ANSI_RESET "Save up to that many histograms.\n"
@@ -328,7 +328,7 @@ s_jitter_conf (const char* server, const char* filename,
 	zsock_send (sock, TES_JITTER_REQ_PIC, ref_ch, ticks);
 	puts ("Waiting for reply");
 
-	int rc = zsock_recv (sock, TES_CAP_REP_PIC, &ref_ch, &ticks);
+	int rc = zsock_recv (sock, TES_JITTER_REP_PIC, &ref_ch, &ticks);
 	zsock_destroy (&sock);
 
 	if (rc == -1)
