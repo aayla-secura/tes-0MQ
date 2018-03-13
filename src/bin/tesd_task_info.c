@@ -19,6 +19,7 @@ struct s_data_t
 	uint64_t ticks;
 	uint64_t mcas;
 	uint64_t traces;
+	uint64_t events;
 };
 
 static zloop_timer_fn  s_timeout_hn;
@@ -50,7 +51,8 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 		"%lu bad, "
 		"%lu ticks, "
 		"%lu mcas, "
-		"%lu traces",
+		"%lu traces"
+		"%lu other events",
 		info->received,
 		info->missed,
 		info->bad,
@@ -64,7 +66,8 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 		info->bad,
 		info->ticks,
 		info->mcas,
-		info->traces);
+		info->traces,
+		info->events);
 
 	memset (info, 0, sizeof (struct s_data_t));
 
@@ -132,16 +135,23 @@ task_info_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	dbg_assert (self != NULL);
 	struct s_data_t* info = (struct s_data_t*) self->data;
 
+	bool is_header = tespkt_is_header (pkt);
+	bool is_tr_header = (tespkt_is_trace (pkt) && is_header) ||
+		tespkt_is_trace_dp (pkt);
+	bool is_mca_header = tespkt_is_mca (pkt) && is_header;
+
 	info->received++;
 	info->missed += missed;
 	if (err)
 		info->bad++;
 	else if (tespkt_is_tick (pkt))
 		info->ticks++;
-	else if (tespkt_is_mca (pkt))
+	else if (is_mca_header)
 		info->mcas++;
-	else if (tespkt_is_trace (pkt))
+	else if (is_tr_header)
 		info->traces++;
+	else /* FIX: check num events for dp trace */
+		info->events += tespkt_event_nums (pkt);
 
 	return 0;
 }

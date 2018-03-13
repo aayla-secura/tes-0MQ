@@ -14,7 +14,7 @@ The server talks to clients over [ØMQ](http://zeromq.org/) sockets.
 This interface accepts requests to reply with and log statistics, such
 as bandwidth, missed packets etc.
 
-Valid requests have a picture of "4", replies have a picture of "1888888".
+Valid requests have a picture of "4", replies have a picture of "18888888".
 
 #### Message frames in a valid request
 
@@ -40,9 +40,14 @@ Valid requests have a picture of "4", replies have a picture of "1888888".
 
 5. **No. of ticks**
 
-6. **No. of MCA packets**
+6. **No. of MCA headers**
 
-7. **No. of trace packets**
+7. **No. of trace headers**
+
+8. **No. of other events**
+
+	This is the number of (non-tick, non-trace) events. Each non-tick,
+	non-trace event frame contains several of those.
 
 ## CAPTURE REP INTERFACE
 

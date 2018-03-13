@@ -7,8 +7,8 @@
 #define TES_INFO_REQ_OK    0 // accepted, reply/action follows
 #define TES_INFO_REQ_EINV  1 // malformed request
 
-#define TES_INFO_REQ_PIC       "4"
-#define TES_INFO_REP_PIC "1888888"
+#define TES_INFO_REQ_PIC        "4"
+#define TES_INFO_REP_PIC "18888888"
 
 /* Capture to file */
 #define TES_CAP_LPORT "55555"

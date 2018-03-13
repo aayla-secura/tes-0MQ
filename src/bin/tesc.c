@@ -202,7 +202,7 @@ s_server_info (const char* server, const char* filename,
 	puts ("Waiting for reply");
 
 	uint8_t rep;
-	uint64_t processed, missed, bad, ticks, mcas, traces;
+	uint64_t processed, missed, bad, ticks, mcas, traces, events;
 	int rc = zsock_recv (sock, TES_INFO_REP_PIC,
 		&rep,
 		&processed,
@@ -210,7 +210,8 @@ s_server_info (const char* server, const char* filename,
 		&bad,
 		&ticks,
 		&mcas,
-		&traces); 
+		&traces,
+		&events); 
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -228,15 +229,17 @@ s_server_info (const char* server, const char* filename,
 				"processed packets: %lu\n"
 				"missed packets:    %lu\n"
 				"bad packets:       %lu\n"
-				"ticks packets:     %lu\n"
-				"mca packets:       %lu\n"
-				"trace packets:     %lu\n",
+				"ticks:             %lu\n"
+				"mcas:              %lu\n"
+				"traces:            %lu\n"
+				"other events:      %lu\n",
 				processed,
 				missed,
 				bad,
 				ticks,
 				mcas,
-				traces);
+				traces,
+				events);
 			break;
 		default:
 			assert (0);
