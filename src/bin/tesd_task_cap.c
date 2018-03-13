@@ -1631,6 +1631,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 	else
 	{ /* short event */
+		/* FIX: check num events for dp trace */
 		sjob->st.events += tespkt_event_nums (pkt);
 	}
 
