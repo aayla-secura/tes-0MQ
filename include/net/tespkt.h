@@ -167,8 +167,9 @@ static inline uint16_t tespkt_event_nums (tespkt* pkt);
  * Get event's size, type and time.
  */
 static inline uint16_t tespkt_esize (tespkt* pkt);
+static inline uint16_t tespkt_true_esize (tespkt* pkt);
 static inline struct tespkt_event_type* tespkt_etype (tespkt* pkt);
-static inline uint16_t tespkt_event_toff (tespkt* pkt);
+static inline uint16_t tespkt_event_toff (tespkt* pkt, uint16_t e);
 
 /*
  * Get tick's period, timestamp, error registers and events lost
@@ -212,7 +213,8 @@ static inline uint16_t tespkt_trace_toff (tespkt* pkt);
  * Get event (or tick) flags as a struct with separate fields for
  * each register.
  */
-static inline struct tespkt_event_flags* tespkt_evt_fl  (tespkt* pkt);
+static inline struct tespkt_event_flags* tespkt_evt_fl (tespkt* pkt,
+	uint16_t e);
 static inline struct tespkt_tick_flags*  tespkt_tick_fl (tespkt* pkt);
 
 /*
@@ -737,9 +739,11 @@ static inline uint32_t
 tespkt_mca_bin (tespkt* pkt, uint16_t bin)
 {
 	if (tespkt_is_header (pkt))
-		return ftohl *(uint32_t*)(&pkt->body + bin*BIN_LEN + MCA_HDR_LEN);
+		return ftohl *(uint32_t*)(
+			(char*)&pkt->body + bin*BIN_LEN + MCA_HDR_LEN);
 	else
-		return ftohl *(uint32_t*)(&pkt->body + bin*BIN_LEN);
+		return ftohl *(uint32_t*)(
+			(char*)&pkt->body + bin*BIN_LEN);
 }
 
 static inline struct tespkt_mca_flags*
@@ -755,8 +759,10 @@ tespkt_mca_fl (tespkt* pkt)
 static inline uint16_t
 tespkt_event_nums (tespkt* pkt)
 {
+	if (tespkt_is_trace (pkt))
+		return (tespkt_is_header (pkt) ? 1 : 0);
 	return ( ( tespkt_flen (pkt) - TES_HDR_LEN ) / (
-		tespkt_esize (pkt) << 3 ) );
+		tespkt_true_esize (pkt) ) );
 }
 
 static inline uint16_t
@@ -765,18 +771,23 @@ tespkt_esize (tespkt* pkt)
 	return ftohs (pkt->tes_hdr.esize);
 }
 
+static inline uint16_t
+tespkt_true_esize (tespkt* pkt)
+{
+	return (ftohs (pkt->tes_hdr.esize) << 3);
+}
+
 static inline struct tespkt_event_type*
 tespkt_etype  (tespkt* pkt)
 {
 	return &pkt->tes_hdr.etype;
 }
 
-/* FIX: multiple events in a single frame */
 static inline uint16_t
-tespkt_event_toff (tespkt* pkt)
+tespkt_event_toff (tespkt* pkt, uint16_t e)
 {
-	return ftohs (
-		((struct tespkt_event_hdr*) &pkt->body)->toff);
+	return ftohs ( ((struct tespkt_event_hdr*) (
+		(char*)&pkt->body + e*tespkt_true_esize (pkt) ))->toff);
 }
 
 static inline uint32_t
@@ -898,12 +909,11 @@ tespkt_trace_toff (tespkt* pkt)
 		((struct tespkt_trace_full_hdr*) &pkt->body)->pulse.toffset);
 }
 
-/* FIX: multiple events in a single frame */
 static inline struct tespkt_event_flags*
-tespkt_evt_fl (tespkt* pkt)
+tespkt_evt_fl (tespkt* pkt, uint16_t e)
 {
-	struct tespkt_event_hdr* eh =
-		(struct tespkt_event_hdr*) &pkt->body;
+	struct tespkt_event_hdr* eh = (struct tespkt_event_hdr*) (
+		(char*)&pkt->body + e*tespkt_true_esize (pkt) );
 	return &eh->flags;
 }
 
@@ -987,8 +997,8 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 	fprintf (ostream, "Stream type:         Event\n");
 	fprintf (ostream, "Event size:          %hu\n",
 		tespkt_esize (pkt));
-	fprintf (ostream, "Time offset:         %hu\n",
-		tespkt_event_toff (pkt));
+	fprintf (ostream, "Number of events:    %hu\n",
+		tespkt_event_nums (pkt));
 	/* ---------- Tick event */
 	if (tespkt_is_tick (pkt))
 	{
@@ -1014,15 +1024,20 @@ pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 		return;
 	}
 	/* ---------- Non-tick event */
-	struct tespkt_event_flags* ef = tespkt_evt_fl (pkt);
-	fprintf (ostream, "Event flag PC:       %hhu\n", ef->PC);
-	fprintf (ostream, "Event flag O:        %hhu\n", ef->O);
-	fprintf (ostream, "Event flag CH:       %hhu\n", ef->CH);
-	fprintf (ostream, "Event flag TT:       %hhu\n", ef->TT);
-	fprintf (ostream, "Event flag HT:       %hhu\n", ef->HT);
-	fprintf (ostream, "Event flag PT:       %hhu\n", ef->PT);
-	fprintf (ostream, "Event flag T:        %hhu\n", ef->T);
-	fprintf (ostream, "Event flag N:        %hhu\n", ef->N);
+	for (int e = 0; e < tespkt_event_nums (pkt); e++)
+	{
+		fprintf (ostream, "Event time offset:   %hhu\n",
+			tespkt_event_toff (pkt, e));
+		struct tespkt_event_flags* ef = tespkt_evt_fl (pkt, e);
+		fprintf (ostream, "Event flag PC:       %hhu\n", ef->PC);
+		fprintf (ostream, "Event flag O:        %hhu\n", ef->O);
+		fprintf (ostream, "Event flag CH:       %hhu\n", ef->CH);
+		fprintf (ostream, "Event flag TT:       %hhu\n", ef->TT);
+		fprintf (ostream, "Event flag HT:       %hhu\n", ef->HT);
+		fprintf (ostream, "Event flag PT:       %hhu\n", ef->PT);
+		fprintf (ostream, "Event flag T:        %hhu\n", ef->T);
+		fprintf (ostream, "Event flag N:        %hhu\n", ef->N);
+	}
 	/* --------------- Peak */
 	if (tespkt_is_peak (pkt))
 	{

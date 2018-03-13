@@ -26,8 +26,8 @@ struct s_point_t
 	/* Even though each frame's delay saturates at UINT16_MAX, we allow
 	 * for larger accumulated delay, so we select the correct overflow bin
 	 * (positive vs negative) more often. */
-	uint64_t delay_since; // delay since last reference
-	uint64_t delay_until; // delay until next reference
+	uint16_t delay_since; // delay since last reference
+	uint16_t delay_until; // delay until next reference
 };
 
 /*
@@ -61,8 +61,8 @@ static void s_reset (struct s_data_t* hist);
 static inline void
 s_add_to_since (struct s_point_t* pt, uint16_t delay)
 {
-		if (pt->delay_since + delay > UINT64_MAX)
-			pt->delay_since = UINT64_MAX;
+		if (pt->delay_since + delay > UINT16_MAX)
+			pt->delay_since = UINT16_MAX;
 		else
 			pt->delay_since += delay;
 }
@@ -70,8 +70,8 @@ s_add_to_since (struct s_point_t* pt, uint16_t delay)
 static inline void
 s_add_to_until (struct s_point_t* pt, uint16_t delay)
 {
-		if (pt->delay_until + delay > UINT64_MAX)
-			pt->delay_until = UINT64_MAX;
+		if (pt->delay_until + delay > UINT16_MAX)
+			pt->delay_until = UINT16_MAX;
 		else
 			pt->delay_until += delay;
 }
@@ -84,8 +84,8 @@ s_save_points (struct s_data_t* hist)
 	for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
 	{
 		struct s_point_t* pt = &hist->points[p];
-		int64_t bin = pt->delay_since;
-		if (bin > (int64_t)pt->delay_until)
+		int bin = pt->delay_since;
+		if (bin > pt->delay_until)
 			bin = - pt->delay_until;
 
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
@@ -297,18 +297,10 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (is_tick)
 		hist->ticks++;
 
-	uint16_t esize = (tespkt_esize (pkt)) << 3;
-	uint16_t num_events = 1;
-	char* payload = &pkt->body;
-	if ( ! is_trace )
-		num_events = tespkt_event_nums (pkt);
-	dbg_assert (num_events*esize + TES_HDR_LEN == flen);
-	for (int e = 0; e < num_events; e++)
+	for (int e = 0; e < tespkt_event_nums (pkt); e++)
 	{
-		struct tespkt_event_hdr* eh =
-			(struct tespkt_event_hdr*)(payload + e*esize);
-		uint16_t delay = eh->toff;
-		struct tespkt_event_flags* ef = &eh->flags;
+		uint16_t delay = tespkt_event_toff (pkt, e);
+		struct tespkt_event_flags* ef = tespkt_evt_fl (pkt, e);
 		bool is_ref = (ef->CH == hist->cur_conf.ref_ch && ! is_tick);
 		bool make_new = ( ! is_ref && ! is_tick );
 
