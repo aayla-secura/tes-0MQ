@@ -288,6 +288,14 @@ s_inject_from_fidx (const char* basefname,
 	int looped = 0;
 	struct s_stats_t stats = {0};
 
+	struct tespkt pkt = {0};
+	unsigned char body[MAX_TES_FRAME_LEN - TES_HDR_LEN] = {0};
+	pkt.body = body;
+	if (pkt.body == NULL)
+	{
+		perror ("Could not malloc");
+		return -1;
+	}
 	while (!interrupted && looped != NUM_LOOPS)
 	{
 		int rc;
@@ -334,7 +342,8 @@ s_inject_from_fidx (const char* basefname,
 		}
 		stats.pkts++;
 
-		struct tespkt pkt = {0};
+		memset (&pkt, 0, TES_HDR_LEN);
+		memset (pkt.body, 0, MAX_TES_FRAME_LEN - TES_HDR_LEN);
 
 		/* Construct the ethernet header */
 		uint16_t plen = fidx.length;

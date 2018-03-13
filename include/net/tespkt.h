@@ -510,7 +510,7 @@ struct tespkt
 	{
 		struct ether_header eth_hdr; /* packed, 14 bytes */
 		uint16_t length;             /* length of packet */
-	};
+	} __attribute__ ((__packed__));
 	struct
 	{
 		uint16_t fseq;
@@ -518,7 +518,7 @@ struct tespkt
 		uint16_t esize;                 /* undefined for MCA */
 		struct tespkt_event_type etype; /* undefined for MCA */
 	} tes_hdr;
-	char body[MAX_TES_FRAME_LEN - TES_HDR_LEN];
+	unsigned char* body;
 };
 
 /* -------------------------------------------------------------- */
@@ -680,7 +680,7 @@ static inline uint16_t
 tespkt_mca_nbins_tot (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->last_bin + 1);
+		((struct tespkt_mca_hdr*) &pkt->body)->last_bin + 1);
 }
 
 #ifndef TES_MCASIZE_BUG
@@ -688,7 +688,7 @@ static inline uint16_t
 tespkt_mca_size (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->size);
+		((struct tespkt_mca_hdr*) &pkt->body)->size);
 }
 #else
 static inline uint32_t
@@ -702,51 +702,51 @@ static inline uint32_t
 tespkt_mca_lvalue (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->lowest_value);
+		((struct tespkt_mca_hdr*) &pkt->body)->lowest_value);
 }
 
 static inline uint16_t
 tespkt_mca_mfreq (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->most_frequent);
+		((struct tespkt_mca_hdr*) &pkt->body)->most_frequent);
 }
 
 static inline uint64_t
 tespkt_mca_total (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->total);
+		((struct tespkt_mca_hdr*) &pkt->body)->total);
 }
 
 static inline uint64_t
 tespkt_mca_startt (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->start_time);
+		((struct tespkt_mca_hdr*) &pkt->body)->start_time);
 }
 
 static inline uint64_t
 tespkt_mca_stopt (tespkt* pkt)
 {
 	return ftohl (
-		((struct tespkt_mca_hdr*)(void*) &pkt->body)->stop_time);
+		((struct tespkt_mca_hdr*) &pkt->body)->stop_time);
 }
 
 static inline uint32_t
 tespkt_mca_bin (tespkt* pkt, uint16_t bin)
 {
 	if (tespkt_is_header (pkt))
-		return ftohl (pkt->body[ bin*BIN_LEN + MCA_HDR_LEN ]);
+		return ftohl *(uint32_t*)(&pkt->body + bin*BIN_LEN + MCA_HDR_LEN);
 	else
-		return ftohl (pkt->body[ bin*BIN_LEN ]);
+		return ftohl *(uint32_t*)(&pkt->body + bin*BIN_LEN);
 }
 
 static inline struct tespkt_mca_flags*
 tespkt_mca_fl (tespkt* pkt)
 {
 	struct tespkt_mca_hdr* mh = 
-	   (struct tespkt_mca_hdr*)(void*) &pkt->body; 
+	   (struct tespkt_mca_hdr*) &pkt->body;
 	return &mh->flags;
 }
 
@@ -771,144 +771,147 @@ tespkt_etype  (tespkt* pkt)
 	return &pkt->tes_hdr.etype;
 }
 
+/* FIX: multiple events in a single frame */
 static inline uint16_t
 tespkt_event_toff (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_event_hdr*)(void*) &pkt->body)->toff);
+		((struct tespkt_event_hdr*) &pkt->body)->toff);
 }
 
 static inline uint32_t
 tespkt_tick_period (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_tick_hdr*)(void*) &pkt->body)->period);
+		((struct tespkt_tick_hdr*) &pkt->body)->period);
 }
 
 static inline uint64_t
 tespkt_tick_ts (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_tick_hdr*)(void*) &pkt->body)->ts);
+		((struct tespkt_tick_hdr*) &pkt->body)->ts);
 }
 
 static inline uint8_t
 tespkt_tick_ovrfl (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_tick_hdr*)(void*) &pkt->body)->ovrfl);
+		((struct tespkt_tick_hdr*) &pkt->body)->ovrfl);
 }
 
 static inline uint8_t
 tespkt_tick_err (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_tick_hdr*)(void*) &pkt->body)->err);
+		((struct tespkt_tick_hdr*) &pkt->body)->err);
 }
 
 static inline uint8_t
 tespkt_tick_cfd (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_tick_hdr*)(void*) &pkt->body)->cfd);
+		((struct tespkt_tick_hdr*) &pkt->body)->cfd);
 }
 
 static inline uint32_t
 tespkt_tick_lost (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_tick_hdr*)(void*) &pkt->body)->lost);
+		((struct tespkt_tick_hdr*) &pkt->body)->lost);
 }
 
 static inline uint16_t
 tespkt_peak_ht (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_peak_hdr*)(void*) &pkt->body)->height);
+		((struct tespkt_peak_hdr*) &pkt->body)->height);
 }
 
 static inline uint16_t
 tespkt_peak_riset (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_peak_hdr*)(void*) &pkt->body)->rise_time);
+		((struct tespkt_peak_hdr*) &pkt->body)->rise_time);
 }
 
 static inline uint32_t
 tespkt_area_area (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_area_hdr*)(void*) &pkt->body)->area);
+		((struct tespkt_area_hdr*) &pkt->body)->area);
 }
 
 static inline uint16_t
 tespkt_pulse_size (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_pulse_hdr*)(void*) &pkt->body)->size);
+		((struct tespkt_pulse_hdr*) &pkt->body)->size);
 }
 
 static inline uint32_t
 tespkt_pulse_area (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_pulse_hdr*)(void*) &pkt->body)->pulse.area);
+		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.area);
 }
 
 static inline uint16_t
 tespkt_pulse_len (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_pulse_hdr*)(void*) &pkt->body)->pulse.length);
+		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.length);
 }
 
 static inline uint16_t
 tespkt_pulse_toff (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_pulse_hdr*)(void*) &pkt->body)->pulse.toffset);
+		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.toffset);
 }
 
 static inline uint16_t
 tespkt_trace_size (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_trace_hdr*)(void*) &pkt->body)->size);
+		((struct tespkt_trace_hdr*) &pkt->body)->size);
 }
 
 static inline uint32_t
 tespkt_trace_area (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_trace_full_hdr*)(void*) &pkt->body)->pulse.area);
+		((struct tespkt_trace_full_hdr*) &pkt->body)->pulse.area);
 }
 
 static inline uint16_t
 tespkt_trace_len (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_trace_full_hdr*)(void*) &pkt->body)->pulse.length);
+		((struct tespkt_trace_full_hdr*) &pkt->body)->pulse.length);
 }
 
 static inline uint16_t
 tespkt_trace_toff (tespkt* pkt)
 {
 	return ftohs (
-		((struct tespkt_trace_full_hdr*)(void*) &pkt->body)->pulse.toffset);
+		((struct tespkt_trace_full_hdr*) &pkt->body)->pulse.toffset);
 }
 
+/* FIX: multiple events in a single frame */
 static inline struct tespkt_event_flags*
 tespkt_evt_fl (tespkt* pkt)
 {
 	struct tespkt_event_hdr* eh =
-		(struct tespkt_event_hdr*)(void*) &pkt->body;
+		(struct tespkt_event_hdr*) &pkt->body;
 	return &eh->flags;
 }
+
 static inline struct tespkt_tick_flags*
 tespkt_tick_fl (tespkt* pkt)
 {
 	struct tespkt_tick_hdr* eh =
-		(struct tespkt_tick_hdr*)(void*) &pkt->body;
+		(struct tespkt_tick_hdr*) &pkt->body;
 	return &eh->flags;
 }
 
@@ -916,7 +919,7 @@ static inline struct tespkt_trace_flags*
 tespkt_trace_fl (tespkt* pkt)
 {
 	struct tespkt_trace_hdr* th =
-		(struct tespkt_trace_hdr*)(void*) &pkt->body;
+		(struct tespkt_trace_hdr*) &pkt->body;
 	return &th->tr_flags;
 }
 
@@ -1139,15 +1142,12 @@ tespkt_is_valid (tespkt* pkt)
 	{
 		uint16_t esize = tespkt_esize (pkt);
 
-		/* Event size should not be 0. */
+		/* Event size should not be 0 and payload length should be
+		 * a multiple of event size * 8. */
 		if (esize == 0)
 			rc |= TES_EEVTSIZE;
-		else
-		{
-			/* Payload length should be a multiple of event size * 8. */
-			if ( (flen - TES_HDR_LEN) % (esize << 3) != 0 )
-				rc |= TES_EETHLEN;
-		}
+		else if ( (flen - TES_HDR_LEN) % (esize << 3) != 0 )
+			rc |= TES_EETHLEN;
 
 		/* Check event type as well as size for types with a fixed
 		 * size. */
@@ -1282,14 +1282,9 @@ tespkt_serror (char* buf, int err)
 #define EVT_TYPE_TRACE_DPTR 0x030c
 #endif
 
-/* Flags and event type are always sent as big-endian. */
-#define structtoul(s_ptr) ntohl ( *( (uint32_t*) (void*) s_ptr ) )
-#define structtous(s_ptr) ntohs ( *( (uint16_t*) (void*) s_ptr ) )
-
 static void
 tespkt_self_test (void)
 {
-	assert (sizeof (tespkt) == MAX_TES_FRAME_LEN);
 	assert (offsetof (tespkt, body) == TES_HDR_LEN);
 	assert (sizeof (struct tespkt_mca_hdr) == MCA_HDR_LEN);
 	assert (sizeof (struct tespkt_tick_hdr) == TICK_HDR_LEN);
@@ -1312,53 +1307,73 @@ tespkt_self_test (void)
 		assert (tespkt_error (1 << e) == _tespkt_errors[e]);
 
 	/* Check the order of the bitfields in the structs */
-	struct tespkt_event_type et;
+	union
+	{
+		struct tespkt_event_type fields;
+		uint16_t val;
+	} et;
 	memset (&et, 0, EVT_TYPE_LEN);
-	et.T = 1;
-	et.PKT = 3;
-	assert ( structtous (&et) == EVT_PKT_TYPE_MASK );
-	et.TR = 3;
-	assert ( structtous (&et) == EVT_TYPE_MASK );
+	et.fields.T = 1;
+	et.fields.PKT = 3;
+	assert (ntohs (et.val) == EVT_PKT_TYPE_MASK);
+	et.fields.TR = 3;
+	assert (ntohs (et.val) == EVT_TYPE_MASK);
 
-	struct tespkt_mca_flags mf;
+	union
+	{
+		struct tespkt_mca_flags fields;
+		uint32_t val;
+	} mf;
 	memset (&mf, 0, MCA_FL_LEN);
-	mf.Q = 0x0f;
-	mf.V = 0x0f;
-	mf.T = 0x0f;
-	mf.N = 0x1f;
-	mf.C = 0x07;
-	assert ( structtoul (&mf) == MCA_FL_MASK );
+	mf.fields.Q = 0x0f;
+	mf.fields.V = 0x0f;
+	mf.fields.T = 0x0f;
+	mf.fields.N = 0x1f;
+	mf.fields.C = 0x07;
+	assert (ntohl (mf.val) == MCA_FL_MASK);
 
-	struct tespkt_event_flags ef;
+	union
+	{
+		struct tespkt_event_flags fields;
+		uint16_t val;
+	} ef;
 	memset (&ef, 0, EVT_FL_LEN);
-	ef.PC = 0x0f;
-	ef.O  = 0x01;
-	ef.CH = 0x07;
-	ef.TT = 0x03;
-	ef.HT = 0x03;
-	ef.PT = 0x03;
-	ef.T  = 0x01;
-	ef.N  = 0x01;
-	assert ( structtous (&ef) == EVT_FL_MASK );
+	ef.fields.PC = 0x0f;
+	ef.fields.O  = 0x01;
+	ef.fields.CH = 0x07;
+	ef.fields.TT = 0x03;
+	ef.fields.HT = 0x03;
+	ef.fields.PT = 0x03;
+	ef.fields.T  = 0x01;
+	ef.fields.N  = 0x01;
+	assert (ntohs (ef.val) == EVT_FL_MASK);
 
-	struct tespkt_tick_flags tf;
+	union
+	{
+		struct tespkt_tick_flags fields;
+		uint16_t val;
+	} tf;
 	memset (&tf, 0, TICK_FL_LEN);
-	tf.MF = 0x01;
-	tf.EL = 0x01;
-	tf.TL = 0x01;
-	tf.T  = 0x01;
-	tf.N  = 0x01;
-	assert ( structtous (&tf) == TICK_FL_MASK );
+	tf.fields.MF = 0x01;
+	tf.fields.EL = 0x01;
+	tf.fields.TL = 0x01;
+	tf.fields.T  = 0x01;
+	tf.fields.N  = 0x01;
+	assert (ntohs (tf.val) == TICK_FL_MASK);
 
-	struct tespkt_trace_flags trf;
+	union
+	{
+		struct tespkt_trace_flags fields;
+		uint16_t val;
+	} trf;
 	memset (&trf, 0, TRACE_FL_LEN);
-	trf.MH  = 0x01;
-	trf.MP  = 0x01;
-	trf.STR = 0x1f;
-	trf.TT  = 0x03;
-	trf.TS  = 0x03;
-	trf.OFF = 0x0f;
-	assert ( structtous (&trf) == TRACE_FL_MASK );
+	trf.fields.MH  = 0x01;
+	trf.fields.MP  = 0x01;
+	trf.fields.STR = 0x1f;
+	trf.fields.TT  = 0x03;
+	trf.fields.TS  = 0x03;
+	trf.fields.OFF = 0x0f;
+	assert (ntohs (trf.val) == TRACE_FL_MASK);
 }
 
 #endif /* TESPKT_DEBUG */

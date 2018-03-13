@@ -100,6 +100,8 @@ main (void)
 
 	/* A dummy packet */
 	struct tespkt pkt = {0};
+	unsigned char body[MAX_TES_FRAME_LEN - TES_HDR_LEN] = {0};
+	pkt.body = body;
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
 	memcpy (&pkt.eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);

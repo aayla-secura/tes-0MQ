@@ -185,13 +185,13 @@ new_tespkt (void)
 		return NULL;
 	}
 
-	tespkt* pkt = malloc (MAX_TES_FRAME_LEN);
+	tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
 	if (pkt == NULL)
 	{
 		errno = ENOMEM;
 		raise (SIGTERM);
 	}
-	memset (pkt, 0, MAX_TES_FRAME_LEN);
+	memset (pkt, 0, sizeof (tespkt));
 
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
