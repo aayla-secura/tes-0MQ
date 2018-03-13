@@ -153,8 +153,8 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	/* FIX: how many channels are there? */
 	if (ticks == 0 || ref_ch > 1)
 	{
-		logmsg (0, LOG_INFO,
-			"Received an invalid request");
+		logmsg (0, LOG_DEBUG,
+			"Not changing configuration");
 	}
 	else
 	{
