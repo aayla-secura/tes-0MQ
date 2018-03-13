@@ -289,54 +289,70 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! hist->publishing || err || ! tespkt_is_event (pkt) )
 		return 0;
 
+	bool is_trace = ( tespkt_is_trace (pkt) &&
+		! tespkt_is_trace_dp (pkt) );
+	if ( is_trace && ! tespkt_is_header (pkt) )
+		return 0; /* non-header frame from multi-stream */
+
 	if (is_tick)
 		hist->ticks++;
 
-	uint16_t delay = tespkt_event_toff (pkt);
-	struct tespkt_event_flags* ef = tespkt_evt_fl (pkt);
-	bool is_ref = (ef->CH == hist->cur_conf.ref_ch && ! is_tick);
-	bool make_new = ( ! is_ref && ! is_tick );
+	uint16_t esize = (tespkt_esize (pkt)) << 3;
+	uint16_t num_events = 1;
+	char* payload = &pkt->body;
+	if ( ! is_trace )
+		num_events = tespkt_event_nums (pkt);
+	dbg_assert (num_events*esize + TES_HDR_LEN == flen);
+	for (int e = 0; e < num_events; e++)
+	{
+		struct tespkt_event_hdr* eh =
+			(struct tespkt_event_hdr*)(payload + e*esize);
+		uint16_t delay = eh->toff;
+		struct tespkt_event_flags* ef = &eh->flags;
+		bool is_ref = (ef->CH == hist->cur_conf.ref_ch && ! is_tick);
+		bool make_new = ( ! is_ref && ! is_tick );
 
-	if ( ! is_ref && hist->cur_npts == 0)
-		return 0; /* waiting for first ref since wake-up */
+		if ( ! is_ref && hist->cur_npts == 0)
+			return 0; /* waiting for first ref since wake-up */
 
-	for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
-		s_add_to_until (&hist->points[p], delay);
+		for (uint8_t p = 0; p < hist->cur_npts - 1; p++)
+			s_add_to_until (&hist->points[p], delay);
 
-	/* Do this before printing debug info. */
-	if ( ! is_ref )
-		s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
+		/* Do this before printing debug info. */
+		if ( ! is_ref )
+			s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
 
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
-	logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
-		ef->CH, is_tick ? " (tick)" : "       ", delay);
-	for (uint8_t p = 0; p < hist->cur_npts; p++)
-		logmsg (0, LOG_DEBUG, "Point %hhu delays: %hu, %hu",
-				p, hist->points[p].delay_since,
-				hist->points[p].delay_until);
+		logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
+				ef->CH, is_tick ? " (tick)" : "			 ", delay);
+		for (uint8_t p = 0; p < hist->cur_npts; p++)
+			logmsg (0, LOG_DEBUG, "Point %hhu delays: %hu, %hu",
+					p, hist->points[p].delay_since,
+					hist->points[p].delay_until);
 #endif
 
-	if (is_ref)
-		s_save_points (hist);
-	// else
-	//   s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
+		if (is_ref)
+			s_save_points (hist);
+		// else
+		//	 s_add_to_since (&hist->points[hist->cur_npts - 1], delay);
 
-	if (make_new)
-	{
-		if (hist->cur_npts < MAX_SIMULT_POINTS - 1)
-		{ /* last non-reference has the greatest delay, use it as a start */
-			struct s_point_t* new_ghost = &hist->points[hist->cur_npts];
-			new_ghost->delay_since = (new_ghost - 1)->delay_since;
-			new_ghost->delay_until = 0;
-			hist->cur_npts++;
-		}
-#if DEBUG_LEVEL >= VERBOSE
-		else
+		if (make_new)
 		{
-			logmsg (0, LOG_WARNING,
-				"Too many non-reference frames since last reference");
-		}
+			if (hist->cur_npts < MAX_SIMULT_POINTS - 1)
+			{ /* last non-reference has the greatest delay, use it as a start */
+				struct s_point_t* new_ghost = &hist->points[hist->cur_npts];
+				new_ghost->delay_since = (new_ghost - 1)->delay_since;
+				new_ghost->delay_until = 0;
+				hist->cur_npts++;
+			}
+#if DEBUG_LEVEL >= VERBOSE
+			else
+			{
+				logmsg (0, LOG_WARNING,
+						"Too many non-reference frames since last reference");
+			}
 #endif
+		}
 	}
 
 	if (hist->ticks == hist->cur_conf.ticks + 1)
