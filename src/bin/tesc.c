@@ -21,6 +21,8 @@
 #  endif
 #endif
 
+#define DEFAULT_SERVER "tcp://localhost"
+
 typedef int (cmd_hn)(const char*, const char*, int, char**);
 
 static char s_prog_name[PATH_MAX];
@@ -40,7 +42,7 @@ s_usage (void)
 	fprintf (stdout,
 		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server>"
 		ANSI_FG_GREEN "<command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
-		"The format for <server> is <proto>://<host>[:<port>]\n"
+		"The format for <server> is <proto>://<host>[:<port>]. Default is " DEFAULT_SERVER ".\n"
 		"Port defaults to the default port for the selected task.\n"
 		"Allowed commands:\n\n"
 		ANSI_FG_GREEN "server_info" ANSI_RESET ": Gets packet rate statistics.\n"
@@ -909,9 +911,10 @@ main (int argc, char** argv)
 	/* getopt won't complain from empty string argument. */
 	if (strlen (server) == 0)
 	{
-		fprintf (stderr, "You must specify the remote address.\n"
-			"Type %s -h for help\n", s_prog_name);
-		exit (EXIT_FAILURE);
+		snprintf (server, sizeof (server), "%s", DEFAULT_SERVER);
+		// fprintf (stderr, "You must specify the remote address.\n"
+		//   "Type %s -h for help\n", s_prog_name);
+		// exit (EXIT_FAILURE);
 	}
 
 	/* Get command argument. */
@@ -968,9 +971,9 @@ main (int argc, char** argv)
 	/* Did user supply port? */
 	if (strchr (strchrnul (server, '/'), ':') == NULL)
 	{
-		printf ("Port defaults to %s\n", defport);
 		snprintf (server + strlen (server),
 			sizeof (server) - strlen (server), ":%s", defport);
+		printf ("Connecting to %s\n", server);
 	}
 
 	if (require_filename && (strlen (filename) == 0))
