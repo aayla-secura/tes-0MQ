@@ -172,6 +172,7 @@ s_prep_next (struct s_data_t* data)
 		data->points[0] = data->points[data->cur_npts - 1];
 		dbg_assert(data->points[0].hid == -1);
 		data->cur_npts = 1;
+		data->ticks = 1;
 	}
 	else
 		dbg_assert (data->cur_npts == 0);
