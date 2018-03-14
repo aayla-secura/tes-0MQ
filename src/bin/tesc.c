@@ -275,7 +275,6 @@ s_jitter_conf (const char* server, const char* filename,
 		switch (opt)
 		{
 			case 'Z':
-			case 'F':
 				break;
 			case 't':
 			case 'R':
