@@ -1373,8 +1373,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	bool is_header = tespkt_is_header (pkt);
 	bool is_mca = tespkt_is_mca (pkt);
-	bool is_trace = ( tespkt_is_trace (pkt) &&
-		! tespkt_is_trace_dp (pkt) );
+	bool is_trace = tespkt_is_trace_long (pkt);
 
 	/* *************** Update tick and frame indices ***************
 	 * ***************** and choose the data file. ************** */

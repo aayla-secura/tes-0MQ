@@ -951,7 +951,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 		self->prev_fseq = cur_fseq;
 		if (tespkt_is_mca (pkt))
 			self->prev_pseq_mca = tespkt_pseq (pkt);
-		else if (tespkt_is_trace (pkt) && ! tespkt_is_trace_dp (pkt))
+		else if (tespkt_is_trace_long (pkt))
 			self->prev_pseq_tr = tespkt_pseq (pkt);
 
 		if (rc != 0)

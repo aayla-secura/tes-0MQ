@@ -111,6 +111,7 @@ static inline int tespkt_is_pulse (tespkt* pkt);
  * trace-dot-product trace event.
  */
 static inline int tespkt_is_trace (tespkt* pkt);
+static inline int tespkt_is_trace_long (tespkt* pkt);
 static inline int tespkt_is_trace_sgl  (tespkt* pkt);
 static inline int tespkt_is_trace_avg  (tespkt* pkt);
 static inline int tespkt_is_trace_dp   (tespkt* pkt);
@@ -520,7 +521,7 @@ struct tespkt
 		uint16_t esize;                 /* undefined for MCA */
 		struct tespkt_event_type etype; /* undefined for MCA */
 	} tes_hdr;
-	unsigned char* body;
+	void* body;
 };
 
 /* -------------------------------------------------------------- */
@@ -628,6 +629,13 @@ tespkt_is_trace (tespkt* pkt)
 	return ( tespkt_is_event (pkt) &&
 		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 );
+}
+
+static inline int
+tespkt_is_trace_long (tespkt* pkt)
+{
+	return ( tespkt_is_trace (pkt) &&
+		! tespkt_is_trace_dp (pkt) );
 }
 
 static inline int

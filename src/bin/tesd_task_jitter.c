@@ -349,8 +349,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! data->publishing || err || ! tespkt_is_event (pkt) )
 		return 0;
 
-	bool is_trace = ( tespkt_is_trace (pkt) &&
-		! tespkt_is_trace_dp (pkt) );
+	bool is_trace = tespkt_is_trace_long (pkt);
 	if ( is_trace && ! tespkt_is_header (pkt) )
 		return 0; /* non-header frame from multi-stream */
 

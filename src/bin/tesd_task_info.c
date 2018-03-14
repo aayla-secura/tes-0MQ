@@ -136,8 +136,8 @@ task_info_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	struct s_data_t* info = (struct s_data_t*) self->data;
 
 	bool is_header = tespkt_is_header (pkt);
-	bool is_tr_header = (tespkt_is_trace (pkt) && is_header) ||
-		tespkt_is_trace_dp (pkt);
+	bool is_tr_header = (tespkt_is_trace_long (pkt) && is_header) ||
+		tespkt_is_trace_dp (pkt); /* FIX: should trace_dp count here */
 	bool is_mca_header = tespkt_is_mca (pkt) && is_header;
 
 	info->received++;
