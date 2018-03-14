@@ -56,10 +56,11 @@
 #define TES_JITTER_REP_PIC "18"
 #define TES_JITTER_REP_LPORT "55557"
 #define TES_JITTER_PUB_LPORT "55567"
-/* Histogram is 2^10 + 1, both positive and negative delays (so max of
- * 9-bit delay info. True delay is 16-bit, so there will be overflow (on
- * both sides). */
-#define TES_JITTER_NBINS 1025 // including under-/overflow
-#define TES_JITTER_SIZE  4100 // each bin is 4 bytes
+#define TES_JITTER_HDR_LEN    8 // global
+#define TES_JITTER_SUBHDR_LEN 8 // per-histogram
+#define TES_JITTER_NBINS   1022 // including under-/overflow
+#define TES_JITTER_BIN_LEN    4 // uint32
+#define TES_JITTER_NHISTS     1 // number of channels - 1
+#define TES_JITTER_SIZE    4104 // 8-byte global header + (hist_size) * nhists
 
 #endif
