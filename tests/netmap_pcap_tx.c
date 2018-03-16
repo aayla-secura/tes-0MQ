@@ -155,8 +155,8 @@ main (int argc, char** argv)
 			printf ("Packet #%5lu: frame len says %5hu, "
 				"caplen = %5hu, len = %5hu\n",
 				p, len, h.caplen, h.len);
-		if (len > MAX_TES_FRAME_LEN)
-			len = MAX_TES_FRAME_LEN;
+		if (len > TESPKT_MTU)
+			len = TESPKT_MTU;
 		rc = poll (&pfd, 1, -1);
 		if (rc == -1)
 		{
@@ -186,7 +186,7 @@ main (int argc, char** argv)
 #ifdef VERBOSE
 			fprintf (stderr, "Packet no. %lu: ", p);
 			tespkt_perror (stderr, rc);
-			dump_pkt ((void*)pkt, TES_HDR_LEN + 8);
+			dump_pkt ((void*)pkt, TESPKT_HDR_LEN + 8);
 #endif
 			invalid++;
 		}
@@ -195,7 +195,7 @@ main (int argc, char** argv)
 		{
 			tespkt_pretty_print (pkt, stdout, stderr);
 			printf ("\n");
-			dump_pkt ((unsigned char*)pkt, TES_HDR_LEN);
+			dump_pkt ((unsigned char*)pkt, TESPKT_HDR_LEN);
 		}
 #endif
 		

@@ -385,7 +385,7 @@ main_body (void* arg)
 				pthread_exit (NULL); /* done */
 
 #ifdef SAVE_FILE
-			if (gstats.b_written + MAX_TES_FRAME_LEN > MAX_FSIZE)
+			if (gstats.b_written + TESPKT_MTU > MAX_FSIZE)
 				pthread_exit (NULL); /* done */
 #endif /* SAVE_FILE */
 		} while ( ! nm_ring_empty (rxring) );

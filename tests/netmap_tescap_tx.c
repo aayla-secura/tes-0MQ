@@ -165,7 +165,7 @@ s_update_stats (tespkt* pkt, struct s_stats_t* stats)
 #ifdef VERBOSE
 			fprintf (stderr, "Packet no. %lu: ", stats->pkts);
 			tespkt_perror (stderr, rc);
-			s_dump_pkt ((void*)pkt, TES_HDR_LEN +
+			s_dump_pkt ((void*)pkt, TESPKT_HDR_LEN +
 				(tespkt_is_mca (pkt) && tespkt_is_header (pkt) ? 40 : 8));
 #endif
 			stats->invalid++;
@@ -288,7 +288,7 @@ s_inject_from_fidx (const char* basefname,
 	int looped = 0;
 	struct s_stats_t stats = {0};
 
-	tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
+	tespkt* pkt = (tespkt*) malloc (TESPKT_MTU);
 	if (pkt == NULL)
 	{
 		perror ("");
@@ -343,8 +343,8 @@ s_inject_from_fidx (const char* basefname,
 
 		/* Construct the ethernet header */
 		uint16_t plen = fidx.length;
-		assert (plen <= MAX_TES_FRAME_LEN - TES_HDR_LEN);
-		tespkt_set_len (pkt, TES_HDR_LEN + plen);
+		assert (plen <= TESPKT_MTU - TESPKT_HDR_LEN);
+		tespkt_set_len (pkt, TESPKT_HDR_LEN + plen);
 		struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
 		memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 		mac_addr = ether_aton (SRC_HW_ADDR);
@@ -387,7 +387,7 @@ s_inject_from_fidx (const char* basefname,
 			case FTYPE_TRACE_AVG:
 			case FTYPE_TRACE_DP:
 			case FTYPE_TRACE_DP_TR:
-				pkt->tes_hdr.etype.PKT = PKT_TYPE_TRACE;
+				pkt->tes_hdr.etype.PKT = TESPKT_TYPE_TRACE;
 				pkt->tes_hdr.etype.TR = fidx.ftype.PT - 3;
 				break;
 			case FTYPE_TICK:
@@ -421,7 +421,7 @@ s_inject_from_fidx (const char* basefname,
 			fprintf (stderr, "Could not seek to payload\n");
 			break;
 		}
-		rc = read (datfd, (char*)pkt + TES_HDR_LEN, plen);
+		rc = read (datfd, (char*)pkt + TESPKT_HDR_LEN, plen);
 		if (rc == -1)
 		{
 			perror ("Could not read in payload");
@@ -446,7 +446,7 @@ s_inject_from_fidx (const char* basefname,
 
 		if (stats.pkts % WAIT_EVERY == 0)
 			poll (NULL, 0, 1);
-		rc = nm_inject (nmd, pkt, plen + TES_HDR_LEN);
+		rc = nm_inject (nmd, pkt, plen + TESPKT_HDR_LEN);
 		if (!rc)
 		{
 			fprintf (stderr, "Cannot inject packet\n");
@@ -501,7 +501,7 @@ s_inject_from_flat (const char* filename,
 			}
 		}
 
-		tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
+		tespkt* pkt = (tespkt*) malloc (TESPKT_MTU);
 		if (pkt == NULL)
 		{
 			perror ("");
@@ -510,7 +510,7 @@ s_inject_from_flat (const char* filename,
 		memset (pkt, 0, sizeof (tespkt));
 
 		/* Read the header */
-		rc = read (capfd, (char*)pkt, TES_HDR_LEN);
+		rc = read (capfd, (char*)pkt, TESPKT_HDR_LEN);
 		if (rc == -1)
 		{
 			perror ("Could not read in header");
@@ -525,7 +525,7 @@ s_inject_from_flat (const char* filename,
 			looped++;
 			continue;
 		}
-		else if (rc != TES_HDR_LEN)
+		else if (rc != TESPKT_HDR_LEN)
 		{
 			fprintf (stderr,
 				"Read unexpected number of bytes "
@@ -536,16 +536,16 @@ s_inject_from_flat (const char* filename,
 
 		/* Read the payload */
 		uint16_t len = tespkt_flen (pkt);
-		assert (len <= MAX_TES_FRAME_LEN);
-		assert (len > TES_HDR_LEN);
-		rc = read (capfd, (char*)pkt + TES_HDR_LEN,
-			len - TES_HDR_LEN);
+		assert (len <= TESPKT_MTU);
+		assert (len > TESPKT_HDR_LEN);
+		rc = read (capfd, (char*)pkt + TESPKT_HDR_LEN,
+			len - TESPKT_HDR_LEN);
 		if (rc == -1)
 		{
 			perror ("Could not read in payload");
 			break;
 		}
-		else if (rc != len - TES_HDR_LEN)
+		else if (rc != len - TESPKT_HDR_LEN)
 		{
 			fprintf (stderr,
 				"Read unexpected number of bytes "

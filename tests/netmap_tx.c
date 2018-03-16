@@ -28,28 +28,35 @@
 #define MAX_PKTS  1024 /* keep pointers to packets to be freed by the
                         * signal handler */
 
+#define EVT_TYPE_LEN  2
+#define MCA_FL_LEN    4
+#define EVT_FL_LEN    2
+#define TICK_FL_LEN   2
+#define TRACE_FL_LEN  2
 
+#define DP_LEN                 8
+#define SMPL_LEN               2
 #define MAX_MCA_FRAMES        45
 // #define MAX_TRACE_FRAMES
-#define MAX_MCA_BINS_ALL      ((65528 - MCA_HDR_LEN) / BIN_LEN)
-#define MAX_MCA_BINS_HFR      ((MAX_TES_FRAME_LEN - MCA_HDR_LEN - \
-				TES_HDR_LEN) / BIN_LEN)
-#define MAX_MCA_BINS_SFR      ((MAX_TES_FRAME_LEN - \
-				TES_HDR_LEN) / BIN_LEN)
-#define MAX_PLS_PEAKS         ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				PULSE_HDR_LEN) / PEAK_LEN)
-#define MAX_TR_SGL_PEAKS_HFR  ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				TRACE_FULL_HDR_LEN) / PEAK_LEN)
-#define MAX_TR_SGL_SMPLS_HFR  ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				TRACE_FULL_HDR_LEN) / SMPL_LEN)
-#define MAX_TR_AVG_SMPLS_HFR  ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				TRACE_HDR_LEN) / SMPL_LEN)
-#define MAX_TR_DP_PEAKS_HFR   ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				TRACE_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
-#define MAX_TR_DPTR_PEAKS_HFR ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				TRACE_FULL_HDR_LEN - DP_LEN) / PEAK_LEN)
-#define MAX_TR_DPTR_SMPLS_HFR ((MAX_TES_FRAME_LEN - TES_HDR_LEN - \
-				TRACE_FULL_HDR_LEN - DP_LEN) / SMPL_LEN)
+#define MAX_MCA_BINS_ALL      ((65528 - TESPKT_MCA_HDR_LEN) / TESPKT_MCA_BIN_LEN)
+#define MAX_MCA_BINS_HFR      ((TESPKT_MTU - TESPKT_MCA_HDR_LEN - \
+				TESPKT_HDR_LEN) / TESPKT_MCA_BIN_LEN)
+#define MAX_MCA_BINS_SFR      ((TESPKT_MTU - \
+				TESPKT_HDR_LEN) / TESPKT_MCA_BIN_LEN)
+#define MAX_PLS_PEAKS         ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_PULSE_HDR_LEN) / TESPKT_PEAK_LEN)
+#define MAX_TR_SGL_PEAKS_HFR  ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_TRACE_FULL_HDR_LEN) / TESPKT_PEAK_LEN)
+#define MAX_TR_SGL_SMPLS_HFR  ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_TRACE_FULL_HDR_LEN) / SMPL_LEN)
+#define MAX_TR_AVG_SMPLS_HFR  ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_TRACE_HDR_LEN) / SMPL_LEN)
+#define MAX_TR_DP_PEAKS_HFR   ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_TRACE_FULL_HDR_LEN - DP_LEN) / TESPKT_PEAK_LEN)
+#define MAX_TR_DPTR_PEAKS_HFR ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_TRACE_FULL_HDR_LEN - DP_LEN) / TESPKT_PEAK_LEN)
+#define MAX_TR_DPTR_SMPLS_HFR ((TESPKT_MTU - TESPKT_HDR_LEN - \
+				TESPKT_TRACE_FULL_HDR_LEN - DP_LEN) / SMPL_LEN)
 
 #define SRC_HW_ADDR "ff:ff:ff:ff:ff:ff"
 #define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
@@ -122,7 +129,7 @@ new_tespkt (void)
 		return NULL;
 	}
 
-	tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
+	tespkt* pkt = (tespkt*) malloc (TESPKT_MTU);
 	if (pkt == NULL)
 		raise (SIGTERM);
 	memset (pkt, 0, sizeof (tespkt));
@@ -132,7 +139,7 @@ new_tespkt (void)
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
 	tespkt_set_fseq (pkt, 0); /* incremented as we send them */
-	tespkt_set_len (pkt, TES_HDR_LEN); /* incremented later */
+	tespkt_set_len (pkt, TESPKT_HDR_LEN); /* incremented later */
 
 	/* store a global pointer */
 	gobj.pkts.slots[gobj.pkts.first_free] = pkt;
@@ -168,14 +175,14 @@ new_mca_pkt (int seq, int nbins,
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_mca (pkt);
-	tespkt_inc_len (pkt, nbins * BIN_LEN);
+	tespkt_inc_len (pkt, nbins * TESPKT_MCA_BIN_LEN);
 
 	tespkt_set_pseq (pkt, seq);
 	if (seq == 0)
 	{
-		tespkt_inc_len (pkt, MCA_HDR_LEN);
+		tespkt_inc_len (pkt, TESPKT_MCA_HDR_LEN);
 		struct tespkt_mca_hdr* mh = (struct tespkt_mca_hdr*) &pkt->body;
-		mh->size = MCA_HDR_LEN + num_all_bins * BIN_LEN;
+		mh->size = TESPKT_MCA_HDR_LEN + num_all_bins * TESPKT_MCA_BIN_LEN;
 		mh->last_bin = num_all_bins - 1;
 		mh->lowest_value = (u_int32_t) random ();
 		/* mh->most_frequent =  */
@@ -196,7 +203,7 @@ new_tick_pkt (struct tespkt_tick_flags* flags)
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_evt (pkt);
-	tespkt_inc_len (pkt, TICK_HDR_LEN);
+	tespkt_inc_len (pkt, TESPKT_TICK_HDR_LEN);
 	tespkt_set_esize (pkt, 3);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 1;
@@ -222,11 +229,11 @@ new_peak_pkt (struct tespkt_event_flags* flags)
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_evt (pkt);
-	tespkt_inc_len (pkt, PEAK_HDR_LEN);
+	tespkt_inc_len (pkt, TESPKT_PEAK_HDR_LEN);
 	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PKT = PKT_TYPE_PEAK;
+	et->PKT = TESPKT_TYPE_PEAK;
 
 	struct tespkt_peak_hdr* ph = (struct tespkt_peak_hdr*) &pkt->body;
 	ph->height = (u_int16_t) random ();
@@ -245,11 +252,11 @@ new_area_pkt (struct tespkt_event_flags* flags)
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_evt (pkt);
-	tespkt_inc_len (pkt, AREA_HDR_LEN);
+	tespkt_inc_len (pkt, TESPKT_AREA_HDR_LEN);
 	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PKT = PKT_TYPE_AREA;
+	et->PKT = TESPKT_TYPE_AREA;
 
 	struct tespkt_area_hdr* ah =
 		(struct tespkt_area_hdr*) &pkt->body;
@@ -268,11 +275,12 @@ new_pulse_pkt (int num_peaks, struct tespkt_event_flags* flags)
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_evt (pkt);
-	tespkt_inc_len (pkt, PULSE_HDR_LEN + num_peaks * PEAK_LEN);
+	tespkt_inc_len (pkt,
+		TESPKT_PULSE_HDR_LEN + num_peaks * TESPKT_PEAK_LEN);
 	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PKT = PKT_TYPE_PULSE;
+	et->PKT = TESPKT_TYPE_PULSE;
 
 	struct tespkt_pulse_hdr* ph = (struct tespkt_pulse_hdr*) &pkt->body;
 	ph->size = (u_int16_t) random ();
@@ -298,13 +306,13 @@ new_trace_sgl_pkt (int num_peaks,
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_evt (pkt);
-	tespkt_inc_len (pkt, TRACE_FULL_HDR_LEN + num_peaks *
-		PEAK_LEN + num_samples * SMPL_LEN);
+	tespkt_inc_len (pkt, TESPKT_TRACE_FULL_HDR_LEN + num_peaks *
+		TESPKT_PEAK_LEN + num_samples * SMPL_LEN);
 	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PKT = PKT_TYPE_TRACE;
-	et->TR = TRACE_TYPE_SGL;
+	et->PKT = TESPKT_TYPE_TRACE;
+	et->TR = TESPKT_TRACE_TYPE_SGL;
 
 	struct tespkt_trace_full_hdr* th =
 		(struct tespkt_trace_full_hdr*) &pkt->body;
@@ -347,12 +355,12 @@ new_trace_dp_pkt (int num_peaks,
 	if (pkt == NULL)
 		return NULL;
 	tespkt_set_type_evt (pkt);
-	tespkt_inc_len (pkt, TRACE_FULL_HDR_LEN + num_peaks * PEAK_LEN);
+	tespkt_inc_len (pkt, TESPKT_TRACE_FULL_HDR_LEN + num_peaks * TESPKT_PEAK_LEN);
 	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
-	et->PKT = PKT_TYPE_TRACE;
-	et->TR = TRACE_TYPE_DP;
+	et->PKT = TESPKT_TYPE_TRACE;
+	et->TR = TESPKT_TRACE_TYPE_DP;
 
 	struct tespkt_trace_full_hdr* th =
 		(struct tespkt_trace_full_hdr*) &pkt->body;
@@ -615,7 +623,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 		nbins_left -= MAX_MCA_BINS_HFR;
 		/* the rest of the frames */
 		for (int f = 1; ; f++)
@@ -641,7 +649,7 @@ main (void)
 				raise (SIGTERM);
 			}
 			dump_pkt (pkt);
-			assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+			assert (tespkt_flen (pkt) <= TESPKT_MTU);
 			nbins_left -= MAX_MCA_BINS_SFR;
 		}
 
@@ -656,7 +664,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 		pkt = new_peak_pkt (NULL);
 		if (pkt == NULL)
 			break; /* Reached max */
@@ -667,7 +675,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 		pkt = new_pulse_pkt (MAX_PLS_PEAKS, NULL);
 		if (pkt == NULL)
 			break; /* Reached max */
@@ -678,7 +686,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 		pkt = new_area_pkt (NULL);
 		if (pkt == NULL)
 			break; /* Reached max */
@@ -689,7 +697,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 		pkt = new_trace_sgl_pkt (MAX_TR_SGL_PEAKS_HFR / 2,
 			MAX_TR_SGL_SMPLS_HFR / 2, NULL, NULL);
 		if (pkt == NULL)
@@ -701,7 +709,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 		pkt = new_trace_dp_pkt (MAX_TR_DP_PEAKS_HFR, NULL, NULL);
 		if (pkt == NULL)
 			break; /* Reached max */
@@ -712,7 +720,7 @@ main (void)
 			raise (SIGTERM);
 		}
 		dump_pkt (pkt);
-		assert (tespkt_flen (pkt) <= MAX_TES_FRAME_LEN);
+		assert (tespkt_flen (pkt) <= TESPKT_MTU);
 	} while (0);
 
 	/* Get the ring (we only use one) */

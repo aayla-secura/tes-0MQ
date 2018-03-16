@@ -389,29 +389,27 @@ struct tespkt_trace_flags
 #define ETHERTYPE_F_EVENT 0x88B5
 #define ETHERTYPE_F_MCA   0x88B6
 
-#define PKT_TYPE_PEAK   0
-#define PKT_TYPE_AREA   1
-#define PKT_TYPE_PULSE  2
-#define PKT_TYPE_TRACE  3
-#define TRACE_TYPE_SGL  0
-#define TRACE_TYPE_AVG  1
-#define TRACE_TYPE_DP   2
-#define TRACE_TYPE_DPTR 3
+#define TESPKT_TYPE_PEAK   0
+#define TESPKT_TYPE_AREA   1
+#define TESPKT_TYPE_PULSE  2
+#define TESPKT_TYPE_TRACE  3
+#define TESPKT_TRACE_TYPE_SGL  0
+#define TESPKT_TRACE_TYPE_AVG  1
+#define TESPKT_TRACE_TYPE_DP   2
+#define TESPKT_TRACE_TYPE_DPTR 3
 
-#define TES_HDR_LEN         24 // including the ethernet header
-#define MCA_HDR_LEN         40
-#define TICK_HDR_LEN        24
-#define PEAK_HDR_LEN         8
-#define PEAK_LEN             8
-#define AREA_HDR_LEN         8
-#define PULSE_LEN            8
-#define PULSE_HDR_LEN       16 // 8 + PULSE_LEN
-#define TRACE_HDR_LEN        8
-#define TRACE_FULL_HDR_LEN  16 // TRACE_HDR_LEN + PULSE_LEN
-#define DP_LEN               8
-#define SMPL_LEN             2
-#define BIN_LEN              4
-#define MAX_TES_FRAME_LEN 1496
+#define TESPKT_HDR_LEN       24 // including the ethernet header
+#define TESPKT_MCA_HDR_LEN   40
+#define TESPKT_TICK_HDR_LEN  24
+#define TESPKT_PEAK_HDR_LEN   8
+#define TESPKT_PEAK_LEN       8
+#define TESPKT_AREA_HDR_LEN   8
+#define TESPKT_PULSE_LEN      8
+#define TESPKT_PULSE_HDR_LEN 16 // 8 + TESPKT_PULSE_LEN
+#define TESPKT_TRACE_HDR_LEN  8
+#define TESPKT_TRACE_FULL_HDR_LEN  16 // TESPKT_TRACE_HDR_LEN + TESPKT_PULSE_LEN
+#define TESPKT_MCA_BIN_LEN    4
+#define TESPKT_MTU         1496
 
 struct tespkt_mca_hdr
 {
@@ -602,7 +600,7 @@ static inline int
 tespkt_is_peak (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_PEAK &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_PEAK &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -610,7 +608,7 @@ static inline int
 tespkt_is_area (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_AREA &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_AREA &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -618,7 +616,7 @@ static inline int
 tespkt_is_pulse (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_PULSE &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_PULSE &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -626,7 +624,7 @@ static inline int
 tespkt_is_trace (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
@@ -641,36 +639,36 @@ static inline int
 tespkt_is_trace_sgl (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.TR == TRACE_TYPE_SGL );
+		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_SGL );
 }
 
 static inline int
 tespkt_is_trace_avg (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.TR == TRACE_TYPE_AVG );
+		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_AVG );
 }
 
 static inline int
 tespkt_is_trace_dp (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.TR == TRACE_TYPE_DP );
+		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_DP );
 }
 
 static inline int
 tespkt_is_trace_dptr (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
-		 pkt->tes_hdr.etype.PKT == PKT_TYPE_TRACE &&
+		 pkt->tes_hdr.etype.PKT == TESPKT_TYPE_TRACE &&
 		 pkt->tes_hdr.etype.T == 0 &&
-		 pkt->tes_hdr.etype.TR == TRACE_TYPE_DPTR );
+		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_DPTR );
 }
 
 /* -------------------------------------------------------------- */
@@ -679,10 +677,11 @@ static inline uint16_t
 tespkt_mca_nbins (tespkt* pkt)
 {
 	if (tespkt_is_header (pkt))
-		return ( (tespkt_flen (pkt) - TES_HDR_LEN - MCA_HDR_LEN )
-			/ BIN_LEN );
+		return ( (tespkt_flen (pkt) - TESPKT_HDR_LEN - TESPKT_MCA_HDR_LEN)
+			/ TESPKT_MCA_BIN_LEN );
 	else
-		return ( (tespkt_flen (pkt) - TES_HDR_LEN) / BIN_LEN );
+		return ( (tespkt_flen (pkt) - TESPKT_HDR_LEN)
+			/ TESPKT_MCA_BIN_LEN );
 }
 
 static inline uint16_t
@@ -703,7 +702,7 @@ tespkt_mca_size (tespkt* pkt)
 static inline uint32_t
 tespkt_mca_size (tespkt* pkt)
 {
-	return ( (tespkt_mca_nbins_tot (pkt) * BIN_LEN) + MCA_HDR_LEN );
+	return ( (tespkt_mca_nbins_tot (pkt) * TESPKT_MCA_BIN_LEN) + TESPKT_MCA_HDR_LEN );
 }
 #endif
 
@@ -747,10 +746,10 @@ tespkt_mca_bin (tespkt* pkt, uint16_t bin)
 {
 	if (tespkt_is_header (pkt))
 		return ftohl *(uint32_t*)(
-			(char*)&pkt->body + bin*BIN_LEN + MCA_HDR_LEN);
+			(char*)&pkt->body + bin*TESPKT_MCA_BIN_LEN + TESPKT_MCA_HDR_LEN);
 	else
 		return ftohl *(uint32_t*)(
-			(char*)&pkt->body + bin*BIN_LEN);
+			(char*)&pkt->body + bin*TESPKT_MCA_BIN_LEN);
 }
 
 static inline struct tespkt_mca_flags*
@@ -768,7 +767,7 @@ tespkt_event_nums (tespkt* pkt)
 {
 	if (tespkt_is_trace (pkt))
 		return (tespkt_is_header (pkt) ? 1 : 0);
-	return ( ( tespkt_flen (pkt) - TES_HDR_LEN ) / (
+	return ( ( tespkt_flen (pkt) - TESPKT_HDR_LEN ) / (
 		tespkt_true_esize (pkt) ) );
 }
 
@@ -1154,10 +1153,10 @@ tespkt_is_valid (tespkt* pkt)
 	uint16_t flen = tespkt_flen (pkt);
 
 	/* Frame length should be a multiple of 8 */
-	if (flen & 7 || flen > MAX_TES_FRAME_LEN)
+	if (flen & 7 || flen > TESPKT_MTU)
 		rc |= TES_EETHLEN;
 	/* and it should be more than the header length. */
-	if (flen <= TES_HDR_LEN)
+	if (flen <= TESPKT_HDR_LEN)
 		rc |= TES_EETHLEN;
 
 	if (tespkt_is_event (pkt))
@@ -1168,7 +1167,7 @@ tespkt_is_valid (tespkt* pkt)
 		 * a multiple of event size * 8. */
 		if (esize == 0)
 			rc |= TES_EEVTSIZE;
-		else if ( (flen - TES_HDR_LEN) % (esize << 3) != 0 )
+		else if ( (flen - TESPKT_HDR_LEN) % (esize << 3) != 0 )
 			rc |= TES_EETHLEN;
 
 		/* Check event type as well as size for types with a fixed
@@ -1193,7 +1192,7 @@ tespkt_is_valid (tespkt* pkt)
 					rc |= TES_ETRSIZE;
 				/* and it should not be smaller than the
 				 * payload length */
-				if (flen - TES_HDR_LEN > trsize)
+				if (flen - TESPKT_HDR_LEN > trsize)
 					rc |= TES_ETRSIZE;
 			}
 
@@ -1211,15 +1210,15 @@ tespkt_is_valid (tespkt* pkt)
 #ifndef TES_MCASIZE_BUG
 			uint16_t histsize = tespkt_mca_size (pkt);
 			/* MCA size should correspond to last bin. */
-			if (histsize != (nbins_tot * BIN_LEN) + MCA_HDR_LEN)
+			if (histsize != (nbins_tot * TESPKT_MCA_BIN_LEN) + TESPKT_MCA_HDR_LEN)
 				rc |= TES_EMCASIZE;
 			/* and it should not be smaller than the
 			 * payload length */
-			if (flen - TES_HDR_LEN > histsize)
+			if (flen - TESPKT_HDR_LEN > histsize)
 				rc |= TES_EMCASIZE;
 #else
 			uint32_t histsize = tespkt_mca_size (pkt);
-			if ((uint32_t)flen - TES_HDR_LEN > histsize)
+			if ((uint32_t)flen - TESPKT_HDR_LEN > histsize)
 				rc |= TES_EMCASIZE;
 #endif
 
@@ -1274,55 +1273,31 @@ tespkt_serror (char* buf, int err)
 
 #ifdef TESPKT_DEBUG
 
-#define EVT_TYPE_LEN  2
-#define MCA_FL_LEN    4
-#define EVT_FL_LEN    2
-#define TICK_FL_LEN   2
-#define TRACE_FL_LEN  2
-
-#define MCA_FL_MASK   0x000fffff
-#define EVT_FL_MASK   0xffff
-#define TICK_FL_MASK  0x0703
-#define TRACE_FL_MASK 0x7fff
+#define TESPKT_MCA_FLAGS_MASK   0x000fffff
+#define TESPKT_EVT_FLAGS_MASK   0xffff
+#define TESPKT_TICK_FLAGS_MASK  0x0703
+#define TESPKT_TRACE_FLAGS_MASK 0x7fff
 
 /*
  * Event types are sent as separate bytes, i.e. always appear
  * big-endian.
  */
-#define EVT_TYPE_MASK       0x030e /* all relevant bits of etype */
-#define EVT_PKT_TYPE_MASK   0x000e /* packet type and tick bits */
-#if 0
-/* Not useful anymore */
-#define EVT_TYPE_TICK       0x0002
-#define EVT_TYPE_PEAK       0x0000
-#define EVT_TYPE_AREA       0x0004
-#define EVT_TYPE_PULSE      0x0008
-#define EVT_TYPE_TRACE      0x000c
-#define EVT_TYPE_TRACE_SGL  0x000c
-#define EVT_TYPE_TRACE_AVG  0x010c
-#define EVT_TYPE_TRACE_DP   0x020c
-#define EVT_TYPE_TRACE_DPTR 0x030c
-#endif
+#define TESPKT_EVT_TYPE_MASK     0x030e /* all relevant bits of etype */
+#define TESPKT_EVT_PKT_TYPE_MASK 0x000e /* packet type and tick bits */
 
 static void
 tespkt_self_test (void)
 {
-	assert (offsetof (tespkt, body) == TES_HDR_LEN);
-	assert (sizeof (struct tespkt_mca_hdr) == MCA_HDR_LEN);
-	assert (sizeof (struct tespkt_tick_hdr) == TICK_HDR_LEN);
-	assert (sizeof (struct tespkt_peak_hdr) == PEAK_HDR_LEN);
-	assert (sizeof (struct tespkt_peak) == PEAK_LEN);
-	assert (sizeof (struct tespkt_area_hdr) == AREA_HDR_LEN);
-	assert (sizeof (struct tespkt_pulse) == PULSE_LEN);
-	assert (sizeof (struct tespkt_pulse_hdr) == PULSE_HDR_LEN);
-	assert (sizeof (struct tespkt_trace_hdr) == TRACE_HDR_LEN);
-	assert (sizeof (struct tespkt_trace_full_hdr) == TRACE_FULL_HDR_LEN);
-	assert (sizeof (struct tespkt_dot_prod) == DP_LEN);
-	assert (sizeof (struct tespkt_event_type) == EVT_TYPE_LEN);
-	assert (sizeof (struct tespkt_mca_flags) == MCA_FL_LEN);
-	assert (sizeof (struct tespkt_event_flags) == EVT_FL_LEN);
-	assert (sizeof (struct tespkt_tick_flags) == TICK_FL_LEN);
-	assert (sizeof (struct tespkt_trace_flags) == TRACE_FL_LEN);
+	assert (offsetof (tespkt, body) == TESPKT_HDR_LEN);
+	assert (sizeof (struct tespkt_mca_hdr) == TESPKT_MCA_HDR_LEN);
+	assert (sizeof (struct tespkt_tick_hdr) == TESPKT_TICK_HDR_LEN);
+	assert (sizeof (struct tespkt_peak_hdr) == TESPKT_PEAK_HDR_LEN);
+	assert (sizeof (struct tespkt_peak) == TESPKT_PEAK_LEN);
+	assert (sizeof (struct tespkt_area_hdr) == TESPKT_AREA_HDR_LEN);
+	assert (sizeof (struct tespkt_pulse) == TESPKT_PULSE_LEN);
+	assert (sizeof (struct tespkt_pulse_hdr) == TESPKT_PULSE_HDR_LEN);
+	assert (sizeof (struct tespkt_trace_hdr) == TESPKT_TRACE_HDR_LEN);
+	assert (sizeof (struct tespkt_trace_full_hdr) == TESPKT_TRACE_FULL_HDR_LEN);
 
 	for (unsigned int e = 0;
 		e < sizeof (_tespkt_errors) / sizeof (char*) ; e++)
@@ -1334,32 +1309,32 @@ tespkt_self_test (void)
 		struct tespkt_event_type fields;
 		uint16_t val;
 	} et;
-	memset (&et, 0, EVT_TYPE_LEN);
+	memset (&et, 0, sizeof (struct tespkt_event_type));
 	et.fields.T = 1;
 	et.fields.PKT = 3;
-	assert (ntohs (et.val) == EVT_PKT_TYPE_MASK);
+	assert (ntohs (et.val) == TESPKT_EVT_PKT_TYPE_MASK);
 	et.fields.TR = 3;
-	assert (ntohs (et.val) == EVT_TYPE_MASK);
+	assert (ntohs (et.val) == TESPKT_EVT_TYPE_MASK);
 
 	union
 	{
 		struct tespkt_mca_flags fields;
 		uint32_t val;
 	} mf;
-	memset (&mf, 0, MCA_FL_LEN);
+	memset (&mf, 0, sizeof (struct tespkt_mca_flags));
 	mf.fields.Q = 0x0f;
 	mf.fields.V = 0x0f;
 	mf.fields.T = 0x0f;
 	mf.fields.N = 0x1f;
 	mf.fields.C = 0x07;
-	assert (ntohl (mf.val) == MCA_FL_MASK);
+	assert (ntohl (mf.val) == TESPKT_MCA_FLAGS_MASK);
 
 	union
 	{
 		struct tespkt_event_flags fields;
 		uint16_t val;
 	} ef;
-	memset (&ef, 0, EVT_FL_LEN);
+	memset (&ef, 0, sizeof (struct tespkt_event_flags));
 	ef.fields.PC = 0x0f;
 	ef.fields.O  = 0x01;
 	ef.fields.CH = 0x07;
@@ -1368,34 +1343,34 @@ tespkt_self_test (void)
 	ef.fields.PT = 0x03;
 	ef.fields.T  = 0x01;
 	ef.fields.N  = 0x01;
-	assert (ntohs (ef.val) == EVT_FL_MASK);
+	assert (ntohs (ef.val) == TESPKT_EVT_FLAGS_MASK);
 
 	union
 	{
 		struct tespkt_tick_flags fields;
 		uint16_t val;
 	} tf;
-	memset (&tf, 0, TICK_FL_LEN);
+	memset (&tf, 0, sizeof (struct tespkt_tick_flags));
 	tf.fields.MF = 0x01;
 	tf.fields.EL = 0x01;
 	tf.fields.TL = 0x01;
 	tf.fields.T  = 0x01;
 	tf.fields.N  = 0x01;
-	assert (ntohs (tf.val) == TICK_FL_MASK);
+	assert (ntohs (tf.val) == TESPKT_TICK_FLAGS_MASK);
 
 	union
 	{
 		struct tespkt_trace_flags fields;
 		uint16_t val;
 	} trf;
-	memset (&trf, 0, TRACE_FL_LEN);
+	memset (&trf, 0, sizeof (struct tespkt_trace_flags));
 	trf.fields.MH  = 0x01;
 	trf.fields.MP  = 0x01;
 	trf.fields.STR = 0x1f;
 	trf.fields.TT  = 0x03;
 	trf.fields.TS  = 0x03;
 	trf.fields.OFF = 0x0f;
-	assert (ntohs (trf.val) == TRACE_FL_MASK);
+	assert (ntohs (trf.val) == TESPKT_TRACE_FLAGS_MASK);
 }
 
 #endif /* TESPKT_DEBUG */

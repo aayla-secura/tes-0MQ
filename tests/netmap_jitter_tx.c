@@ -29,7 +29,7 @@
 #define SRC_HW_ADDR "5a:ce:be:b7:b2:91"
 #define ETH_PROTO ETHERTYPE_F_EVENT
 
-#define PKT_LEN (TES_HDR_LEN + TICK_HDR_LEN)
+#define PKT_LEN (TESPKT_HDR_LEN + TESPKT_TICK_HDR_LEN)
 #ifndef NMIF
 #  define NMIF "vale0:vi0"
 #endif
@@ -157,7 +157,7 @@ main (void)
 		{
 			tespkt_pretty_print (pkt, stdout, stderr);
 			tespkt_perror (stderr, rc);
-			dump_pkt ((void*)pkt, TES_HDR_LEN + 8);
+			dump_pkt ((void*)pkt, TESPKT_HDR_LEN + 8);
 			break;
 		}
 

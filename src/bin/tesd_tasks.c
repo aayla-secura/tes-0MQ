@@ -933,7 +933,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 			err |= TES_EETHLEN;
 			flen = len;
 		}
-		dbg_assert (flen <= MAX_TES_FRAME_LEN);
+		dbg_assert (flen <= TESPKT_MTU);
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;

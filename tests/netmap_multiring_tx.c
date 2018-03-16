@@ -28,7 +28,7 @@
 #define NMRING
 #endif
 #define MAX_RINGS 24
-#define PKT_LEN MAX_TES_FRAME_LEN
+#define PKT_LEN TESPKT_MTU
 #define UPDATE_INTERVAL 1
 #ifndef NMIF
 #define NMIF "vale0:vi0"

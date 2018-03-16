@@ -203,10 +203,10 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 
 	/* Copy frame, check current size. */
-	uint16_t paylen = flen - TES_HDR_LEN;
+	uint16_t paylen = flen - TESPKT_HDR_LEN;
 	dbg_assert (hist->cur_size <= TES_HIST_MAXSIZE - paylen);
 	memcpy (hist->buf + hist->cur_size,
-		(char*)pkt + TES_HDR_LEN, paylen);
+		(char*)pkt + TESPKT_HDR_LEN, paylen);
 
 	hist->cur_size += paylen;
 

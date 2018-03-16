@@ -349,7 +349,7 @@ main (void)
 				raise (SIGTERM); /* done */
 
 #ifdef SAVE_FILE
-			if (gobj.b_written + MAX_TES_FRAME_LEN > MAX_FSIZE)
+			if (gobj.b_written + TESPKT_MTU > MAX_FSIZE)
 				raise (SIGTERM); /* done */
 #endif /* SAVE_FILE */
 		} while ( ! nm_ring_empty (rxring) );

@@ -49,7 +49,7 @@ struct s_ftype_t
 	uint8_t SEQ : 1; /* sequence error in event stream */
 };
 #define linear_etype(pkt_type,tr_type) \
-	( (pkt_type == PKT_TYPE_TRACE) ? 3 + tr_type : pkt_type )
+	( (pkt_type == TESPKT_TYPE_TRACE) ? 3 + tr_type : pkt_type )
 
 /*
  * Statistics sent as a reply and saved to the file. 
@@ -787,7 +787,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	dbg_assert (len > 0);
 
 	dbg_assert (aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
-		BUFSIZE - MAX_TES_FRAME_LEN);
+		BUFSIZE - TESPKT_MTU);
 	dbg_assert (aiobuf->bufzone.cur >= aiobuf->bufzone.base);
 	dbg_assert (aiobuf->bufzone.tail >= aiobuf->bufzone.base);
 	dbg_assert (aiobuf->bufzone.cur < aiobuf->bufzone.ceil);
@@ -822,7 +822,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	 * and there is stil space for more packets, wait. */
 	if (aiobuf->bufzone.waiting < MINSIZE && reserve < 0 &&
 		aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
-			BUFSIZE - MAX_TES_FRAME_LEN)
+			BUFSIZE - TESPKT_MTU)
 		return 0;
 
 	/* Try to queue next batch but don't force */
@@ -839,7 +839,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	bool blocked = 0;
 #endif
 	while ( aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting >
-		BUFSIZE - MAX_TES_FRAME_LEN && jobrc == EINPROGRESS )
+		BUFSIZE - TESPKT_MTU && jobrc == EINPROGRESS )
 	{
 #if DEBUG_LEVEL >= VERBOSE
 		blocked = 1;
@@ -875,7 +875,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 #endif /* skip writing */
 
 	dbg_assert (aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting <=
-		BUFSIZE - MAX_TES_FRAME_LEN);
+		BUFSIZE - TESPKT_MTU);
 	return jobrc;
 }
 
@@ -991,7 +991,7 @@ queue_as_is:
 	dbg_assert (aiobuf->bufzone.tail != aiobuf->bufzone.ceil);
 	/* Check if called in vain, should only happen at the end when
 	 * flushing or if we had queued a batch larger than
-	 * BUFSIZE - MAX_TES_FRAME_LEN. */
+	 * BUFSIZE - TESPKT_MTU. */
 	if (aiobuf->bufzone.enqueued == 0)
 	{
 		dbg_assert (aiobuf->bufzone.waiting == 0);
@@ -1362,13 +1362,13 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	uint16_t esize = tespkt_esize (pkt);
 	esize = htofs (esize); /* in FPGA byte-order */
-	uint16_t paylen = flen - TES_HDR_LEN;
+	uint16_t paylen = flen - TESPKT_HDR_LEN;
 #ifdef SAVE_HEADERS
 	uint16_t datlen = flen;
 	char* datstart = (char*)pkt;
 #else
 	uint16_t datlen = paylen;
-	char* datstart = (char*)pkt + TES_HDR_LEN;
+	char* datstart = (char*)pkt + TESPKT_HDR_LEN;
 #endif
 
 	bool is_header = tespkt_is_header (pkt);

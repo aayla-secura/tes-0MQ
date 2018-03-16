@@ -150,10 +150,10 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 
 	/* Append the data, check current size. */
-	uint16_t paylen = flen - TES_HDR_LEN;
+	uint16_t paylen = flen - TESPKT_HDR_LEN;
 	dbg_assert (trace->cur_size <= TES_AVGTR_MAXSIZE - paylen);
 	memcpy (trace->buf + trace->cur_size,
-		(char*)pkt + TES_HDR_LEN, paylen);
+		(char*)pkt + TESPKT_HDR_LEN, paylen);
 
 	trace->cur_size += paylen;
 	if (trace->cur_size == trace->size)

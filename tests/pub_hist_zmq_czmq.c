@@ -8,7 +8,7 @@
 #define PUBADDR "@tcp://*:55565"
 #define WAIT_MSEC 1000
 #define ADD_NOISE
-#define NBINS ((TES_HIST_MAXSIZE - MCA_HDR_LEN) / BIN_LEN)
+#define NBINS ((TES_HIST_MAXSIZE - TESPKT_MCA_HDR_LEN) / TESPKT_MCA_BIN_LEN)
 
 struct data_t
 {
@@ -42,7 +42,7 @@ send_hist (zloop_t* loop, int tID, void* data_)
 	}
 
 #ifdef ADD_NOISE
-	uint32_t* bin_p = (uint32_t*)(hist + MCA_HDR_LEN);
+	uint32_t* bin_p = (uint32_t*)(hist + TESPKT_MCA_HDR_LEN);
 	for (uint16_t bin_n = 0; bin_n < NBINS; bin_n++, bin_p++)
 	{
 		*bin_p += (int) (*bin_p * ((double)rand()/RAND_MAX - 0.5));
