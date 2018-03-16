@@ -6,6 +6,11 @@
  * use the helper functions below which take a pointer to it and
  * change the byte order where necessary. Type tespkt is aliased to
  * struct tespkt.
+ *
+ * TO DO:
+ *  - add debugging checks to inline macros (ensure they are called on
+ *    the correct packet type and that pointer arithmetic does not go
+ *    beyond packet length.
  */
 
 #ifndef __NET_TESPKT_H_INCLUDED__
@@ -166,10 +171,15 @@ static inline uint16_t tespkt_event_nums (tespkt* pkt);
 /*
  * Get event's size, type and time.
  */
-static inline uint16_t tespkt_esize (tespkt* pkt);
-static inline uint16_t tespkt_true_esize (tespkt* pkt);
+static inline uint16_t tespkt_esize (tespkt* pkt); // in 8-bytes
+static inline uint16_t tespkt_true_esize (tespkt* pkt); // in bytes
 static inline struct tespkt_event_type* tespkt_etype (tespkt* pkt);
 static inline uint16_t tespkt_event_toff (tespkt* pkt, uint16_t e);
+
+/*
+ * Get event's area (all but tick, peak and average trace).
+ */
+static inline uint32_t tespkt_event_area (tespkt* pkt, uint16_t e);
 
 /*
  * Get tick's period, timestamp, error registers and events lost
@@ -223,7 +233,7 @@ static inline struct tespkt_tick_flags*  tespkt_tick_fl (tespkt* pkt);
  */
 static inline struct tespkt_trace_flags* tespkt_trace_fl (tespkt* pkt);
 
-/* ------------ Call the following only on any frame. ----------- */
+/* -------------- Call the following on any frame. -------------- */
 
 /*
  * Print info about packet.
@@ -794,6 +804,18 @@ tespkt_event_toff (tespkt* pkt, uint16_t e)
 {
 	return ftohs ( ((struct tespkt_event_hdr*) (
 		(char*)&pkt->body + e*tespkt_true_esize (pkt) ))->toff);
+}
+
+/* tespkt_pulse_hdr is compatible with tespkt_trace_full_hdr */
+static inline uint32_t
+tespkt_event_area (tespkt* pkt, uint16_t e)
+{
+	if (tespkt_is_area (pkt))
+		return ftohs (
+			((struct tespkt_area_hdr*) &pkt->body)->area);
+	else
+		return ftohs (
+			((struct tespkt_pulse_hdr*) &pkt->body)->pulse.area);
 }
 
 static inline uint32_t
