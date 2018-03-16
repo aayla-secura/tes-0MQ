@@ -558,7 +558,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	char log_id[32];
 	if (ami_daemon())
 		snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
-	else
+	else if (self->color != NULL)
 		snprintf (log_id, sizeof (log_id), "%s[Task #%d]%s     ",
 			self->color, self->id, ANSI_RESET);
 	set_logid (log_id);
