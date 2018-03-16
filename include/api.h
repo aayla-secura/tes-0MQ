@@ -2,6 +2,8 @@
 #ifndef __API_H__INCLUDED__
 #define __API_H__INCLUDED__
 
+#define TES_NCHANNELS 2
+
 /* Server info */
 #define TES_INFO_LPORT "55554"
 #define TES_INFO_REQ_OK    0 // accepted, reply/action follows
@@ -59,8 +61,9 @@
 #define TES_JITTER_HDR_LEN    8 // global
 #define TES_JITTER_SUBHDR_LEN 8 // per-histogram
 #define TES_JITTER_NBINS   1022 // including under-/overflow
-#define TES_JITTER_BIN_LEN    4 // uint32
-#define TES_JITTER_NHISTS     1 // number of channels - 1
-#define TES_JITTER_SIZE    4104 // 8-byte global header + (hist_size) * nhists
+#define TES_JITTER_SUBSIZE 4096 // subhdr + nbins*4 bytes
+#define TES_JITTER_NHISTS  (TES_NCHANNELS - 1)
+#define TES_JITTER_SIZE    (TES_JITTER_HDR_LEN + \
+                 TES_JITTER_SUBSIZE*TES_JITTER_NHISTS)
 
 #endif

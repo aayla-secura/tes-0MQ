@@ -2,7 +2,8 @@
  * TO DO:
  *  - cache histograms so subsequent subscribers can get the last
  *    completed one.
- *  - determine number of hists at runtime (add dynamically)?
+ *  - determine number of channels at startup by querying the register
+ *    server
  */
 
 #include "tesd_tasks.h"
@@ -449,15 +450,14 @@ int
 task_jitter_init (task_t* self)
 {
 	assert (self != NULL);
+	assert (TES_JITTER_NHISTS == TES_NCHANNELS - 1);
 	assert (sizeof (struct s_hist_hdr_t) == TES_JITTER_HDR_LEN);
 	assert (sizeof (struct s_hist_t) == TES_JITTER_SIZE);
-	assert (sizeof (struct s_subhist_t) == TES_JITTER_SUBHDR_LEN +
-		TES_JITTER_BIN_LEN*TES_JITTER_NBINS);
+	assert (sizeof (struct s_subhist_t) == TES_JITTER_SUBSIZE);
 	assert (sizeof (struct s_conf_t) == CONF_LEN);
 	assert (BIN_OFFSET == (int)((TES_JITTER_NBINS) / 2));
 
 	static struct s_data_t data;
-	assert (TES_JITTER_BIN_LEN == sizeof (data.hist.hists[0].bins[0]));
 
 	/* Some defaults. */
 	data.conf.ticks = 5;
