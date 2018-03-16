@@ -1,6 +1,5 @@
 /*
- * Helpers for inspecting/creating ethernet packets of the TES
- * protocol.
+ * Helpers for inspecting ethernet packets of the TES protocol.
  * 
  * One can either use struct tespkt directly and access its fields
  * (note that byte order needs to be taken into account then), or
@@ -229,7 +228,7 @@ static inline struct tespkt_trace_flags* tespkt_trace_fl (tespkt* pkt);
 /*
  * Print info about packet.
  */
-static void pkt_pretty_print (tespkt* pkt,
+static void tespkt_pretty_print (tespkt* pkt,
 		FILE* ostream, FILE* estream);
 
 /*
@@ -944,7 +943,7 @@ tespkt_trace_fl (tespkt* pkt)
 /* -------------------------------------------------------------- */
 
 static void
-pkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
+tespkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 {
 	if (estream == NULL)
 		estream = ostream;

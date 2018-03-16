@@ -193,7 +193,7 @@ main (int argc, char** argv)
 #ifdef VERBOSE
 		else
 		{
-			pkt_pretty_print (pkt, stdout, stderr);
+			tespkt_pretty_print (pkt, stdout, stderr);
 			printf ("\n");
 			dump_pkt ((unsigned char*)pkt, TES_HDR_LEN);
 		}

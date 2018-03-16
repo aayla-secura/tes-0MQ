@@ -18,7 +18,7 @@
 #include <net/netmap_user.h>
 
 #define TESPKT_DEBUG
-#include "net/tespkt.h"
+#include "net/tespkt_gen.h"
 
 #define DST_HW_ADDR "ff:ff:ff:ff:ff:ff"
 #define SRC_HW_ADDR "5a:ce:be:b7:b2:91"
@@ -207,15 +207,18 @@ main (void)
 	print_desc_info ();
 
 	/* A dummy packet */
-	struct tespkt pkt = {0};
-	unsigned char body[MAX_TES_FRAME_LEN - TES_HDR_LEN] = {0};
-	pkt.body = body;
-	assert (sizeof (pkt) == PKT_LEN);
+	tespkt* pkt = (tespkt*) malloc (PKT_LEN);
+	if (pkt == NULL)
+	{
+		perror ("");
+		exit (EXIT_FAILURE);
+	}
+	memset (pkt, 0, sizeof (tespkt));
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
-	memcpy (&pkt.eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
+	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
-	memcpy (&pkt.eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
-	pkt.eth_hdr.ether_type = htons (ETH_PROTO);
+	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
+	pkt->eth_hdr.ether_type = htons (ETH_PROTO);
 
 	/* Start the clock */
 	rc = gettimeofday (&gobj.timers.start, NULL);
@@ -255,7 +258,7 @@ main (void)
 		{
 			gobj.pkts.sent++;
 			gobj.pkts.inslot[gobj.nmd->cur_tx_ring]++;
-			pkt.tes_hdr.fseq++;
+			tespkt_inc_fseq (pkt, 1);
 #define ADV_RIDX
 #define RAND_RIDX
 #ifdef ADV_RIDX

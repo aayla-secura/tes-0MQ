@@ -18,16 +18,7 @@
 #include <net/netmap_user.h>
 
 #define TESPKT_DEBUG
-#include "net/tespkt.h"
-
-#define TES_BYTE_ORDER __LITTLE_ENDIAN 
-#if __BYTE_ORDER == TES_BYTE_ORDER
-#  define htofs
-#  define htofl
-#else
-#  define htofs bswap16
-#  define htofl bswap32
-#endif
+#include "net/tespkt_gen.h"
 
 #define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
@@ -66,60 +57,6 @@
 #define ERROR(...) fprintf (stdout, __VA_ARGS__)
 #define DEBUG(...) fprintf (stderr, __VA_ARGS__)
 #define INFO(...)  fprintf (stdout, __VA_ARGS__)
-
-static void
-set_type_mca (tespkt* pkt)
-{
-	pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_MCA);
-}
-
-static void
-set_type_evt (tespkt* pkt)
-{
-	pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
-}
-
-static void
-set_fseq (tespkt* pkt, u_int16_t seq)
-{
-	pkt->tes_hdr.fseq = htofs (seq);
-}
-
-static void
-set_pseq (tespkt* pkt, u_int16_t seq)
-{
-	pkt->tes_hdr.pseq = htofs (seq);
-}
-
-static void
-pkt_inc_fseq (tespkt* pkt, u_int16_t seq)
-{
-	pkt->tes_hdr.fseq = htofs (tespkt_fseq (pkt) + seq);
-}
-
-static void
-pkt_inc_pseq (tespkt* pkt, u_int16_t seq)
-{
-	pkt->tes_hdr.pseq = htofs (tespkt_pseq (pkt) + seq);
-}
-
-static void
-set_len (tespkt* pkt, u_int16_t len)
-{
-	pkt->length = htofs (len);
-}
-
-static void
-pkt_inc_len (tespkt* pkt, u_int16_t len)
-{
-	pkt->length = htofs (tespkt_flen (pkt) + len);
-}
-
-static inline void
-set_evt_size (tespkt* pkt, u_int16_t size)
-{
-	pkt->tes_hdr.esize = htofs (size);
-}
 
 /*
  * USEFUL:
@@ -170,7 +107,7 @@ tespkt* next_pkt (void)
 		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
 	} while (pkt == NULL);
 
-	set_fseq (pkt, gobj.pkts.sent); /* .sent is incremented
+	tespkt_set_fseq (pkt, gobj.pkts.sent); /* .sent is incremented
 	                                 * before sending */
 	return pkt;
 }
@@ -187,18 +124,15 @@ new_tespkt (void)
 
 	tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
 	if (pkt == NULL)
-	{
-		errno = ENOMEM;
 		raise (SIGTERM);
-	}
 	memset (pkt, 0, sizeof (tespkt));
 
 	struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
-	set_fseq (pkt, 0); /* incremented as we send them */
-	set_len (pkt, TES_HDR_LEN); /* incremented later */
+	tespkt_set_fseq (pkt, 0); /* incremented as we send them */
+	tespkt_set_len (pkt, TES_HDR_LEN); /* incremented later */
 
 	/* store a global pointer */
 	gobj.pkts.slots[gobj.pkts.first_free] = pkt;
@@ -233,13 +167,13 @@ new_mca_pkt (int seq, int nbins,
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_mca (pkt);
-	pkt_inc_len (pkt, nbins * BIN_LEN);
+	tespkt_set_type_mca (pkt);
+	tespkt_inc_len (pkt, nbins * BIN_LEN);
 
-	set_pseq (pkt, seq);
+	tespkt_set_pseq (pkt, seq);
 	if (seq == 0)
 	{
-		pkt_inc_len (pkt, MCA_HDR_LEN);
+		tespkt_inc_len (pkt, MCA_HDR_LEN);
 		struct tespkt_mca_hdr* mh = (struct tespkt_mca_hdr*) &pkt->body;
 		mh->size = MCA_HDR_LEN + num_all_bins * BIN_LEN;
 		mh->last_bin = num_all_bins - 1;
@@ -261,9 +195,9 @@ new_tick_pkt (struct tespkt_tick_flags* flags)
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
-	pkt_inc_len (pkt, TICK_HDR_LEN);
-	set_evt_size (pkt, 3);
+	tespkt_set_type_evt (pkt);
+	tespkt_inc_len (pkt, TICK_HDR_LEN);
+	tespkt_set_esize (pkt, 3);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 1;
 
@@ -287,9 +221,9 @@ new_peak_pkt (struct tespkt_event_flags* flags)
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
-	pkt_inc_len (pkt, PEAK_HDR_LEN);
-	set_evt_size (pkt, 1);
+	tespkt_set_type_evt (pkt);
+	tespkt_inc_len (pkt, PEAK_HDR_LEN);
+	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
 	et->PKT = PKT_TYPE_PEAK;
@@ -310,9 +244,9 @@ new_area_pkt (struct tespkt_event_flags* flags)
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
-	pkt_inc_len (pkt, AREA_HDR_LEN);
-	set_evt_size (pkt, 1);
+	tespkt_set_type_evt (pkt);
+	tespkt_inc_len (pkt, AREA_HDR_LEN);
+	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
 	et->PKT = PKT_TYPE_AREA;
@@ -333,9 +267,9 @@ new_pulse_pkt (int num_peaks, struct tespkt_event_flags* flags)
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
-	pkt_inc_len (pkt, PULSE_HDR_LEN + num_peaks * PEAK_LEN);
-	set_evt_size (pkt, 1);
+	tespkt_set_type_evt (pkt);
+	tespkt_inc_len (pkt, PULSE_HDR_LEN + num_peaks * PEAK_LEN);
+	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
 	et->PKT = PKT_TYPE_PULSE;
@@ -363,10 +297,10 @@ new_trace_sgl_pkt (int num_peaks,
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
-	pkt_inc_len (pkt, TRACE_FULL_HDR_LEN + num_peaks *
+	tespkt_set_type_evt (pkt);
+	tespkt_inc_len (pkt, TRACE_FULL_HDR_LEN + num_peaks *
 		PEAK_LEN + num_samples * SMPL_LEN);
-	set_evt_size (pkt, 1);
+	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
 	et->PKT = PKT_TYPE_TRACE;
@@ -399,7 +333,7 @@ new_trace_avg_pkt (int num_samples,
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
+	tespkt_set_type_evt (pkt);
 
 	return pkt;
 }
@@ -412,9 +346,9 @@ new_trace_dp_pkt (int num_peaks,
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
-	pkt_inc_len (pkt, TRACE_FULL_HDR_LEN + num_peaks * PEAK_LEN);
-	set_evt_size (pkt, 1);
+	tespkt_set_type_evt (pkt);
+	tespkt_inc_len (pkt, TRACE_FULL_HDR_LEN + num_peaks * PEAK_LEN);
+	tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
 	et->PKT = PKT_TYPE_TRACE;
@@ -443,7 +377,7 @@ new_trace_dp_pkt (int num_peaks,
 	u_int64_t rand = random ();
 	memcpy (&dptmp, &rand, DP_LEN);
 	dp->dot_prod = dptmp.dot_prod;
-	pkt_inc_len (pkt, DP_LEN);
+	tespkt_inc_len (pkt, DP_LEN);
 
 	return pkt;
 }
@@ -457,7 +391,7 @@ new_trace_dptr_pkt (int num_peaks,
 	tespkt* pkt = new_tespkt ();
 	if (pkt == NULL)
 		return NULL;
-	set_type_evt (pkt);
+	tespkt_set_type_evt (pkt);
 
 	return pkt;
 }

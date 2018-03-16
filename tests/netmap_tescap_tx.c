@@ -4,7 +4,7 @@
  */
 
 #define TESPKT_DEBUG
-#include "net/tespkt.h"
+#include "net/tespkt_gen.h"
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
@@ -288,14 +288,13 @@ s_inject_from_fidx (const char* basefname,
 	int looped = 0;
 	struct s_stats_t stats = {0};
 
-	struct tespkt pkt = {0};
-	unsigned char body[MAX_TES_FRAME_LEN - TES_HDR_LEN] = {0};
-	pkt.body = body;
-	if (pkt.body == NULL)
+	tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
+	if (pkt == NULL)
 	{
-		perror ("Could not malloc");
+		perror ("");
 		return -1;
 	}
+	memset (pkt, 0, sizeof (tespkt));
 	while (!interrupted && looped != NUM_LOOPS)
 	{
 		int rc;
@@ -342,17 +341,14 @@ s_inject_from_fidx (const char* basefname,
 		}
 		stats.pkts++;
 
-		memset (&pkt, 0, TES_HDR_LEN);
-		memset (pkt.body, 0, MAX_TES_FRAME_LEN - TES_HDR_LEN);
-
 		/* Construct the ethernet header */
 		uint16_t plen = fidx.length;
 		assert (plen <= MAX_TES_FRAME_LEN - TES_HDR_LEN);
-		pkt.length = TES_HDR_LEN + plen;
+		tespkt_set_len (pkt, TES_HDR_LEN + plen);
 		struct ether_addr* mac_addr = ether_aton (DST_HW_ADDR);
-		memcpy (&pkt.eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
+		memcpy (&pkt->eth_hdr.ether_dhost, mac_addr, ETHER_ADDR_LEN);
 		mac_addr = ether_aton (SRC_HW_ADDR);
-		memcpy (&pkt.eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
+		memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
 		int datfd = -1;
 		switch (fidx.ftype.PT)
 		{
@@ -363,15 +359,15 @@ s_inject_from_fidx (const char* basefname,
 			case FTYPE_TRACE_AVG:
 			case FTYPE_TRACE_DP:
 			case FTYPE_TRACE_DP_TR:
-				pkt.eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
+				pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
 				datfd = edatfd;
 				break;
 			case FTYPE_TICK:
-				pkt.eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
+				pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
 				datfd = tdatfd;
 				break;
 			case FTYPE_MCA:
-				pkt.eth_hdr.ether_type = htons (ETHERTYPE_F_MCA);
+				pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_MCA);
 				datfd = mdatfd;
 				break;
 		}
@@ -379,39 +375,39 @@ s_inject_from_fidx (const char* basefname,
 			continue;
 
 		/* Construct the tes header */
-		pkt.tes_hdr.esize = fidx.esize;
+		pkt->tes_hdr.esize = fidx.esize; /* it's in FPGA byte-order */
 		switch (fidx.ftype.PT)
 		{
 			case FTYPE_PEAK:
 			case FTYPE_AREA:
 			case FTYPE_PULSE:
-				pkt.tes_hdr.etype.PKT = fidx.ftype.PT;
+				pkt->tes_hdr.etype.PKT = fidx.ftype.PT;
 				break;
 			case FTYPE_TRACE_SGL:
 			case FTYPE_TRACE_AVG:
 			case FTYPE_TRACE_DP:
 			case FTYPE_TRACE_DP_TR:
-				pkt.tes_hdr.etype.PKT = PKT_TYPE_TRACE;
-				pkt.tes_hdr.etype.TR = fidx.ftype.PT - 3;
+				pkt->tes_hdr.etype.PKT = PKT_TYPE_TRACE;
+				pkt->tes_hdr.etype.TR = fidx.ftype.PT - 3;
 				break;
 			case FTYPE_TICK:
-				pkt.tes_hdr.etype.T = 1;
+				pkt->tes_hdr.etype.T = 1;
 				break;
 		}
 
 		/* If sequence error (SEQ == 1), assume one missed */
 		if (stats.pkts == 1)
-			pkt.tes_hdr.fseq = 0;
+			pkt->tes_hdr.fseq = 0;
 		else
-			pkt.tes_hdr.fseq = stats.prev_fseq + 1 + fidx.ftype.SEQ;
+			tespkt_set_fseq (pkt, stats.prev_fseq + 1 + fidx.ftype.SEQ);
 
-		int is_mca = tespkt_is_mca (&pkt);
-		int is_trace = ( tespkt_is_trace (&pkt) &&
-			! tespkt_is_trace_dp (&pkt) );
+		int is_mca = tespkt_is_mca (pkt);
+		int is_trace = ( tespkt_is_trace (pkt) &&
+			! tespkt_is_trace_dp (pkt) );
 		if (fidx.ftype.HDR || ( ! is_trace && ! is_mca ))
-			pkt.tes_hdr.pseq = stats.prev_pseq = 0; /* short event or header */
+			pkt->tes_hdr.pseq = stats.prev_pseq = 0; /* short event or header */
 		else
-			pkt.tes_hdr.pseq = stats.prev_pseq + 1 + fidx.ftype.SEQ;
+			tespkt_set_pseq (pkt, stats.prev_pseq + 1 + fidx.ftype.SEQ);
 
 		/* Read the payload */
 		rc = lseek (datfd, fidx.start, SEEK_SET);
@@ -425,7 +421,7 @@ s_inject_from_fidx (const char* basefname,
 			fprintf (stderr, "Could not seek to payload\n");
 			break;
 		}
-		rc = read (datfd, (char*)&pkt + TES_HDR_LEN, plen);
+		rc = read (datfd, (char*)pkt + TES_HDR_LEN, plen);
 		if (rc == -1)
 		{
 			perror ("Could not read in payload");
@@ -450,7 +446,7 @@ s_inject_from_fidx (const char* basefname,
 
 		if (stats.pkts % WAIT_EVERY == 0)
 			poll (NULL, 0, 1);
-		rc = nm_inject (nmd, &pkt, plen + TES_HDR_LEN);
+		rc = nm_inject (nmd, pkt, plen + TES_HDR_LEN);
 		if (!rc)
 		{
 			fprintf (stderr, "Cannot inject packet\n");
@@ -461,7 +457,7 @@ s_inject_from_fidx (const char* basefname,
 			continue;
 
 		/* Statistics, only first time through the loop */
-		s_update_stats (&pkt, &stats);
+		s_update_stats (pkt, &stats);
 	}
 
 	close (fidxfd);
@@ -505,10 +501,16 @@ s_inject_from_flat (const char* filename,
 			}
 		}
 
-		struct tespkt pkt = {0};
+		tespkt* pkt = (tespkt*) malloc (MAX_TES_FRAME_LEN);
+		if (pkt == NULL)
+		{
+			perror ("");
+			exit (EXIT_FAILURE);
+		}
+		memset (pkt, 0, sizeof (tespkt));
 
 		/* Read the header */
-		rc = read (capfd, &pkt, TES_HDR_LEN);
+		rc = read (capfd, (char*)pkt, TES_HDR_LEN);
 		if (rc == -1)
 		{
 			perror ("Could not read in header");
@@ -533,10 +535,10 @@ s_inject_from_flat (const char* filename,
 		stats.pkts++;
 
 		/* Read the payload */
-		uint16_t len = tespkt_flen (&pkt);
+		uint16_t len = tespkt_flen (pkt);
 		assert (len <= MAX_TES_FRAME_LEN);
 		assert (len > TES_HDR_LEN);
-		rc = read (capfd, (char*)&pkt + TES_HDR_LEN,
+		rc = read (capfd, (char*)pkt + TES_HDR_LEN,
 			len - TES_HDR_LEN);
 		if (rc == -1)
 		{
@@ -562,7 +564,7 @@ s_inject_from_flat (const char* filename,
 
 		if (stats.pkts % WAIT_EVERY == 0)
 			poll (NULL, 0, 1);
-		rc = nm_inject (nmd, &pkt, len);
+		rc = nm_inject (nmd, pkt, len);
 		if (!rc)
 		{
 			fprintf (stderr, "Cannot inject packet\n");
@@ -573,7 +575,7 @@ s_inject_from_flat (const char* filename,
 			continue;
 
 		/* Statistics, only first time through the loop */
-		s_update_stats (&pkt, &stats);
+		s_update_stats (pkt, &stats);
 	}
 
 	close (capfd);
