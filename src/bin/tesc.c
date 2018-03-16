@@ -23,7 +23,13 @@
 
 #define DEFAULT_SERVER "tcp://localhost"
 
-typedef int (cmd_hn)(const char*, const char*, int, char**);
+typedef int (cmd_hn)(const char*, const char*, int, char*[]);
+static cmd_hn s_server_info;
+static cmd_hn s_jitter_conf;
+static cmd_hn s_local_save_trace;
+static cmd_hn s_local_save_mca;
+static cmd_hn s_local_save_jitter;
+static cmd_hn s_remote_save_all;
 
 static char s_prog_name[PATH_MAX];
 #define OPTS_G       "Z:F:" /* processed by main */
@@ -144,7 +150,7 @@ s_prompt (void)
 
 static int
 s_server_info (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char* argv[])
 {
 	uint32_t timeout = 1;
 
@@ -254,7 +260,7 @@ s_server_info (const char* server, const char* filename,
 
 static int
 s_jitter_conf (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char* argv[])
 {
 	uint64_t ticks = 0;
 	uint8_t ref_ch = 0;
@@ -347,7 +353,7 @@ s_jitter_conf (const char* server, const char* filename,
 
 static int
 s_local_save_trace (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char* argv[])
 {
 	uint32_t timeout = 5;
 
@@ -488,7 +494,7 @@ s_local_save_trace (const char* server, const char* filename,
 
 static int
 s_local_save_hist (const char* server, const char* filename,
-	int argc, char** argv, size_t max_size)
+	int argc, char* argv[], size_t max_size)
 {
 	uint64_t num_hist = 1;
 
@@ -634,7 +640,7 @@ s_local_save_hist (const char* server, const char* filename,
 
 static int
 s_local_save_mca (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char* argv[])
 {
 	return s_local_save_hist (server, filename,
 		argc, argv, TES_HIST_MAXSIZE);
@@ -644,7 +650,7 @@ s_local_save_mca (const char* server, const char* filename,
 
 static int
 s_local_save_jitter (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char* argv[])
 {
 	return s_local_save_hist (server, filename,
 		argc, argv, TES_JITTER_SIZE);
@@ -654,7 +660,7 @@ s_local_save_jitter (const char* server, const char* filename,
 
 static int
 s_remote_save_all (const char* server, const char* filename,
-	int argc, char** argv)
+	int argc, char* argv[])
 {
 	char measurement[1024] = {0};
 	uint64_t min_ticks = 0, min_events = 0;
@@ -851,7 +857,7 @@ s_remote_save_all (const char* server, const char* filename,
 }
 
 int
-main (int argc, char** argv)
+main (int argc, char* argv[])
 {
 	strncpy (s_prog_name, argv[0], sizeof (s_prog_name));
 	zsys_init ();

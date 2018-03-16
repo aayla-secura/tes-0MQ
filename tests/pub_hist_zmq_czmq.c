@@ -78,7 +78,7 @@ new_subscriber (zloop_t* loop, zsock_t* sock, void* arg)
 }
 
 int
-main (int argc, char** argv)
+main (int argc, char* argv[])
 {
 	struct data_t data = {0,};
 	if (argc != 2)

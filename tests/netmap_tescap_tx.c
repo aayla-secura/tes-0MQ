@@ -583,7 +583,7 @@ s_inject_from_flat (const char* filename,
 }
 
 int
-main (int argc, char** argv)
+main (int argc, char* argv[])
 {
 	tespkt_self_test ();
 

@@ -50,7 +50,7 @@ int_hn (int sig)
 }
 
 int
-main (int argc, char** argv)
+main (int argc, char* argv[])
 {
 	int rc;
 	if (argc != 2)
