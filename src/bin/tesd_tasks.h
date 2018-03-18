@@ -47,9 +47,11 @@ struct _task_endpoint_t
 	zloop_reader_fn* handler;
 	const char* addresses;      // comma-separated
 	zsock_t*    sock;
+	uint32_t    nsubs;          // used for XPUB sockets only
 	const int   type;           // one of ZMQ_*
 	bool        automute;       // s_task_(de)activate will
 	                            // enable/disable handler
+	bool        autosleep;      // valid for XPUB sockets only
 };
 
 struct _task_t
@@ -65,6 +67,9 @@ struct _task_t
 	zactor_t*     shim;         // coordinator's end of the pipe,
 	                            // signals sent on behalf of
 	                            // coordinator go here
+/* No check is done for number of frontends, looping over them stops
+ * when one of the required members, e.g. addresses, is NULL. (don't
+ * use type, ZMQ_PAIR is 0). */
 #define MAX_FRONTENDS 16
 	task_endp_t frontends[MAX_FRONTENDS];
 	int         id;             // the task ID
@@ -131,7 +136,6 @@ task_data_fn    task_avgtr_init;
 task_data_fn    task_avgtr_fin;
 
 /* Publish MCA histogram */
-zloop_reader_fn task_hist_sub_hn;
 task_pkt_fn     task_hist_pkt_hn;
 task_data_fn    task_hist_init;
 task_data_fn    task_hist_wakeup;
@@ -139,7 +143,6 @@ task_data_fn    task_hist_fin;
 
 /* Publish jitter histogram */
 zloop_reader_fn task_jitter_req_hn;
-zloop_reader_fn task_jitter_sub_hn;
 task_pkt_fn     task_jitter_pkt_hn;
 task_data_fn    task_jitter_init;
 task_data_fn    task_jitter_wakeup;

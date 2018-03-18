@@ -43,8 +43,12 @@
  * within its initializer or in its frontend handlers.
  *
  * Each frontend defined with the automute flag will have its handler
- * deregistered from the loop upon task activation, and registered again
- * upon deactivation.
+ * deregistered from the loop upon task activation, and registered
+ * again upon deactivation.
+ *
+ * If any of the frontends is an XPUB and is defined with the
+ * autosleep flag, the task will be deactivated when the socket has no
+ * subscribers and reactivated at the first subscription.
  *
  * Right after the loop terminates, s_task_shim will call the task
  * finalizer, so it can cleanup its data and possibly send final
@@ -117,21 +121,6 @@
  * -----------------------------------------------------------------
  * - Test with using more than one of the rings: how to get the NIC
  *   to fill the rest.
- * - Set CPU affinity for each task.
- * - Save-to-file:
- *   -- FIX: check if all filenames (-measurement.*) are valid (i.e.
- *      if symlink, point inside ROOT).
- *   -- Set umask.
- *   -- Check filename for non-printable and non-ASCII characters.
- *   -- Return a string error in case of a failed request or job?
- *   -- FIX: why does the task count more missed packets than
- *      coordinator?
- *   -- Log REQ jobs in a global database such that it can be looked
- *      up by filename, client IP or time frame.
- *   -- Save the statistics as attributes in the hdf5 file.
- *   -- Generate a filename is none is given.
- * - For REQ/REP sockets: check what happens if client drops out
- *   before reply is sent (will the socket block)?
  * - Why does writing to file fail with "unhandled syscall" when
  *   running under valgrind? A:
  *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
@@ -148,6 +137,7 @@
 
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
+static zloop_reader_fn s_sub_hn;
 static zactor_fn       s_task_shim;
 
 static int  s_task_start (tes_ifdesc* ifd, task_t* self);
@@ -209,9 +199,9 @@ static task_t s_tasks[] = {
 		.data_fin    = task_hist_fin,
 		.frontends   = {
 			{
-				.handler   = task_hist_sub_hn,
 				.addresses = "tcp://*:" TES_HIST_LPORT,
 				.type      = ZMQ_XPUB,
+				.autosleep = 1,
 			},
 		},
 		.color       = ANSI_FG_CYAN,
@@ -228,9 +218,9 @@ static task_t s_tasks[] = {
 				.type      = ZMQ_REP,
 			},
 			{
-				.handler   = task_jitter_sub_hn,
 				.addresses = "tcp://*:" TES_JITTER_PUB_LPORT,
 				.type      = ZMQ_XPUB,
+				.autosleep = 1,
 			},
 		},
 		.color       = ANSI_FG_MAGENTA,
@@ -388,7 +378,7 @@ task_activate (task_t* self)
 	}
 
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->handler != NULL; frontend++)
+			frontend->addresses != NULL; frontend++)
 	{
 		if (frontend->automute)
 			zloop_reader_end (self->loop, frontend->sock);
@@ -423,18 +413,19 @@ task_deactivate (task_t* self)
 	}
 
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->handler != NULL; frontend++)
+			frontend->addresses != NULL; frontend++)
 	{
-		if (frontend->automute)
+		if ( ! frontend->automute )
+			continue;
+		
+		dbg_assert (frontend->handler != NULL);
+		int rc = zloop_reader (self->loop, frontend->sock,
+				frontend->handler, self);
+		if (rc == -1)
 		{
-			int rc = zloop_reader (self->loop, frontend->sock,
-					frontend->handler, self);
-			if (rc == -1)
-			{
-				logmsg (errno, LOG_ERR,
-						"Could not re-enable the zloop reader");
-				return TASK_ERROR;
-			}
+			logmsg (errno, LOG_ERR,
+					"Could not re-enable the zloop reader");
+			return TASK_ERROR;
 		}
 	}
 
@@ -463,11 +454,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	self->busy = 1;
 	
 	int sig = zsock_wait (reader);
-	// if (sig == -1)
-	// { /* this shouldn't happen */
-	//   logmsg (0, LOG_DEBUG, "Receive interrupted");
-	//   return -1;
-	// }
+	dbg_assert (sig != -1); /* we don't get interrupted */
 	
 	if (sig == SIG_STOP)
 	{
@@ -646,41 +633,44 @@ s_task_shim (zsock_t* pipe, void* self_)
 
 	/* Open the public interfaces */
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->handler != NULL; frontend++)
+			frontend->addresses != NULL; frontend++)
 	{
-		if (frontend->addresses != NULL)
+		frontend->sock = zsock_new (frontend->type);
+		if (frontend->sock == NULL)
 		{
-			frontend->sock = zsock_new (frontend->type);
-			if (frontend->sock == NULL)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not open the public interfaces");
-				self->error = 1;
-				goto cleanup;
-			}
-			rc = zsock_attach (frontend->sock, frontend->addresses, 1);
-			if (rc == -1)
-			{
-				logmsg (errno, LOG_ERR,
-					"Could not bind the public interfaces");
-				self->error = 1;
-				goto cleanup;
-			}
-			logmsg (0, LOG_INFO,
-				"Listening on port(s) %s", frontend->addresses);
+			logmsg (errno, LOG_ERR,
+				"Could not open the public interfaces");
+			self->error = 1;
+			goto cleanup;
+		}
+		rc = zsock_attach (frontend->sock, frontend->addresses, 1);
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not bind the public interfaces");
+			self->error = 1;
+			goto cleanup;
+		}
+		logmsg (0, LOG_INFO,
+			"Listening on port(s) %s", frontend->addresses);
 
-			if (frontend->handler != NULL)
-			{
-				rc = zloop_reader (loop, frontend->sock,
-					frontend->handler, self);
-				if (rc == -1)
-				{
-					logmsg (errno, LOG_ERR,
-						"Could not register the zloop frontend readers");
-					self->error = 1;
-					goto cleanup;
-				}
-			}
+		rc = 0;
+		if (frontend->handler != NULL)
+			rc = zloop_reader (loop, frontend->sock,
+				frontend->handler, self);
+		
+		if (rc == 0 && frontend->autosleep)
+		{
+			assert (frontend->type == ZMQ_XPUB);
+			rc = zloop_reader (loop, frontend->sock, s_sub_hn, self);
+		}
+		
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not register the zloop frontend readers");
+			self->error = 1;
+			goto cleanup;
 		}
 	}
 
@@ -747,7 +737,7 @@ cleanup:
 	}
 	zloop_destroy (&loop);
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->sock != NULL; frontend++)
+			frontend->addresses != NULL; frontend++)
 		zsock_destroy (&frontend->sock);
 	logmsg (0, LOG_DEBUG, "Done");
 #if DEBUG_LEVEL >= VERBOSE
@@ -767,6 +757,93 @@ cleanup:
 			self->dbg_stats.pkts.rcvd_in[r]);
 #endif
 }
+
+/*
+ * Registered with a task's XPUB frontend (if autosleep is set).
+ * Will deactivate task on last unsubscription and activate it on
+ * first subscription.
+ *
+ * XPUB will receive a message of the form "\x01<prefix>" the first
+ * time a client subscribes to the port with a prefix <prefix>, and
+ * will receive a message of the form "\x00<prefix>" when the last
+ * client subscribed to <prefix> unsubscribes.
+ * It will also receive any message sent to the port (by an
+ * ill-behaved client) that does not begin with "\x00" or "\x01",
+ * these should be ignored.
+ */
+int
+s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
+{
+	dbg_assert (self_ != NULL);
+
+	task_t* self = (task_t*) self_;
+
+	zmsg_t* msg = zmsg_recv (reader);
+	/* We don't get interrupted, this should not happen. */
+	assert (msg != NULL);
+
+	if (zmsg_size (msg) != 1)
+	{
+		logmsg (0, LOG_DEBUG,
+			"Got a spurious %lu-frame message", zmsg_size(msg));
+		zmsg_destroy (&msg);
+		return 0;
+	}
+
+#if DEBUG_LEVEL >= VERBOSE
+	zframe_t* f = zmsg_first (msg);
+	char* hexstr = zframe_strhex (f);
+	logmsg (0, LOG_DEBUG,
+		"Got message %s", hexstr);
+	zstr_free (&hexstr);
+#endif
+
+	/* Find the frontend for which to update subscriber numbers. */
+	task_endp_t* frontend = NULL;
+	for (frontend = &self->frontends[0];
+			frontend->sock != NULL && frontend->sock != reader;
+			frontend++)
+		;
+	dbg_assert (frontend->sock == reader); /* couldn't find reader? */
+
+	char* msgstr = zmsg_popstr (msg);
+	zmsg_destroy (&msg);
+	char stat = msgstr[0];
+	zstr_free (&msgstr);
+	if (stat == 0)
+	{
+		dbg_assert (frontend->nsubs > 0);
+		frontend->nsubs--;
+	}
+	else if (stat == 1)
+	{
+		frontend->nsubs++;
+	}
+	else
+	{
+		logmsg (0, LOG_DEBUG,
+			"Got a spurious message");
+		return 0;
+	}
+
+	if (frontend->nsubs == 1)
+	{
+		logmsg (0, LOG_DEBUG,
+			"First subscription, activating");
+		/* Wakeup packet handler. */
+		task_activate (self);
+	}
+	else if (frontend->nsubs == 0)
+	{
+		logmsg (0, LOG_DEBUG,
+			"Last unsubscription, deactivating");
+		/* Deactivate packet handler. */
+		task_deactivate (self);
+	}
+
+	return 0;
+}
+
 
 /*
  * Initializes a task_t and starts a new thread using zactor_new.

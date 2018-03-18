@@ -68,7 +68,6 @@ struct s_data_t
 	uint64_t published;    // number of published histograms
 	uint64_t dropped;      // number of aborted histograms
 #endif
-	uint32_t nsubs;        // no. of subscribers at any time
 	struct s_hist_t hist;
 	uint64_t ticks;        // number of ticks so far
 	struct s_point_t points[MAX_SIMULT_POINTS];
@@ -217,81 +216,6 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 
 	zsock_send (frontend, TES_JITTER_REP_PIC,
 		data->conf.ref_ch, data->conf.ticks);
-
-	return 0;
-}
-
-/*
- * XPUB will receive a message of the form "\x01<prefix>" the first time
- * a client subscribes to the port with a prefix <prefix>, and will
- * receive a message of the form "\x00<prefix>" when the last client
- * subscribed to <prefix> unsubscribes.
- * It will also receive any message sent to the port (by an ill-behaved
- * client) that does not begin with "\x00" or "\x01", these should be
- * ignored.
- */
-int
-task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
-{
-	dbg_assert (self_ != NULL);
-
-	task_t* self = (task_t*) self_;
-
-	zmsg_t* msg = zmsg_recv (frontend);
-	/* We don't get interrupted. */
-	assert (msg != NULL);
-
-	if (zmsg_size (msg) != 1)
-	{
-		logmsg (0, LOG_DEBUG,
-			"Got a spurious %lu-frame message", zmsg_size(msg));
-		zmsg_destroy (&msg);
-		return 0;
-	}
-
-#if DEBUG_LEVEL >= VERBOSE
-	zframe_t* f = zmsg_first (msg);
-	char* hexstr = zframe_strhex (f);
-	logmsg (0, LOG_DEBUG,
-		"Got message %s", hexstr);
-	zstr_free (&hexstr);
-#endif
-
-	struct s_data_t* data = (struct s_data_t*) self->data;
-	char* msgstr = zmsg_popstr (msg);
-	zmsg_destroy (&msg);
-	char stat = msgstr[0];
-	zstr_free (&msgstr);
-	if (stat == 0)
-	{
-		dbg_assert (data->nsubs > 0);
-		data->nsubs--;
-	}
-	else if (stat == 1)
-	{
-		data->nsubs++;
-	}
-	else
-	{
-		logmsg (0, LOG_DEBUG,
-			"Got a spurious message");
-		return 0;
-	}
-
-	if (data->nsubs == 1)
-	{
-		logmsg (0, LOG_DEBUG,
-			"First subscription, activating");
-		/* Wakeup packet handler. */
-		task_activate (self);
-	}
-	else if (data->nsubs == 0)
-	{
-		logmsg (0, LOG_DEBUG,
-			"Last unsubscription, deactivating");
-		/* Deactivate packet handler. */
-		task_deactivate (self);
-	}
 
 	return 0;
 }

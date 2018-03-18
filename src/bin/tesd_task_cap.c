@@ -1,3 +1,15 @@
+/*
+ * TO DO:
+ *  - Check filename for non-printable and non-ASCII characters.
+ *  - Return a string error in case of a failed request or job?
+ *  - FIX: why does the task count more missed packets than
+ *    coordinator?
+ *  - Log REQ jobs in a global database such that it can be looked
+ *    up by filename, client IP or time frame.
+ *  - Save the statistics as attributes in the hdf5 file.
+ *  - Generate a filename is none is given.
+ */
+
 #include "tesd_tasks.h"
 #include <aio.h>
 #include "hdf5conv.h"
