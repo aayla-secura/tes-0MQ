@@ -107,8 +107,6 @@ task_hist_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		logmsg (0, LOG_DEBUG,
 			"First subscription, activating");
 		/* Wakeup packet handler. */
-		s_clear (hist);
-		hist->discard = 1;
 		task_activate (self);
 	}
 	else if (hist->nsubs == 0)
@@ -218,20 +216,18 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		int rc = zmq_send (
 			zsock_resolve (self->frontends[0].sock),
 			hist->buf, hist->cur_size, 0);
-#if DEBUG_LEVEL >= VERBOSE
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
 				"Cannot send the histogram");
 			return TASK_ERROR;
 		}
+
+#if DEBUG_LEVEL >= VERBOSE
 		if ((unsigned int)rc != hist->cur_size)
-		{
 			logmsg (errno, LOG_ERR,
 				"Histogram is %lu bytes long, sent %u",
 				hist->cur_size, rc);
-			return TASK_ERROR;
-		}
 
 		hist->published++;
 		if (hist->published % 50)
@@ -256,6 +252,17 @@ task_hist_init (task_t* self)
 	hist.discard = 1;
 
 	self->data = &hist;
+	return 0;
+}
+
+int
+task_hist_wakeup (task_t* self)
+{
+	assert (self != NULL);
+	struct s_data_t* hist = (struct s_data_t*) self->data;
+
+	s_clear (hist);
+	hist->discard = 1;
 	return 0;
 }
 

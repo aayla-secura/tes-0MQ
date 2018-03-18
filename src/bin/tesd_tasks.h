@@ -58,6 +58,8 @@ struct _task_t
 	zloop_t*      loop;
 	task_pkt_fn*  pkt_handler;
 	task_data_fn* data_init;    // initialize data, perform checks
+	task_data_fn* data_wakeup;  // called on activation
+	task_data_fn* data_sleep;   // called on deactivation
 	task_data_fn* data_fin;     // cleanup data
 	void*         data;         // task-specific
 	zactor_t*     shim;         // coordinator's end of the pipe,
@@ -97,8 +99,9 @@ struct _task_t
  * Synchronizes the task's head with the ring's head and sets active
  * to true. If the task handles one client at a time, disables
  * reading the client_handler.
+ * Returns 0 on success, TASK_ERROR on error.
  */
-void task_activate (task_t* self);
+int task_activate (task_t* self);
 
 /*
  * Deactivates the task and, if the task handles one client at
@@ -131,6 +134,7 @@ task_data_fn    task_avgtr_fin;
 zloop_reader_fn task_hist_sub_hn;
 task_pkt_fn     task_hist_pkt_hn;
 task_data_fn    task_hist_init;
+task_data_fn    task_hist_wakeup;
 task_data_fn    task_hist_fin;
 
 /* Publish jitter histogram */
@@ -138,6 +142,7 @@ zloop_reader_fn task_jitter_req_hn;
 zloop_reader_fn task_jitter_sub_hn;
 task_pkt_fn     task_jitter_pkt_hn;
 task_data_fn    task_jitter_init;
+task_data_fn    task_jitter_wakeup;
 task_data_fn    task_jitter_fin;
 
 #endif

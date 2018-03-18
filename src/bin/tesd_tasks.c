@@ -205,6 +205,7 @@ static task_t s_tasks[] = {
 	{ // PUBLISH MCA HIST
 		.pkt_handler = task_hist_pkt_hn,
 		.data_init   = task_hist_init,
+		.data_wakeup = task_hist_wakeup,
 		.data_fin    = task_hist_fin,
 		.frontends   = {
 			{
@@ -218,6 +219,7 @@ static task_t s_tasks[] = {
 	{ // PUBLISH JITTER HIST
 		.pkt_handler = task_jitter_pkt_hn,
 		.data_init   = task_jitter_init,
+		.data_wakeup = task_jitter_wakeup,
 		.data_fin    = task_jitter_fin,
 		.frontends   = {
 			{
@@ -369,10 +371,21 @@ tasks_get_heads (void)
 /* -------------------------- TASKS API ------------------------- */
 /* -------------------------------------------------------------- */
 
-void
+int
 task_activate (task_t* self)
 {
 	assert (self != NULL);
+
+	if (self->data_wakeup != NULL)
+	{
+		int rc = self->data_wakeup (self);
+		if (rc != 0)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not prepare thread data on activation");
+			return TASK_ERROR;
+		}
+	}
 
 	for (task_endp_t* frontend = &self->frontends[0];
 			frontend->handler != NULL; frontend++)
@@ -386,13 +399,29 @@ task_activate (task_t* self)
 		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
 		self->heads[r] = tes_ifring_head (rxring);
 	}
+
 	self->active = 1;
 	self->just_activated = 1;
+
+	return 0;
 }
 
 int
 task_deactivate (task_t* self)
 {
+	assert (self != NULL);
+
+	if (self->data_sleep != NULL)
+	{
+		int rc = self->data_sleep (self);
+		if (rc != 0)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not prepare thread data on deactivation");
+			return TASK_ERROR;
+		}
+	}
+
 	for (task_endp_t* frontend = &self->frontends[0];
 			frontend->handler != NULL; frontend++)
 	{
@@ -681,7 +710,17 @@ s_task_shim (zsock_t* pipe, void* self_)
 	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
 	
 	if (self->autoactivate)
-		task_activate (self);
+	{
+		rc = task_activate (self);
+		if (rc == TASK_ERROR)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not autoactivate task");
+			self->error = 1;
+			goto cleanup;
+		}
+		dbg_assert (rc == 0);
+	}
 	
 	rc = zloop_start (loop);
 	dbg_assert (rc == -1); /* we don't get interrupted */

@@ -80,7 +80,6 @@ static inline void s_add_to_since (struct s_point_t* pt, uint16_t delay);
 static inline void s_add_to_until (struct s_point_t* pt, uint16_t delay);
 static inline void s_save_points (struct s_data_t* data);
 static void s_prep_next (struct s_data_t* data);
-static void s_reset (struct s_data_t* data);
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
@@ -177,21 +176,6 @@ s_prep_next (struct s_data_t* data)
 	}
 	else
 		dbg_assert (data->cur_npts == 0);
-}
-
-/*
- * Called on activation.
- */
-static void
-s_reset (struct s_data_t* data)
-{
-	dbg_assert (data != NULL);
-
-	memset (&data->points, 0, sizeof (data->points));
-	/* Wait for first tick and reference frame. */
-	data->publishing = 0;
-	data->cur_npts = 0;
-	s_prep_next (data);
 }
 
 /* -------------------------------------------------------------- */
@@ -298,7 +282,6 @@ task_jitter_sub_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	{
 		logmsg (0, LOG_DEBUG,
 			"First subscription, activating");
-		s_reset (data);
 		/* Wakeup packet handler. */
 		task_activate (self);
 	}
@@ -425,13 +408,18 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		int rc = zmq_send (
 			zsock_resolve (self->frontends[ENDP_PUB].sock),
 			(void*)&data->hist, TES_JITTER_SIZE, 0);
-#if DEBUG_LEVEL >= VERBOSE
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
 				"Cannot send the histogram");
 			return TASK_ERROR;
 		}
+
+#if DEBUG_LEVEL >= VERBOSE
+		if ((unsigned int)rc != TES_JITTER_SIZE)
+			logmsg (errno, LOG_ERR,
+				"Histogram is %lu bytes long, sent %u",
+				TES_JITTER_SIZE, rc);
 
 		data->published++;
 		if (data->published % 50)
@@ -464,6 +452,20 @@ task_jitter_init (task_t* self)
 	data.conf.ref_ch = 0;
 
 	self->data = &data;
+	return 0;
+}
+
+int
+task_jitter_wakeup (task_t* self)
+{
+	assert (self != NULL);
+	struct s_data_t* data = (struct s_data_t*) self->data;
+
+	memset (&data->points, 0, sizeof (data->points));
+	/* Wait for first tick and reference frame. */
+	data->publishing = 0;
+	data->cur_npts = 0;
+	s_prep_next (data);
 	return 0;
 }
 
