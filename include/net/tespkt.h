@@ -25,6 +25,7 @@
 #  include <sys/endian.h>
 #endif
 
+#define TES_VERSION 1
 /*
  * Ethernet header is always network-order (big-endian) but the byte
  * order of the payload can be changed.
@@ -212,6 +213,12 @@ static inline uint16_t tespkt_pulse_len  (tespkt* pkt);
 static inline uint16_t tespkt_pulse_toff (tespkt* pkt);
 
 /*
+ * True or false if event has multiple peaks (only pulse and non-avg
+ * trace headers)
+ */
+static inline int tespkt_has_multipeak (tespkt* pkt, uint16_t e);
+
+/*
  * Get trace's size, area, length, time offset (only trace frames).
  */
 static inline uint16_t tespkt_trace_size (tespkt* pkt);
@@ -328,7 +335,12 @@ struct tespkt_event_flags
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	uint8_t CH : 3;
 	uint8_t O  : 1;
+#if TES_VERSION < 2
 	uint8_t PC : 4;
+#else
+	uint8_t PC : 2;
+	uint8_t    : 2; /* reserved */
+#endif
 
 	uint8_t N  : 1;
 	uint8_t T  : 1;
@@ -336,7 +348,12 @@ struct tespkt_event_flags
 	uint8_t HT : 2;
 	uint8_t TT : 2;
 #else
+#if TES_VERSION < 2
 	uint8_t PC : 4;
+#else
+	uint8_t    : 2; /* reserved */
+	uint8_t PC : 2;
+#endif
 	uint8_t O  : 1;
 	uint8_t CH : 3;
 
@@ -908,6 +925,18 @@ tespkt_pulse_toff (tespkt* pkt)
 {
 	return ftohs (
 		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.toffset);
+}
+
+static inline int
+tespkt_has_multipeak (tespkt* pkt, uint16_t e)
+{
+	struct tespkt_event_hdr* eh = (struct tespkt_event_hdr*) (
+		(char*)&pkt->body + e*tespkt_true_esize (pkt) );
+#if TES_VERSION < 2
+	return (eh->flags.PC > 1);
+#else
+	return (eh->flags.PC > 0);
+#endif
 }
 
 static inline uint16_t
