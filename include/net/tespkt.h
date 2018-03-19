@@ -776,7 +776,8 @@ static inline uint16_t
 tespkt_event_nums (tespkt* pkt)
 {
 	if (tespkt_is_trace (pkt))
-		return (tespkt_is_header (pkt) ? 1 : 0);
+		return ( (tespkt_is_header (pkt) ||
+			tespkt_is_trace_dp (pkt)) ? 1 : 0);
 	return ( ( tespkt_flen (pkt) - TESPKT_HDR_LEN ) / (
 		tespkt_true_esize (pkt) ) );
 }
