@@ -368,6 +368,8 @@ task_jitter_init (task_t* self)
 	assert (sizeof (struct s_subhist_t) == TES_JITTER_SUBSIZE);
 	assert (sizeof (struct s_conf_t) == CONF_LEN);
 	assert (BIN_OFFSET == (int)((TES_JITTER_NBINS) / 2));
+	assert (self->frontends[ENDP_REP].type == ZMQ_REP);
+	assert (self->frontends[ENDP_PUB].type == ZMQ_XPUB);
 
 	static struct s_data_t data;
 
