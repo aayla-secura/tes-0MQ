@@ -54,8 +54,8 @@
 #include "net/tespkt.h" // defines TES_HIST_MAXSIZE
 
 /* Publish jitter histogram */
-#define TES_JITTER_REQ_PIC "18"
-#define TES_JITTER_REP_PIC "18"
+#define TES_JITTER_REQ_PIC   "18"
+#define TES_JITTER_REP_PIC   TES_JITTER_REQ_PIC
 #define TES_JITTER_REP_LPORT "55557"
 #define TES_JITTER_PUB_LPORT "55567"
 #define TES_JITTER_HDR_LEN    8 // global
@@ -65,5 +65,21 @@
 #define TES_JITTER_NHISTS  (TES_NCHANNELS - 1)
 #define TES_JITTER_SIZE    (TES_JITTER_HDR_LEN + \
                  TES_JITTER_SUBSIZE*TES_JITTER_NHISTS)
+
+/* Publish raw coincidences */
+#define TES_COINC_REQ_PIC   "21"
+#define TES_COINC_REP_PIC   TES_COINC_REQ_PIC
+#define TES_COINC_REQ_TH_PIC  "11b"
+#define TES_COINC_REQ_TH_OK    0
+#define TES_COINC_REQ_TH_EINV  1 // malformed request
+#define TES_COINC_REP_TH_PIC  "1b"
+#define TES_COINC_REP_LPORT "55558"
+#define TES_COINC_REP_TH_LPORT "55559"
+#define TES_COINC_PUB_LPORT "55568"
+#define TES_COINC_MAX_PHOTONS 17
+#define TES_COINC_MEAS_AREA 0
+#define TES_COINC_MEAS_PEAK 1
+#define TES_COINC_MEAS_DOTP 2
+#define TES_COINC_MAX_WINDOW UINT16_MAX
 
 #endif

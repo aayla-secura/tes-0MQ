@@ -44,7 +44,8 @@
  *
  * Each frontend defined with the automute flag will have its handler
  * deregistered from the loop upon task activation, and registered
- * again upon deactivation.
+ * again upon deactivation. Useful for tasks which deal with one client
+ * at a time, such as REQ/REP tasks.
  *
  * If any of the frontends is an XPUB and is defined with the
  * autosleep flag, the task will be deactivated when the socket has no
@@ -126,6 +127,8 @@
  *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Print debugging stats every UPDATE_INTERVAL via the
  *   coordinator.
+ * - Config file shared between tasks, i.e. global config that can be
+ *   changed or queried by either the coordinator or a dedicated task.
  */
 
 #include "tesd_tasks.h"
@@ -148,7 +151,7 @@ static int  s_task_dispatch (task_t* self, zloop_t* loop,
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
-#define NUM_TASKS 5
+#define NUM_TASKS 6
 static task_t s_tasks[] = {
 	{ // PACKET INFO
 		.pkt_handler = task_info_pkt_hn,
@@ -224,7 +227,31 @@ static task_t s_tasks[] = {
 			},
 		},
 		.color       = ANSI_FG_MAGENTA,
-	}
+	},
+	{ // RAW COINCIDENCE
+		.pkt_handler = task_coinc_pkt_hn,
+		.data_init   = task_coinc_init,
+		.data_wakeup = task_coinc_wakeup,
+		.data_fin    = task_coinc_fin,
+		.frontends   = {
+			{
+				.handler   = task_coinc_req_hn,
+				.addresses = "tcp://*:" TES_COINC_REP_LPORT,
+				.type      = ZMQ_REP,
+			},
+			{
+				.handler   = task_coinc_req_th_hn,
+				.addresses = "tcp://*:" TES_COINC_REP_TH_LPORT,
+				.type      = ZMQ_REP,
+			},
+			{
+				.addresses = "tcp://*:" TES_COINC_PUB_LPORT,
+				.type      = ZMQ_XPUB,
+				.autosleep = 1,
+			},
+		},
+		.color       = ANSI_FG_YELLOW,
+	},
 };
 
 /* -------------------------------------------------------------- */
@@ -808,14 +835,14 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	char* msgstr = zmsg_popstr (msg);
 	zmsg_destroy (&msg);
-	char stat = msgstr[0];
+	char req_rc = msgstr[0];
 	zstr_free (&msgstr);
-	if (stat == 0)
+	if (req_rc == 0)
 	{
 		dbg_assert (frontend->nsubs > 0);
 		frontend->nsubs--;
 	}
-	else if (stat == 1)
+	else if (req_rc == 1)
 	{
 		frontend->nsubs++;
 	}
@@ -979,7 +1006,7 @@ static int s_task_next_ring (task_t* self, uint16_t* missed_p)
  * seeing a discontinuity in frame sequence. For each buffer calls
  * the task's pkt_handler.
  * Returns 0 if all packets until the tail are processed.
- * Returns TASK_SLEEP or TASK_ERR if pkt_handler does so.
+ * Returns TASK_SLEEP or TASK_ERROR if pkt_handler does so.
  * Returns ?? if a jump in frame sequence is seen (TO DO).
  */
 

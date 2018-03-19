@@ -148,4 +148,12 @@ task_data_fn    task_jitter_init;
 task_data_fn    task_jitter_wakeup;
 task_data_fn    task_jitter_fin;
 
+/* Publish raw coincidences */
+zloop_reader_fn task_coinc_req_hn;
+zloop_reader_fn task_coinc_req_th_hn;
+task_pkt_fn     task_coinc_pkt_hn;
+task_data_fn    task_coinc_init;
+task_data_fn    task_coinc_wakeup;
+task_data_fn    task_coinc_fin;
+
 #endif

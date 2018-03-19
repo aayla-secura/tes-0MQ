@@ -1097,7 +1097,7 @@ s_canonicalize_path (const char* filename,
 
 	/* Start from the top-most component (after DATAROOT) and
 	 * create directories as needed. */
-	memset (buf, 0, PATH_MAX);
+	memset (&buf, 0, PATH_MAX);
 	strcpy (buf, DATAROOT);
 
 	const char* cur_seg = filename;

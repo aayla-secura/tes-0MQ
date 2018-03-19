@@ -46,8 +46,8 @@ Valid requests have a picture of "4", replies have a picture of "18888888".
 
 8. **No. of other events**
 
-	This is the number of (non-tick, non-trace) events. Each non-tick,
-	non-trace event frame contains several of those.
+   This is the number of (non-tick, non-trace) events. Each non-tick,
+   non-trace event frame contains several of those.
 
 ## CAPTURE REP INTERFACE
 
@@ -232,6 +232,8 @@ positive entry is taken, and vice versa).
 
 You can receive these histograms with `zmq_recv` for example.
 
+### Configuration
+
 Reference channel and number of ticks to accumulate over is configured
 by sending a message to the REP socket. Valid requests have a picture of
 "18", replies have a picture of "1".
@@ -253,9 +255,79 @@ by sending a message to the REP socket. Valid requests have a picture of
 2. **Set ticks**
 
 The reply indicates the values after they are set. Request with ticks =
-0 OR reference channel > 1 is not valid and will return the current
-setting without change. Any other request should change the settings and
-be echoed back. The new settings will take effect at the next histogram.
+0 OR reference channel > no. of channels is not valid and will return
+the current setting without change. Any other request should change the
+settings and be echoed back. The new settings will take effect at the
+next histogram.
+
+## RAW COINCIDENCE REP+REP+PUB INTERFACE
+
+### Window/measurement type configuration
+
+#### Message frames in a valid request
+
+1. **Coindidence window**
+
+   In units of 4ns. The value is read as an **unsigned** int16.
+
+2. **Measurement type**
+
+ * "0": area
+
+ * "1": peak height
+
+ * "2": dot product
+
+   The value is read as an **unsigned** int8.
+
+#### Message frames in a reply
+
+1. **Coindidence window**
+
+2. **Measurement type**
+
+The reply indicates the values after they are set. Request with window
+= 0 OR channel > no. of channels is not valid and will return the
+current setting without change. Any other request should change the
+settings and be echoed back. The new settings will take effect at the
+next tick.
+
+### Threshold configuration
+
+#### Message frames in a valid request
+
+1. **Measurement type**
+
+   Any valid measurement type, see measurement type configuration.
+
+   The value is read as an **unsigned** int8.
+
+2. **Channel number**
+
+   The value is read as an **unsigned** int8.
+
+3. **Threshold array**
+
+   The value is read as a byte buffer.
+
+#### Message frames in a reply
+
+1. **Error status**
+
+ * "0": OK, sending trace
+
+ * "1": invalid request
+
+2. **Threshold array**
+
+If measurement or channel is invalid, threshold array will be empty.
+Otherwise it will indicate the full array (length =
+maximum no. of photons x 4 bytes) after setting. If the given array was
+invalid (or missing, the threshold is unchanged). In a valid threshold
+array every element is greater than the previous, but there may be
+trailing zeroes indicating unset thresholds (the highest photon number
+in the stream for this channel will be the number of set threshold
+elements).
 
 # INSTALLATION
 
