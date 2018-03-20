@@ -181,6 +181,8 @@ static inline uint16_t tespkt_event_nums (tespkt* pkt);
 static inline uint16_t tespkt_esize (tespkt* pkt); // in 8-bytes
 static inline uint16_t tespkt_true_esize (tespkt* pkt); // in bytes
 static inline struct tespkt_event_type* tespkt_etype (tespkt* pkt);
+static inline struct tespkt_event_hdr* tespkt_ehdr (tespkt* pkt,
+	uint16_t e);
 static inline uint16_t tespkt_event_toff (tespkt* pkt, uint16_t e);
 
 /*
@@ -202,26 +204,27 @@ static inline uint32_t tespkt_tick_lost   (tespkt* pkt);
 /*
  * Get peak's height and rise time (only peak frames).
  */
-static inline uint16_t tespkt_peak_height (tespkt* pkt);
-static inline uint16_t tespkt_peak_riset (tespkt* pkt);
-
-/*
- * Get area's area (only area frames).
- */
-static inline uint32_t tespkt_area_area  (tespkt* pkt);
+static inline uint16_t tespkt_peak_height (tespkt* pkt, uint16_t e);
+static inline uint16_t tespkt_peak_riset (tespkt* pkt, uint16_t e);
 
 /*
  * Get pulse's size, area, length, time offset (only pulse frames).
  */
-static inline uint16_t tespkt_pulse_size (tespkt* pkt);
-static inline uint32_t tespkt_pulse_area (tespkt* pkt);
-static inline uint16_t tespkt_pulse_len  (tespkt* pkt);
-static inline uint16_t tespkt_pulse_toff (tespkt* pkt);
+static inline uint16_t tespkt_pulse_size (tespkt* pkt, uint16_t e);
+static inline uint32_t tespkt_pulse_area (tespkt* pkt, uint16_t e);
+static inline uint16_t tespkt_pulse_len  (tespkt* pkt, uint16_t e);
+static inline uint16_t tespkt_pulse_toff (tespkt* pkt, uint16_t e);
 
 /*
  * Get number of peaks in the event (peak and multipeak frames only).
  */
 static inline uint8_t tespkt_peak_nums (tespkt* pkt, uint16_t e);
+
+/*
+ * Get peak #p from event #e (only multipeak frames).
+ */
+static inline struct tespkt_peak* tespkt_peak (tespkt* pkt,
+	uint16_t e, uint8_t p);
 
 /*
  * Get peak #p's height, rise time, minimum and peak time (only
@@ -842,23 +845,38 @@ tespkt_etype  (tespkt* pkt)
 	return &pkt->tes_hdr.etype;
 }
 
+static inline struct tespkt_event_hdr*
+tespkt_ehdr (tespkt* pkt, uint16_t e)
+{
+	return ((struct tespkt_event_hdr*) (
+		(char*)&pkt->body + e*tespkt_true_esize (pkt) ));
+}
+
 static inline uint16_t
 tespkt_event_toff (tespkt* pkt, uint16_t e)
 {
-	return ftohs ( ((struct tespkt_event_hdr*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) ))->toff);
+	struct tespkt_event_hdr* eh = tespkt_ehdr (pkt, e);
+	return ftohs (eh->toff);
 }
 
 /* tespkt_pulse_hdr is compatible with tespkt_trace_full_hdr */
+/* tespkt_event_hdr is compatible with tespkt_pulse_hdr and
+ * tespkt_area_full_hdr */
 static inline uint32_t
 tespkt_event_area (tespkt* pkt, uint16_t e)
 {
 	if (tespkt_is_area (pkt))
-		return ftohs ( ((struct tespkt_area_hdr*) (
-				(char*)&pkt->body + e*tespkt_true_esize (pkt) ))->area);
+	{
+		struct tespkt_area_hdr* ah =
+			(struct tespkt_area_hdr*) tespkt_ehdr (pkt, e);
+		return ftohs (ah->area);
+	}
 	else
-		return ftohs ( ((struct tespkt_pulse_hdr*) (
-				(char*)&pkt->body + e*tespkt_true_esize (pkt) ))->pulse.area);
+	{
+		struct tespkt_pulse_hdr* ph =
+			(struct tespkt_pulse_hdr*) tespkt_ehdr (pkt, e);
+		return ftohs (ph->pulse.area);
+	}
 }
 
 static inline uint32_t
@@ -903,60 +921,60 @@ tespkt_tick_lost (tespkt* pkt)
 		((struct tespkt_tick_hdr*) &pkt->body)->lost);
 }
 
+/* tespkt_event_hdr is compatible with tespkt_peak_hdr */
 static inline uint16_t
-tespkt_peak_height (tespkt* pkt)
+tespkt_peak_height (tespkt* pkt, uint16_t e)
 {
-	return ftohs (
-		((struct tespkt_peak_hdr*) &pkt->body)->height);
+	struct tespkt_peak_hdr* ph =
+		(struct tespkt_peak_hdr*) tespkt_ehdr (pkt, e);
+	return ftohs (ph->height);
 }
 
 static inline uint16_t
-tespkt_peak_riset (tespkt* pkt)
+tespkt_peak_riset (tespkt* pkt, uint16_t e)
 {
-	return ftohs (
-		((struct tespkt_peak_hdr*) &pkt->body)->rise_time);
+	struct tespkt_peak_hdr* ph =
+		(struct tespkt_peak_hdr*) tespkt_ehdr (pkt, e);
+	return ftohs (ph->rise_time);
+}
+
+/* tespkt_event_hdr is compatible with tespkt_pulse_hdr */
+static inline uint16_t
+tespkt_pulse_size (tespkt* pkt, uint16_t e)
+{
+	struct tespkt_pulse_hdr* ph =
+		(struct tespkt_pulse_hdr*) tespkt_ehdr (pkt, e);
+	return ftohs (ph->size);
 }
 
 static inline uint32_t
-tespkt_area_area (tespkt* pkt)
+tespkt_pulse_area (tespkt* pkt, uint16_t e)
 {
-	return ftohs (
-		((struct tespkt_area_hdr*) &pkt->body)->area);
+	struct tespkt_pulse_hdr* ph =
+		(struct tespkt_pulse_hdr*) tespkt_ehdr (pkt, e);
+	return ftohs (ph->pulse.area);
 }
 
 static inline uint16_t
-tespkt_pulse_size (tespkt* pkt)
+tespkt_pulse_len (tespkt* pkt, uint16_t e)
 {
-	return ftohs (
-		((struct tespkt_pulse_hdr*) &pkt->body)->size);
-}
-
-static inline uint32_t
-tespkt_pulse_area (tespkt* pkt)
-{
-	return ftohs (
-		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.area);
+	struct tespkt_pulse_hdr* ph =
+		(struct tespkt_pulse_hdr*) tespkt_ehdr (pkt, e);
+	return ftohs (ph->pulse.length);
 }
 
 static inline uint16_t
-tespkt_pulse_len (tespkt* pkt)
+tespkt_pulse_toff (tespkt* pkt, uint16_t e)
 {
-	return ftohs (
-		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.length);
-}
-
-static inline uint16_t
-tespkt_pulse_toff (tespkt* pkt)
-{
-	return ftohs (
-		((struct tespkt_pulse_hdr*) &pkt->body)->pulse.toffset);
+	struct tespkt_pulse_hdr* ph =
+		(struct tespkt_pulse_hdr*) tespkt_ehdr (pkt, e);
+	return ftohs (ph->pulse.toffset);
 }
 
 static inline uint8_t
 tespkt_peak_nums (tespkt* pkt, uint16_t e)
 {
-	struct tespkt_event_hdr* eh = (struct tespkt_event_hdr*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) );
+	struct tespkt_event_hdr* eh = tespkt_ehdr (pkt, e);
 #if TES_VERSION < 2
 	return eh->flags.PC;
 #else
@@ -964,41 +982,41 @@ tespkt_peak_nums (tespkt* pkt, uint16_t e)
 #endif
 }
 
+static inline struct tespkt_peak*
+tespkt_peak (tespkt* pkt, uint16_t e, uint8_t p)
+{
+	struct tespkt_event_hdr* eh = tespkt_ehdr (pkt, e);
+	return ftohs ((struct tespkt_peak*) (
+		((char*)eh + TESPKT_PULSE_HDR_LEN + p*TESPKT_PEAK_LEN) ));
+}
+
 /* tespkt_pulse_hdr is compatible with tespkt_trace_full_hdr */
 static inline int
 tespkt_multipeak_height (tespkt* pkt, uint16_t e, uint8_t p)
 {
-	char* ph = ((char*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) ));
-	return ftohs ( ((struct tespkt_peak*) (
-		(ph + TESPKT_PULSE_HDR_LEN + p*TESPKT_PEAK_LEN) ))->height);
+	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
+	return ftohs (ph->height);
 }
 
 static inline int
 tespkt_multipeak_riset (tespkt* pkt, uint16_t e, uint8_t p)
 {
-	char* ph = ((char*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) ));
-	return ftohs ( ((struct tespkt_peak*) (
-		(ph + TESPKT_PULSE_HDR_LEN + p*TESPKT_PEAK_LEN) ))->rise_time);
+	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
+	return ftohs (ph->rise_time);
 }
 
 static inline int
 tespkt_multipeak_min (tespkt* pkt, uint16_t e, uint8_t p)
 {
-	char* ph = ((char*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) ));
-	return ftohs ( ((struct tespkt_peak*) (
-		(ph + TESPKT_PULSE_HDR_LEN + p*TESPKT_PEAK_LEN) ))->minimum);
+	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
+	return ftohs (ph->minimum);
 }
 
 static inline int
 tespkt_multipeak_ptime (tespkt* pkt, uint16_t e, uint8_t p)
 {
-	char* ph = ((char*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) ));
-	return ftohs ( ((struct tespkt_peak*) (
-		(ph + TESPKT_PULSE_HDR_LEN + p*TESPKT_PEAK_LEN) ))->toff);
+	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
+	return ftohs (ph->toff);
 }
 
 static inline uint16_t
@@ -1032,8 +1050,7 @@ tespkt_trace_toff (tespkt* pkt)
 static inline struct tespkt_event_flags*
 tespkt_evt_fl (tespkt* pkt, uint16_t e)
 {
-	struct tespkt_event_hdr* eh = (struct tespkt_event_hdr*) (
-		(char*)&pkt->body + e*tespkt_true_esize (pkt) );
+	struct tespkt_event_hdr* eh = tespkt_ehdr (pkt, e);
 	return &eh->flags;
 }
 
@@ -1146,7 +1163,7 @@ tespkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 	/* ---------- Non-tick event */
 	for (int e = 0; e < tespkt_event_nums (pkt); e++)
 	{
-		fprintf (ostream, "Event time offset:   %hhu\n",
+		fprintf (ostream, "Event time offset:   %hu\n",
 			tespkt_event_toff (pkt, e));
 		struct tespkt_event_flags* ef = tespkt_evt_fl (pkt, e);
 		fprintf (ostream, "Event flag PC:       %hhu\n", ef->PC);
@@ -1157,43 +1174,43 @@ tespkt_pretty_print (tespkt* pkt, FILE* ostream, FILE* estream)
 		fprintf (ostream, "Event flag PT:       %hhu\n", ef->PT);
 		fprintf (ostream, "Event flag T:        %hhu\n", ef->T);
 		fprintf (ostream, "Event flag N:        %hhu\n", ef->N);
-	}
-	/* --------------- Peak */
-	if (tespkt_is_peak (pkt))
-	{
-		fprintf (ostream, "Type:                Peak\n");
-		fprintf (ostream, "Height:              %hu\n",
-			tespkt_peak_height (pkt));
-		fprintf (ostream, "Rise time:           %hu\n",
-			tespkt_peak_riset (pkt));
-		return;
-	}
-	/* --------------- Area */
-	if (tespkt_is_area (pkt))
-	{
-		fprintf (ostream, "Type:                Area\n");
-		fprintf (ostream, "Area:                %u\n",
-			tespkt_area_area (pkt));
-		return;
-	}
-	/* --------------- Pulse */
-	if (tespkt_is_pulse (pkt))
-	{
-		fprintf (ostream, "Type:                Pulse\n");
-		fprintf (ostream, "Size:                %hu\n",
-			tespkt_pulse_size (pkt));
-		fprintf (ostream, "Area:                %u\n",
-			tespkt_pulse_area (pkt));
-		fprintf (ostream, "Length:              %hu\n",
-			tespkt_pulse_len (pkt));
-		fprintf (ostream, "Time offset:         %hu\n",
-			tespkt_pulse_toff (pkt));
-		return;
-	}
-	if (!tespkt_is_trace (pkt))
-	{
-		fprintf (estream, "Unknown event type\n");
-		return;
+		/* --------------- Peak */
+		if (tespkt_is_peak (pkt))
+		{
+			fprintf (ostream, "Type:                Peak\n");
+			fprintf (ostream, "Height:              %hu\n",
+				tespkt_peak_height (pkt, e));
+			fprintf (ostream, "Rise time:           %hu\n",
+				tespkt_peak_riset (pkt, e));
+			return;
+		}
+		/* --------------- Area */
+		if (tespkt_is_area (pkt))
+		{
+			fprintf (ostream, "Type:                Area\n");
+			fprintf (ostream, "Area:                %u\n",
+				tespkt_event_area (pkt, e));
+			return;
+		}
+		/* --------------- Pulse */
+		if (tespkt_is_pulse (pkt))
+		{
+			fprintf (ostream, "Type:                Pulse\n");
+			fprintf (ostream, "Size:                %hu\n",
+				tespkt_pulse_size (pkt, e));
+			fprintf (ostream, "Area:                %u\n",
+				tespkt_pulse_area (pkt, e));
+			fprintf (ostream, "Length:              %hu\n",
+				tespkt_pulse_len (pkt, e));
+			fprintf (ostream, "Time offset:         %hu\n",
+				tespkt_pulse_toff (pkt, e));
+			return;
+		}
+		if (!tespkt_is_trace (pkt))
+		{
+			fprintf (estream, "Unknown event type\n");
+			return;
+		}
 	}
 	/* --------------- Trace */
 	fprintf (ostream, "Type:                Trace\n");
@@ -1290,6 +1307,8 @@ tespkt_is_valid (tespkt* pkt)
 		{
 			if (esize != 3)
 				rc |= TES_EEVTSIZE;
+			if (flen != TESPKT_HDR_LEN + TESPKT_TICK_HDR_LEN)
+				rc |= TES_EETHLEN;
 		}
 		else if (tespkt_is_peak (pkt) || tespkt_is_area (pkt))
 		{
