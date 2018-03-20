@@ -26,41 +26,59 @@
 typedef int (cmd_hn)(const char*, const char*, int, char*[]);
 static cmd_hn s_server_info;
 static cmd_hn s_jitter_conf;
+static cmd_hn s_coinc_conf;
+static cmd_hn s_coinc_th_conf;
+static cmd_hn s_remote_save_all;
 static cmd_hn s_local_save_trace;
 static cmd_hn s_local_save_mca;
 static cmd_hn s_local_save_jitter;
-static cmd_hn s_remote_save_all;
+static cmd_hn s_local_save_coinc;
+static int s_local_save_hist (const char*, const char*, int, char*[], size_t);
 
 static char s_prog_name[PATH_MAX];
 #define OPTS_G       "Z:F:" /* processed by main */
 /* The options accepting arguments should be consistent across the
  * different subcommands, i.e. if one command has 'c' with no argument,
  * another one cannot have 'c:' with an argument */
-#define OPTS_S_INFO  "w:"
-#define OPTS_J_CONF  "t:R:"
-#define OPTS_R_ALL   "m:w:t:e:rocCa"
-#define OPTS_L_TRACE "w:"
-#define OPTS_L_HIST  "n:" /* both jitter and mca */
+#define OPTS_S_INFO   "w:"
+#define OPTS_J_CONF   "t:R:"
+#define OPTS_C_CONF   "w:m:"
+#define OPTS_CTH_CONF "m:n:t:"
+#define OPTS_R_ALL    "m:w:t:e:rocCa"
+#define OPTS_L_TRACE  "w:"
+#define OPTS_L_HIST   "n:" /* both jitter and mca */
+#define OPTS_L_COINC  "" /* FIX */
 
 static void
 s_usage (void)
 {
 	fprintf (stdout,
-		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "-Z <server>"
-		ANSI_FG_GREEN "<command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
+		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_CYAN "[-Z <server>]"
+		ANSI_FG_GREEN " <command> " ANSI_FG_RED "[<command options>]" ANSI_RESET "\n\n"
 		"The format for <server> is <proto>://<host>[:<port>]. Default is " DEFAULT_SERVER ".\n"
 		"Port defaults to the default port for the selected task.\n"
 		"Allowed commands:\n\n"
 		ANSI_FG_GREEN "server_info" ANSI_RESET ": Gets packet rate statistics.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -w <seconds>       " ANSI_RESET "Number of seconds to accumulate for.\n"
-		              "                                     Default is 1.\n\n"
+		              "                       "            "Default is 1.\n\n"
 		ANSI_FG_GREEN "jitter_conf" ANSI_RESET ": Configure or query jitter histogram configuration.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Number of ticks to accumulate for.\n"
-		              "                                     Default is 0 (query setting).\n\n"
+		              "                       "            "Default is 0 (query setting).\n"
 		ANSI_FG_RED   "    -R <channel>       " ANSI_RESET "Event channel to trigger on.\n"
-		              "                                     Default is 0.\n\n"
+		              "                       "            "Default is 0.\n\n"
+		ANSI_FG_GREEN "coinc_conf" ANSI_RESET ": Configure or query raw coincidence configuration.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -w <window>        " ANSI_RESET "Coincidence window.\n"
+		              "                       "            "Default is 0 (query setting).\n"
+		ANSI_FG_RED   "    -m <meas. type>    " ANSI_RESET "Measurement type: one of 'area', 'peak', 'dp'.\n"
+		              "                       "            "Default is 'area'.\n\n"
+		ANSI_FG_GREEN "coinc_th_conf" ANSI_RESET ": Configure or query raw coincidence thresholds.\n"
+		ANSI_BOLD     "  Options:\n" ANSI_RESET
+		ANSI_FG_RED   "    -m <meas. type>    " ANSI_RESET "Measurement type: one of 'area', 'peak', 'dp'.\n"
+		              "                       "            "Default is 'area'.\n"
+		ANSI_FG_RED   "    -n <channel>       " ANSI_RESET "Channel number. Default is 0.\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Remote filename.\n"
@@ -90,6 +108,7 @@ s_usage (void)
 		              "                       "            "Default is 1.\n",
 		s_prog_name
 		);
+	/* FIX: add local_coinc */
 }
 
 static void
@@ -345,6 +364,249 @@ s_jitter_conf (const char* server, const char* filename,
 	printf ("\n");
 	printf ("Set values are: ticks = %lu, ref channel = %hhu\n",
 		ticks, ref_ch);
+
+	return 0;
+}
+
+/* ------------------ COINCIDENCE CONF ------------------ */
+
+static int
+s_coinc_conf (const char* server, const char* filename,
+	int argc, char* argv[])
+{
+	uint16_t window = 0;
+	char measurement[64] = {0};
+	strncpy (measurement, "area", sizeof (measurement));
+
+	/* Command-line */
+	char* buf = NULL;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	while (optind < argc)
+	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_C_CONF);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
+		switch (opt)
+		{
+			case 'Z':
+				break;
+			case 'w':
+				window = strtoul (optarg, &buf, 10);
+
+				if (strlen (buf))
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case 'm':
+				snprintf (measurement, sizeof (measurement),
+					"%s", optarg);
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
+			default:
+				printf ("%c, %c, %d\n",opt,optopt, optind);
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+
+	uint8_t meas = 0;
+	const char* meas_names[] = {"area", "peak", "dp"};
+
+	for (; meas < 3 ; meas++)
+		if (strcmp (measurement, meas_names[meas]) == 0)
+			break;
+	if (meas == 3)
+	{
+		fprintf (stderr, "Invalid measurement\n");
+		return -1;
+	}
+
+	/* Proceed? */
+	if (window > 0)
+	{
+		printf ("Configuring coincidence to measure %s over "
+				"a window of %hu\n", measurement, window);
+		if ( s_prompt () )
+			return -1;
+	}
+
+	/* Open the socket */
+	errno = 0;
+	zsock_t* sock = zsock_new_req (server);
+	if (sock == NULL)
+	{
+		if (errno)
+			perror ("Could not connect to the server");
+		else
+			fprintf (stderr, "Could not connect to the server\n");
+		return -1;
+	}
+
+	/* Send the request */
+	zsock_send (sock, TES_COINC_REQ_PIC, window, meas);
+	puts ("Waiting for reply");
+
+	int rc = zsock_recv (sock, TES_COINC_REP_PIC, &window, &meas);
+	zsock_destroy (&sock);
+
+	if (rc == -1)
+		return -1;
+
+	assert (meas < 3);
+	/* Print reply */
+	printf ("\n");
+	printf ("Set values are: window = %hu, measurement = %s\n",
+		window, meas_names[meas]);
+
+	return 0;
+}
+
+/* ------------ COINCIDENCE THRESHOLD CONF -------------- */
+
+static int
+s_coinc_th_conf (const char* server, const char* filename,
+	int argc, char* argv[])
+{
+	uint8_t channel = 0;
+	char measurement[64] = {0};
+	strncpy (measurement, "area", sizeof (measurement));
+	uint32_t thresholds[TES_COINC_MAX_PHOTONS] = {0};
+	int nth = 0;
+	unsigned long tmp;
+
+	/* Command-line */
+	char* buf = NULL;
+#ifdef GETOPT_DEBUG
+	for (int a = 0; a < argc; a++)
+		printf ("%s ", argv[a]);
+	puts ("");
+#endif
+	while (optind < argc)
+	{
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_CTH_CONF);
+		if (opt == -1)
+		{
+			optind++;
+			continue;
+		}
+		switch (opt)
+		{
+			case 'Z':
+				break;
+			case 't':
+			case 'n':
+				if (opt == 'n')
+					channel = strtoul (optarg, &buf, 10);
+				else
+				{
+					if (nth == TES_COINC_MAX_PHOTONS)
+					{
+						fprintf (stderr, "Too many thresholds\n");
+						return -1;
+					}
+					tmp = strtoul (optarg, &buf, 10);
+					thresholds[nth++] = tmp;
+				}
+
+				if (strlen (buf))
+				{
+					s_invalid_arg (opt);
+					return -1;
+				}
+				break;
+			case 'm':
+				snprintf (measurement, sizeof (measurement),
+					"%s", optarg);
+				break;
+			case '?':
+				s_invalid_opt (optopt);
+				return -1;
+			case ':': /* missing argument to option */
+				/* this should have been caught in main */
+				assert (0);
+			default:
+				printf ("%c, %c, %d\n",opt,optopt, optind);
+				/* we forgot to handle an option */
+				assert (0);
+		}
+	}
+
+	uint8_t meas = 0;
+	const char* meas_names[] = {"area", "peak", "dp"};
+
+	for (; meas < 3 ; meas++)
+		if (strcmp (measurement, meas_names[meas]) == 0)
+			break;
+	if (meas == 3)
+	{
+		fprintf (stderr, "Invalid measurement\n");
+		return -1;
+	}
+
+	/* Proceed? */
+	printf ("Configuring thresholds for channel %hhu"
+			" and measurement type %s\n", channel, measurement);
+	if (nth > 0)
+		printf ("Thresholds: ");
+	for (int t = 0; t < nth; t++)
+		printf ("%u%s", thresholds[t], (t == nth-1) ? "\n" : ", ");
+	if ( s_prompt () )
+		return -1;
+
+	/* Open the socket */
+	errno = 0;
+	zsock_t* sock = zsock_new_req (server);
+	if (sock == NULL)
+	{
+		if (errno)
+			perror ("Could not connect to the server");
+		else
+			fprintf (stderr, "Could not connect to the server\n");
+		return -1;
+	}
+
+	/* Send the request */
+	zsock_send (sock, TES_COINC_REQ_TH_PIC,
+		meas,
+		channel,
+		&thresholds, sizeof (thresholds[0])*nth);
+	puts ("Waiting for reply");
+
+	uint8_t req_stat;
+	size_t tlen;
+	char* tbuf;
+	int rc = zsock_recv (sock, TES_COINC_REP_TH_PIC,
+		&req_stat,
+		&tbuf, &tlen);
+	zsock_destroy (&sock);
+
+	if (rc == -1)
+		return -1;
+
+	assert (tlen == sizeof (thresholds));
+	assert (meas < 3);
+	memset (&thresholds, 0, sizeof (thresholds));
+	memcpy (&thresholds, tbuf, tlen);
+	/* Print reply */
+	printf ("\n");
+	printf ("Set thresholds: ");
+	for (int t = 0; t < TES_COINC_MAX_PHOTONS; t++)
+		printf ("%u%s", thresholds[t],
+			(t == TES_COINC_MAX_PHOTONS-1) ? "\n" : ", ");
 
 	return 0;
 }
@@ -856,6 +1118,15 @@ s_remote_save_all (const char* server, const char* filename,
 	return 0;
 }
 
+/* ---------------- COINCIDENCE CAPTURE ----------------- */
+
+static int
+s_local_save_coinc (const char* server, const char* filename,
+	int argc, char* argv[])
+{
+	return 0;
+}
+
 int
 main (int argc, char* argv[])
 {
@@ -946,6 +1217,18 @@ main (int argc, char* argv[])
 		defport = TES_JITTER_REP_LPORT;
 		require_filename = 0;
 	}
+	else if (strcmp (cmd, "coinc_conf") == 0)
+	{
+		callback = s_coinc_conf;
+		defport = TES_COINC_REP_LPORT;
+		require_filename = 0;
+	}
+	else if (strcmp (cmd, "coinc_th_conf") == 0)
+	{
+		callback = s_coinc_th_conf;
+		defport = TES_COINC_REP_TH_LPORT;
+		require_filename = 0;
+	}
 	else if (strcmp (cmd, "remote_all") == 0)
 	{
 		callback = s_remote_save_all;
@@ -965,6 +1248,11 @@ main (int argc, char* argv[])
 	{
 		callback = s_local_save_jitter;
 		defport = TES_JITTER_PUB_LPORT;
+	}
+	else if (strcmp (cmd, "local_coinc") == 0)
+	{
+		callback = s_local_save_coinc;
+		defport = TES_COINC_PUB_LPORT;
 	}
 	else
 	{
