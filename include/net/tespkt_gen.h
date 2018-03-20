@@ -15,6 +15,8 @@
 #  define htofl bswap32
 #endif
 
+/* TO DO: declarations with descriptions here */
+
 static inline void
 tespkt_set_type_mca (tespkt* pkt)
 {
@@ -67,6 +69,35 @@ static inline void
 tespkt_set_esize (tespkt* pkt, u_int16_t size)
 {
 	pkt->tes_hdr.esize = htofs (size);
+}
+
+static inline void
+tespkt_set_etype_tick (tespkt* pkt)
+{
+	tespkt_set_esize (pkt, 3);
+	struct tespkt_event_type* et = tespkt_etype (pkt);
+	et->T = 1;
+	et->PKT = 0;
+	et->TR = 0;
+}
+
+static inline void
+tespkt_set_etype_nontrace (tespkt* pkt, int pkt_type)
+{
+	struct tespkt_event_type* et = tespkt_etype (pkt);
+	et->T = 0;
+	et->PKT = pkt_type;
+	et->TR = 0;
+}
+
+static inline void
+tespkt_set_etype_trace (tespkt* pkt, int tr_type)
+{
+	tespkt_set_esize (pkt, 1);
+	struct tespkt_event_type* et = tespkt_etype (pkt);
+	et->T = 0;
+	et->PKT = TESPKT_TYPE_TRACE;
+	et->TR = tr_type;
 }
 
 #endif
