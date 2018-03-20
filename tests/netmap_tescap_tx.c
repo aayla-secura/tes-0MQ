@@ -376,6 +376,7 @@ s_inject_from_fidx (const char* basefname,
 
 		/* Construct the tes header */
 		pkt->tes_hdr.esize = fidx.esize; /* it's in FPGA byte-order */
+		memset (&pkt->tes_hdr.etype, 0, sizeof (pkt->tes_hdr.etype));
 		switch (fidx.ftype.PT)
 		{
 			case FTYPE_PEAK:
@@ -407,7 +408,10 @@ s_inject_from_fidx (const char* basefname,
 		if (fidx.ftype.HDR || ( ! is_trace && ! is_mca ))
 			pkt->tes_hdr.pseq = stats.prev_pseq = 0; /* short event or header */
 		else
-			tespkt_set_pseq (pkt, stats.prev_pseq + 1 + fidx.ftype.SEQ);
+		{
+			stats.prev_pseq += 1 + fidx.ftype.SEQ;
+			tespkt_set_pseq (pkt, stats.prev_pseq);
+		}
 
 		/* Read the payload */
 		rc = lseek (datfd, fidx.start, SEEK_SET);
