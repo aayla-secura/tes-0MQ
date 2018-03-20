@@ -29,11 +29,10 @@
 #define SRC_HW_ADDR "5a:ce:be:b7:b2:91"
 #define ETH_PROTO ETHERTYPE_F_EVENT
 
-#define PKT_LEN (TESPKT_HDR_LEN + TESPKT_TICK_HDR_LEN)
 #ifndef NMIF
 #  define NMIF "vale0:vi0"
 #endif
-#define DUMP_ROW_LEN   16 /* how many bytes per row when dumping pkt */
+#define DUMP_ROW_LEN    8 /* how many bytes per row when dumping pkt */
 #define DUMP_OFF_LEN    5 /* how many digits to use for the offset */
 #define TICK_EVERY 50
 #define WAIT_NSEC 10000000
@@ -45,13 +44,22 @@
 #ifdef RANDOM
 #  define RAND_CH_EVERY 0
 #  define MAX_DELAY 500
-#  define DELAY(x) ((int) ( \
+#  define DELAY(x) ((uint16_t) ( \
 				(double)rand () * MAX_DELAY / RAND_MAX))
 #else
 #  define RAND_CH_EVERY 10000
 static uint16_t delays[MAX_NUM_CHANNELS] = {10, 20, 10, 5, 10, 5, 5, 15};
 #  define DELAY(x) delays[x]
 #endif
+
+#define MAX_AREA UINT32_MAX
+#define MAX_HEIGHT UINT16_MAX
+#define MAX_DP UINT32_MAX /* it's 6 bytes, nevermind */
+
+#define TICK_LEN (TESPKT_HDR_LEN + TESPKT_TICK_HDR_LEN)
+#define DP_LEN   (TESPKT_HDR_LEN + \
+  TESPKT_TRACE_FULL_HDR_LEN + \
+	TESPKT_PEAK_LEN + 8) /* dot prod is 8 bytes */
 
 static void
 dump_pkt (const unsigned char* pkt, uint32_t len)
@@ -76,8 +84,8 @@ dump_pkt (const unsigned char* pkt, uint32_t len)
 	printf ("\n");
 }
 
-int interrupted = 0;
-void
+static int interrupted = 0;
+static void
 int_hn (int sig)
 {
 	interrupted = 1;
@@ -114,7 +122,7 @@ main (void)
 	}
 
 	/* A dummy packet */
-	tespkt* pkt = (tespkt*) malloc (PKT_LEN);
+	tespkt* pkt = (tespkt*) malloc (TESPKT_MTU);
 	if (pkt == NULL)
 	{
 		perror ("");
@@ -127,8 +135,6 @@ main (void)
 	mac_addr = ether_aton (SRC_HW_ADDR);
 	memcpy (&pkt->eth_hdr.ether_shost, mac_addr, ETHER_ADDR_LEN);
 	pkt->eth_hdr.ether_type = htons (ETH_PROTO);
-	tespkt_set_len (pkt, PKT_LEN);
-	tespkt_set_esize (pkt, 1);
 
 	struct timespec twait = {
 		.tv_sec = WAIT_SEC,
@@ -141,6 +147,8 @@ main (void)
 	pfd.events = POLLOUT;
 
 	int ch = 0;
+	tespkt_set_len (pkt, TICK_LEN);
+	tespkt_set_etype_tick (pkt);
 	while ( ! interrupted )
 	{
 #if (WAIT_NSEC > 0)
@@ -157,50 +165,71 @@ main (void)
 		{
 			tespkt_pretty_print (pkt, stdout, stderr);
 			tespkt_perror (stderr, rc);
-			dump_pkt ((void*)pkt, TESPKT_HDR_LEN + 8);
+			dump_pkt ((void*)pkt, DP_LEN + 8);
 			break;
 		}
 
 #if WAIT_SEC > 0
 		tespkt_pretty_print (pkt, stdout, stderr);
 #endif
-		if (nm_inject (nmd, pkt, PKT_LEN))
+		if (nm_inject (nmd, pkt, TESPKT_MTU) == 0)
+			continue; /* try again */
+
+		tespkt_inc_fseq (pkt, 1);
+		memset (&pkt->body, 0, TESPKT_MTU - TESPKT_HDR_LEN);
+
+		/* Toss a coin for tick vs non-tick */
+		assert (tespkt_event_nums (pkt) == 1);
+		if ( (int) ((double) rand () * TICK_EVERY / RAND_MAX) == 0 )
 		{
-			tespkt_inc_fseq (pkt, 1);
-
-			/* Toss a coin for tick vs non-tick */
-			struct tespkt_event_type* et = tespkt_etype (pkt);
-			if ( (int) ((double) rand () * TICK_EVERY / RAND_MAX) == 0 )
-			{
-				et->T = 1;
-				tespkt_set_esize (pkt, 3);
-				assert (tespkt_event_nums (pkt) == 1);
-			}
-			else
-			{
-				et->T = 0;
-				tespkt_set_esize (pkt, 1);
-			}
-
-			for (int e = 0; e < tespkt_event_nums (pkt); e++)
-			{
-				ch++;
-				if ((int)((double)rand() * RAND_CH_EVERY / RAND_MAX) == 0 )
-					ch = (int)((double)rand() * NUM_CHANNELS / RAND_MAX);
-				/* rand () gave RAND_MAX or ch++ wrapped around */
-				if (ch == NUM_CHANNELS)
-					ch = 0;
-				assert (ch < NUM_CHANNELS);
-
-				struct tespkt_event_hdr* eh =
-					(struct tespkt_event_hdr*)((char*)&pkt->body +
-					e*tespkt_true_esize (pkt));
-				/* FIX: should ticks be the same channel all the time */
-				eh->flags.CH = ch;
-
-				eh->toff = DELAY(ch);
-			}
+			tespkt_set_etype_tick (pkt);
+			tespkt_set_len (pkt, TICK_LEN);
 		}
+		else
+		{
+			tespkt_set_etype_trace (pkt, TESPKT_TRACE_TYPE_DP);
+			tespkt_set_len (pkt, DP_LEN);
+		}
+
+		ch++;
+		if ((int)((double)rand() * RAND_CH_EVERY / RAND_MAX) == 0 )
+			ch = (int)((double)rand() * NUM_CHANNELS / RAND_MAX);
+		/* rand () gave RAND_MAX or ch++ wrapped around */
+		if (ch == NUM_CHANNELS)
+			ch = 0;
+		assert (ch < NUM_CHANNELS);
+
+		struct tespkt_trace_full_hdr* th =
+			(struct tespkt_trace_full_hdr*) tespkt_ehdr (pkt, 0);
+		/* FIX: should ticks be the same channel all the time */
+		th->trace.flags.CH = ch;
+
+		th->trace.toff = DELAY(ch);
+		if (tespkt_is_tick (pkt))
+			continue;
+
+#if TES_VERSION < 2
+		th->trace.flags.PC = 1;
+#else
+		th->trace.flags.PC = 0;
+#endif
+		th->trace.size = htofs (32);
+
+		assert (tespkt_peak_nums (pkt, 0) == 1);
+		struct tespkt_peak* ph = tespkt_peak (pkt, 0, 0);
+		struct tespkt_dot_prod* dh =
+			(struct tespkt_dot_prod*)((char*)ph + TESPKT_PEAK_LEN);
+
+		uint32_t area = ((uint32_t) (
+			(double)rand () * MAX_AREA / RAND_MAX));
+		uint32_t height = ((uint32_t) (
+			(double)rand () * MAX_HEIGHT / RAND_MAX));
+		uint64_t dp = ((uint32_t) (
+			(double)rand () * MAX_DP / RAND_MAX));
+		
+		th->pulse.area = area;
+		ph->height = height;
+		dh->dot_prod = dp;
 	}
 
 	nm_close (nmd);
