@@ -33,7 +33,7 @@ static cmd_hn s_local_save_trace;
 static cmd_hn s_local_save_mca;
 static cmd_hn s_local_save_jitter;
 static cmd_hn s_local_save_coinc;
-static int s_local_save_hist (const char*, const char*, int, char*[], size_t);
+static int s_local_save_generic (const char*, const char*, int, char*[], size_t);
 
 static char s_prog_name[PATH_MAX];
 #define OPTS_G       "Z:F:" /* processed by main */
@@ -79,6 +79,8 @@ s_usage (void)
 		ANSI_FG_RED   "    -m <meas. type>    " ANSI_RESET "Measurement type: one of 'area', 'peak', 'dp'.\n"
 		              "                       "            "Default is 'area'.\n"
 		ANSI_FG_RED   "    -n <channel>       " ANSI_RESET "Channel number. Default is 0.\n\n"
+		ANSI_FG_RED   "    -t <threshold>     " ANSI_RESET "Add a threshold. Give this multiple times\n"
+		              "                       "            "with thresholds in ascending order.\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Remote filename.\n"
@@ -101,14 +103,13 @@ s_usage (void)
 		ANSI_FG_RED   "    -w <timeout>       " ANSI_RESET "Timeout in seconds. Sent to the server, will\n"
 		              "                       "            "receive a timeout error if no trace arrives\n"
 		              "                       "            "in this period. Default is 5.\n\n"
-		ANSI_FG_GREEN "local_mca | local_jitter" ANSI_RESET ": Save histograms to a local file.\n"
+		ANSI_FG_GREEN "local_coinc | local_mca | local_jitter" ANSI_RESET ": Save histograms to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Local filename.\n"
 		ANSI_FG_RED   "    -n <count>         " ANSI_RESET "Save up to that many histograms.\n"
 		              "                       "            "Default is 1.\n",
 		s_prog_name
 		);
-	/* FIX: add local_coinc */
 }
 
 static void
@@ -558,8 +559,10 @@ s_coinc_th_conf (const char* server, const char* filename,
 	}
 
 	/* Proceed? */
-	printf ("Configuring thresholds for channel %hhu"
-			" and measurement type %s\n", channel, measurement);
+	printf ("%s thresholds for channel %hhu"
+		" and measurement type %s\n",
+		(nth > 0) ? "Configuring" : "Querying",
+		channel, measurement);
 	if (nth > 0)
 		printf ("Thresholds: ");
 	for (int t = 0; t < nth; t++)
@@ -755,7 +758,7 @@ s_local_save_trace (const char* server, const char* filename,
 /* ---------------------- HISTOGRAM --------------------- */
 
 static int
-s_local_save_hist (const char* server, const char* filename,
+s_local_save_generic (const char* server, const char* filename,
 	int argc, char* argv[], size_t max_size)
 {
 	uint64_t num_hist = 1;
@@ -802,7 +805,7 @@ s_local_save_hist (const char* server, const char* filename,
 	assert (num_hist > 0);
 
 	/* Proceed? */
-	printf ("Will save %lu histogram%s to local file '%s'.\n"
+	printf ("Will save %lu message%s to local file '%s'.\n"
 		"Maximum total size is %lu.\n",
 		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*max_size);
 	if ( s_prompt () )
@@ -904,7 +907,7 @@ static int
 s_local_save_mca (const char* server, const char* filename,
 	int argc, char* argv[])
 {
-	return s_local_save_hist (server, filename,
+	return s_local_save_generic (server, filename,
 		argc, argv, TES_HIST_MAXSIZE);
 }
 
@@ -914,8 +917,18 @@ static int
 s_local_save_jitter (const char* server, const char* filename,
 	int argc, char* argv[])
 {
-	return s_local_save_hist (server, filename,
+	return s_local_save_generic (server, filename,
 		argc, argv, TES_JITTER_SIZE);
+}
+
+/* ---------------- COINCIDENCE CAPTURE ----------------- */
+
+static int
+s_local_save_coinc (const char* server, const char* filename,
+	int argc, char* argv[])
+{
+	return s_local_save_generic (server, filename,
+		argc, argv, TES_COINC_MAX_SIZE);
 }
 
 /* ------------------- REMOTE CAPTURE ------------------- */
@@ -1118,14 +1131,7 @@ s_remote_save_all (const char* server, const char* filename,
 	return 0;
 }
 
-/* ---------------- COINCIDENCE CAPTURE ----------------- */
-
-static int
-s_local_save_coinc (const char* server, const char* filename,
-	int argc, char* argv[])
-{
-	return 0;
-}
+/* ------------------------ MAIN ------------------------ */
 
 int
 main (int argc, char* argv[])
