@@ -37,7 +37,7 @@ s_clear (struct s_data_t* hist)
 	hist->cur_nbins = 0;
 	hist->size = 0;
 	hist->cur_size = 0;
-	hist->discard = 0;
+	hist->discard = false;
 }
 
 /* -------------------------------------------------------------- */
@@ -76,7 +76,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			logmsg (0, LOG_INFO,
 				"Frame out of protocol sequence: %hu -> %hu",
 				self->prev_pseq_mca, cur_pseq);
-			hist->discard = 1;
+			hist->discard = true;
 			return 0;
 		}
 	}
@@ -87,7 +87,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			logmsg (0, LOG_WARNING,
 				"Received new header frame while waiting for "
 				"%d more bins", hist->nbins - hist->cur_nbins);
-			hist->discard = 1;
+			hist->discard = true;
 		}
 
 		if (hist->discard)
@@ -120,7 +120,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		logmsg (0, LOG_WARNING,
 			"Received extra bins: expected %d, so far got %d",
 			hist->nbins, hist->cur_nbins);
-		hist->discard = 1;
+		hist->discard = true;
 		return 0;
 	}
 
@@ -173,7 +173,7 @@ task_hist_init (task_t* self)
 	assert (self != NULL);
 
 	static struct s_data_t hist;
-	hist.discard = 1;
+	hist.discard = true;
 
 	self->data = &hist;
 	return 0;
@@ -186,7 +186,7 @@ task_hist_wakeup (task_t* self)
 	struct s_data_t* hist = (struct s_data_t*) self->data;
 
 	s_clear (hist);
-	hist->discard = 1;
+	hist->discard = true;
 	return 0;
 }
 

@@ -5,6 +5,7 @@
 #endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
@@ -84,11 +85,11 @@ dump_pkt (const unsigned char* pkt, uint32_t len)
 	printf ("\n");
 }
 
-static int interrupted = 0;
+static bool interrupted = false;
 static void
 int_hn (int sig)
 {
-	interrupted = 1;
+	interrupted = true;
 }
 
 int

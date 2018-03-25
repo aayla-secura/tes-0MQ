@@ -56,8 +56,6 @@
  * after exiting from its loop (for whatever reason) calls
  * tasks_stop to shutdown all tasks cleanly.
  *
- * Note: bool type and true/false macros are ensured by CZMQ.
- *
  * -----------------------------------------------------------------
  * ----------------------------- TO DO -----------------------------
  * -----------------------------------------------------------------
@@ -552,8 +550,8 @@ main (int argc, char **argv)
 	int rc;
 
 	/* Process command-line options. */
-	bool be_daemon = 1;
-	bool be_verbose = 0;
+	bool be_daemon = true;
+	bool be_verbose = false;
 	gid_t run_as_gid = 0;
 	uid_t run_as_uid = 0;
 	int opt;
@@ -589,10 +587,10 @@ main (int argc, char **argv)
 					s_usage (argv[0]);
 				break;
 			case 'f':
-				be_daemon = 0;
+				be_daemon = false;
 				break;
 			case 'v':
-				be_verbose = 1;
+				be_verbose = true;
 				break;
 			case 'h':
 			case '?':
@@ -600,7 +598,7 @@ main (int argc, char **argv)
 				break;
 			default:
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 	if (strlen (pidfile) == 0)

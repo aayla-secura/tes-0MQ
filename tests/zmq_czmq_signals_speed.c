@@ -115,7 +115,7 @@ s_wakeup (zmq_pollitem_t* pitem)
 static int
 s_sig_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* pdata_)
 {
-	busy = 1;
+	busy = true;
 	struct pdata_t* pdata = (struct pdata_t*)pdata_;
 #ifdef USE_PIPE /* pipe */
 	char sig;
@@ -134,7 +134,7 @@ s_sig_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* pdata_)
 #if (WAIT_NSEC > 500000000)
 	printf ("Got a signal\n");
 #endif
-	busy = 0;
+	busy = false;
 	return 0;
 }
 

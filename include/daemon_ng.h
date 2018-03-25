@@ -1,6 +1,8 @@
 #ifndef __DAEMON_NG_H_INCLUDED__
 #define __DAEMON_NG_H_INCLUDED__
 
+#include <stdbool.h>
+
 /*
  * Forking and logging functions.
  *
@@ -124,12 +126,12 @@ char* set_logid (char* id);
  * returned.
  * If be_verbose > 0,  they will be printed, 1 is returned.
  */
-int set_verbose (int be_verbose);
+bool set_verbose (bool be_verbose);
 
 /*
  * Returns 1 is process has been daemonized (using damonize).
  * Returns 0 otherwise.
  */
-int ami_daemon (void);
+bool ami_daemon (void);
 
 #endif

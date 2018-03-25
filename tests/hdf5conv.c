@@ -3,14 +3,14 @@
 #include "hdf5conv.h"
 #include "api.h"
 #include "daemon_ng.h"
-#include "sys/types.h"
-#include "sys/stat.h"
-#include "sys/mman.h"
-#include "stdint.h"
-#include "syslog.h"
-#include "fcntl.h"
-#include "unistd.h"
-#include "errno.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <stdint.h>
+#include <syslog.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 
 #define DATAFILE "/media/data/testcap"
 #define H5FNAME "/media/data/test.hdf5"
@@ -18,12 +18,12 @@
 // #define OVRWTMODE TES_H5_OVRWT_NONE
 #define OVRWTMODE TES_H5_OVRWT_RELINK
 // #define OVRWTMODE TES_H5_OVRWT_FILE
-#define ASYNC 0
-#define DAEMONIZE 0
+#define ASYNC false
+#define DAEMONIZE false
 
 int main (void)
 {
-	set_verbose (1);
+	set_verbose (true);
 
 	/* Open the data file. */
 	int fd = open (DATAFILE, O_RDONLY);

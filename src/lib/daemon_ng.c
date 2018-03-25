@@ -42,8 +42,8 @@
 #define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000 /* deafault */
 
-static int is_daemon;
-static int is_verbose;
+static bool is_daemon;
+static bool is_verbose;
 static char time_fmt[MAX_LOG_TIMEFMT_LEN];
 static __thread char log_id[MAX_LOG_ID_LEN];
 
@@ -363,15 +363,15 @@ set_logid (char* id)
 	return log_id;
 }
 
-int
-set_verbose (int level)
+bool
+set_verbose (bool be_verbose)
 {
-	if (level >= 0)
-		is_verbose = (level ? 1 : 0);
+	if (be_verbose)
+		is_verbose = be_verbose;
 	return is_verbose;
 }
 
-int
+bool
 ami_daemon (void)
 {
 	return is_daemon;
@@ -502,7 +502,7 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	}
 
 	/* Reopen STDIN, STDOUT and STDERR to /dev/null. */
-	is_daemon = 1;
+	is_daemon = true;
 	rc = 0;
 	if ( freopen (_PATH_DEVNULL, "r", stdin) == NULL )
 		rc = -1;

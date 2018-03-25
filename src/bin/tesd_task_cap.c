@@ -460,7 +460,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
 	{ /* make sure measurement group does not contain a slash. */
 		snprintf (tmpfname, PATH_MAX, "%s.hdf5", sjob->basefname);
 		tmpfname_p = s_canonicalize_path (
-			tmpfname, sjob->hdf5filename, 0);
+			tmpfname, sjob->hdf5filename, false);
 	}
 	if (tmpfname_p == NULL)
 	{ /* it had a slash or it was a symlink to outside DATAROOT */
@@ -642,7 +642,7 @@ s_conv_data (struct s_data_t* sjob)
 		.dsets = dsets,
 		.num_dsets = NUM_DSETS,
 		.ovrwtmode = sjob->ovrwtmode,
-		.async = sjob->async,
+		.async = (sjob->async != 0),
 	};
 
 	int rc = hdf5_conv (&creq);
@@ -759,7 +759,7 @@ s_stats_send (struct s_data_t* sjob,
 
 	zstr_free (&sjob->basefname);   /* nullifies the pointer */
 	zstr_free (&sjob->measurement); /* nullifies the pointer */
-	sjob->recording = 0;
+	sjob->recording = false;
 
 	return (rc ? TES_CAP_REQ_EFIN : TES_CAP_REQ_OK);
 }
@@ -776,7 +776,7 @@ s_flush (struct s_data_t* sjob)
 	for (int s = 0; s < NUM_DSETS ; s++)
 	{
 		do {
-			jobrc = s_queue_aiobuf (&sjob->aio[s], 1);
+			jobrc = s_queue_aiobuf (&sjob->aio[s], true);
 		} while (jobrc == EINPROGRESS);
 	}
 }
@@ -838,7 +838,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 		return 0;
 
 	/* Try to queue next batch but don't force */
-	int jobrc = s_queue_aiobuf (aiobuf, 0);
+	int jobrc = s_queue_aiobuf (aiobuf, false);
 #if DEBUG_LEVEL >= VERBOSE
 	if (jobrc == EINPROGRESS)
 		aiobuf->bufzone.st.num_skipped++;
@@ -848,15 +848,15 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	 * there is. If we are finalizingm wait for all bytes to be
 	 * written. */
 #if DEBUG_LEVEL >= VERBOSE
-	bool blocked = 0;
+	bool blocked = false;
 #endif
 	while ( aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting >
 		BUFSIZE - TESPKT_MTU && jobrc == EINPROGRESS )
 	{
 #if DEBUG_LEVEL >= VERBOSE
-		blocked = 1;
+		blocked = true;
 #endif
-		jobrc = s_queue_aiobuf (aiobuf, 1);
+		jobrc = s_queue_aiobuf (aiobuf, true);
 	}
 #if DEBUG_LEVEL >= VERBOSE
 	if (blocked)
@@ -1141,7 +1141,7 @@ s_canonicalize_path (const char* filename,
 	assert (strlen (cur_seg) > 0);
 #else
 	/* TO DO: generate a filename is none is given. */
-	assert (0);
+	assert (false);
 #endif
 	len = strlen (finalpath);
 	if (strlen (cur_seg) + len >= PATH_MAX)
@@ -1355,7 +1355,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! sjob->recording && is_tick )
-		sjob->recording = 1; /* start the capture */
+		sjob->recording = true; /* start the capture */
 
 	if ( ! sjob->recording )
 		return 0;
@@ -1519,7 +1519,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if (interrupts_stream) 
 	{
-		sjob->cur_stream.discard = 1;
+		sjob->cur_stream.discard = true;
 		sjob->cur_stream.size = 0;
 		sjob->cur_stream.cur_size = 0;
 
@@ -1552,14 +1552,14 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			if (is_trace)
 			{
 				sjob->cur_stream.size = tespkt_trace_size (pkt);
-				sjob->cur_stream.is_event = 1;
+				sjob->cur_stream.is_event = true;
 			}
 			else
 			{
 				sjob->cur_stream.size = tespkt_mca_size (pkt);
-				sjob->cur_stream.is_event = 0;
+				sjob->cur_stream.is_event = false;
 			}
-			sjob->cur_stream.discard = 0;
+			sjob->cur_stream.discard = false;
 
 			sjob->cur_stream.idx.start = aiodat->size +
 				aiodat->bufzone.waiting + aiodat->bufzone.enqueued;
@@ -1582,7 +1582,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #endif
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
-			sjob->cur_stream.discard = 1;
+			sjob->cur_stream.discard = true;
 		}
 		else if (sjob->cur_stream.cur_size == sjob->cur_stream.size)
 		{ /* done, record the event */
@@ -1625,7 +1625,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 					is_mca ? "histogram" : "trace",
 					sjob->st.frames - 1);
 #endif
-				sjob->cur_stream.discard = 1;
+				sjob->cur_stream.discard = true;
 			}
 		}
 	}

@@ -53,6 +53,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifdef TESPKT_DEBUG
 #include <string.h>
@@ -94,39 +95,39 @@ static inline uint16_t tespkt_pseq (tespkt* pkt);
 /*
  * True or false if frame is a header frame (protocol sequence == 0).
  */
-static inline int tespkt_is_header (tespkt* pkt);
+static inline bool tespkt_is_header (tespkt* pkt);
 
 /*
  * True or false if frame is any MCA or any event frame (the two are
  * complementary).
  */
-static inline int tespkt_is_mca   (tespkt* pkt);
-static inline int tespkt_is_event   (tespkt* pkt);
+static inline bool tespkt_is_mca   (tespkt* pkt);
+static inline bool tespkt_is_event   (tespkt* pkt);
 
 /*
  * True or false if frame is a tick, peak, area or pulse event.
  */
-static inline int tespkt_is_tick  (tespkt* pkt);
-static inline int tespkt_is_peak  (tespkt* pkt);
-static inline int tespkt_is_area  (tespkt* pkt);
-static inline int tespkt_is_pulse (tespkt* pkt);
+static inline bool tespkt_is_tick  (tespkt* pkt);
+static inline bool tespkt_is_peak  (tespkt* pkt);
+static inline bool tespkt_is_area  (tespkt* pkt);
+static inline bool tespkt_is_pulse (tespkt* pkt);
 
 /*
  * True or false if event may have multiple peaks (i.e. pulse and
  * non-avg trace headers).
  */
-static inline int tespkt_is_multipeak (tespkt* pkt);
+static inline bool tespkt_is_multipeak (tespkt* pkt);
 
 /*
  * True or false if frame is any, single, average, dot-product or
  * trace-dot-product trace event.
  */
-static inline int tespkt_is_trace (tespkt* pkt);
-static inline int tespkt_is_trace_long (tespkt* pkt);
-static inline int tespkt_is_trace_sgl  (tespkt* pkt);
-static inline int tespkt_is_trace_avg  (tespkt* pkt);
-static inline int tespkt_is_trace_dp   (tespkt* pkt);
-static inline int tespkt_is_trace_dptr (tespkt* pkt);
+static inline bool tespkt_is_trace (tespkt* pkt);
+static inline bool tespkt_is_trace_long (tespkt* pkt);
+static inline bool tespkt_is_trace_sgl  (tespkt* pkt);
+static inline bool tespkt_is_trace_avg  (tespkt* pkt);
+static inline bool tespkt_is_trace_dp   (tespkt* pkt);
+static inline bool tespkt_is_trace_dptr (tespkt* pkt);
 
 /* ----------- Call the following only on MCA frames. ---------- */
 /*
@@ -230,14 +231,14 @@ static inline struct tespkt_peak* tespkt_peak (tespkt* pkt,
  * Get peak #p's height, rise time, minimum and peak time (only
  * multipeak frames).
  */
-static inline int tespkt_multipeak_height (tespkt* pkt, uint16_t e,
-	uint8_t p);
-static inline int tespkt_multipeak_riset (tespkt* pkt, uint16_t e,
-	uint8_t p);
-static inline int tespkt_multipeak_min (tespkt* pkt, uint16_t e,
-	uint8_t p);
-static inline int tespkt_multipeak_ptime (tespkt* pkt, uint16_t e,
-	uint8_t p);
+static inline uint16_t tespkt_multipeak_height (tespkt* pkt,
+	uint16_t e, uint8_t p);
+static inline uint16_t tespkt_multipeak_riset (tespkt* pkt,
+	uint16_t e, uint8_t p);
+static inline uint16_t tespkt_multipeak_min (tespkt* pkt,
+	uint16_t e, uint8_t p);
+static inline uint16_t tespkt_multipeak_ptime (tespkt* pkt,
+	uint16_t e, uint8_t p);
 
 /*
  * Get trace's size, area, length, time offset (only trace frames).
@@ -619,32 +620,32 @@ tespkt_pseq (tespkt* pkt)
 
 /* -------------------------------------------------------------- */
 
-static inline int
+static inline bool
 tespkt_is_header (tespkt* pkt)
 { /* Byte order is irrelevant */
 	return ( pkt->tes_hdr.pseq == 0 );
 }
 
-static inline int
+static inline bool
 tespkt_is_mca (tespkt* pkt)
 { /* ethernet type is always big-endian */
 	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_MCA) );
 }
 
-static inline int
+static inline bool
 tespkt_is_event (tespkt* pkt)
 {
 	return ( pkt->eth_hdr.ether_type == ntohs (ETHERTYPE_F_EVENT) );
 }
 
-static inline int
+static inline bool
 tespkt_is_tick (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
 		 pkt->tes_hdr.etype.T == 1 );
 }
 
-static inline int
+static inline bool
 tespkt_is_peak (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -652,7 +653,7 @@ tespkt_is_peak (tespkt* pkt)
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
-static inline int
+static inline bool
 tespkt_is_area (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -660,7 +661,7 @@ tespkt_is_area (tespkt* pkt)
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
-static inline int
+static inline bool
 tespkt_is_pulse (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -668,14 +669,14 @@ tespkt_is_pulse (tespkt* pkt)
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
-static inline int
+static inline bool
 tespkt_is_multipeak (tespkt* pkt)
 {
 	return (tespkt_is_pulse (pkt) ||
 		(tespkt_is_trace (pkt) && ! tespkt_is_trace_avg (pkt)));
 }
 
-static inline int
+static inline bool
 tespkt_is_trace (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -683,14 +684,14 @@ tespkt_is_trace (tespkt* pkt)
 		 pkt->tes_hdr.etype.T == 0 );
 }
 
-static inline int
+static inline bool
 tespkt_is_trace_long (tespkt* pkt)
 {
 	return ( tespkt_is_trace (pkt) &&
 		! tespkt_is_trace_dp (pkt) );
 }
 
-static inline int
+static inline bool
 tespkt_is_trace_sgl (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -699,7 +700,7 @@ tespkt_is_trace_sgl (tespkt* pkt)
 		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_SGL );
 }
 
-static inline int
+static inline bool
 tespkt_is_trace_avg (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -708,7 +709,7 @@ tespkt_is_trace_avg (tespkt* pkt)
 		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_AVG );
 }
 
-static inline int
+static inline bool
 tespkt_is_trace_dp (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -717,7 +718,7 @@ tespkt_is_trace_dp (tespkt* pkt)
 		 pkt->tes_hdr.etype.TR == TESPKT_TRACE_TYPE_DP );
 }
 
-static inline int
+static inline bool
 tespkt_is_trace_dptr (tespkt* pkt)
 {
 	return ( tespkt_is_event (pkt) &&
@@ -991,28 +992,28 @@ tespkt_peak (tespkt* pkt, uint16_t e, uint8_t p)
 }
 
 /* tespkt_pulse_hdr is compatible with tespkt_trace_full_hdr */
-static inline int
+static inline uint16_t
 tespkt_multipeak_height (tespkt* pkt, uint16_t e, uint8_t p)
 {
 	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
 	return ftohs (ph->height);
 }
 
-static inline int
+static inline uint16_t
 tespkt_multipeak_riset (tespkt* pkt, uint16_t e, uint8_t p)
 {
 	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
 	return ftohs (ph->rise_time);
 }
 
-static inline int
+static inline uint16_t
 tespkt_multipeak_min (tespkt* pkt, uint16_t e, uint8_t p)
 {
 	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
 	return ftohs (ph->minimum);
 }
 
-static inline int
+static inline uint16_t
 tespkt_multipeak_ptime (tespkt* pkt, uint16_t e, uint8_t p)
 {
 	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);

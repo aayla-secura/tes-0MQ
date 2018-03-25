@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
@@ -721,7 +722,7 @@ main (void)
 		}
 		dump_pkt (pkt);
 		assert (tespkt_flen (pkt) <= TESPKT_MTU);
-	} while (0);
+	} while (false);
 
 	/* Get the ring (we only use one) */
 	assert (gobj.nmd->first_tx_ring == gobj.nmd->last_tx_ring);

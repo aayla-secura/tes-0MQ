@@ -1,6 +1,7 @@
 #include <pcap/pcap.h>
 #include "net/tespkt.h"
 #include <stdio.h>
+#include <stdbool.h>
 #include <limits.h>
 #include <string.h>
 #include <ctype.h>
@@ -18,7 +19,7 @@
 #  define NUM_LOOPS INT_MAX
 #endif
 
-int interrupted;
+static bool interrupted = false;
 
 static void
 dump_pkt (const unsigned char* pkt, uint32_t len)
@@ -46,7 +47,7 @@ dump_pkt (const unsigned char* pkt, uint32_t len)
 static void
 int_hn (int sig)
 {
-	interrupted = 1;
+	interrupted = true;
 }
 
 int

@@ -6,6 +6,7 @@
 #define TESPKT_DEBUG
 #include "net/tespkt_gen.h"
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
@@ -73,7 +74,7 @@ struct s_fidx_t
 	struct s_ftype_t ftype; // see definition of struct
 };
 
-int interrupted;
+static bool interrupted = false;
 
 struct s_stats_t
 {
@@ -229,7 +230,7 @@ s_update_stats (tespkt* pkt, struct s_stats_t* stats)
 static void
 s_int_hn (int sig)
 {
-	interrupted = 1;
+	interrupted = true;
 }
 
 static int
@@ -402,8 +403,8 @@ s_inject_from_fidx (const char* basefname,
 		else
 			tespkt_set_fseq (pkt, stats.prev_fseq + 1 + fidx.ftype.SEQ);
 
-		int is_mca = tespkt_is_mca (pkt);
-		int is_trace = ( tespkt_is_trace (pkt) &&
+		bool is_mca = tespkt_is_mca (pkt);
+		bool is_trace = ( tespkt_is_trace (pkt) &&
 			! tespkt_is_trace_dp (pkt) );
 		if (fidx.ftype.HDR || ( ! is_trace && ! is_mca ))
 			pkt->tes_hdr.pseq = stats.prev_pseq = 0; /* short event or header */

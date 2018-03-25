@@ -162,7 +162,7 @@ static task_t s_tasks[] = {
 				.handler   = task_info_req_hn,
 				.addresses = "tcp://*:" TES_INFO_LPORT,
 				.type      = ZMQ_REP,
-				.automute  = 1,
+				.automute  = true,
 			},
 		},
 		.color       = ANSI_FG_YELLOW,
@@ -176,7 +176,7 @@ static task_t s_tasks[] = {
 				.handler   = task_cap_req_hn,
 				.addresses = "tcp://*:" TES_CAP_LPORT,
 				.type      = ZMQ_REP,
-				.automute  = 1,
+				.automute  = true,
 			},
 		},
 		.color       = ANSI_FG_BLUE,
@@ -190,7 +190,7 @@ static task_t s_tasks[] = {
 				.handler   = task_avgtr_req_hn,
 				.addresses = "tcp://*:" TES_AVGTR_LPORT,
 				.type      = ZMQ_REP,
-				.automute  = 1,
+				.automute  = true,
 			},
 		},
 		.color       = ANSI_FG_GREEN,
@@ -204,7 +204,7 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_HIST_LPORT,
 				.type      = ZMQ_XPUB,
-				.autosleep = 1,
+				.autosleep = true,
 			},
 		},
 		.color       = ANSI_FG_CYAN,
@@ -223,7 +223,7 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_JITTER_PUB_LPORT,
 				.type      = ZMQ_XPUB,
-				.autosleep = 1,
+				.autosleep = true,
 			},
 		},
 		.color       = ANSI_FG_MAGENTA,
@@ -247,7 +247,7 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_COINC_PUB_LPORT,
 				.type      = ZMQ_XPUB,
-				.autosleep = 1,
+				.autosleep = true,
 			},
 		},
 		.color       = ANSI_FG_YELLOW,
@@ -353,7 +353,7 @@ tasks_get_heads (void)
 	/* Use a static storage for the returned array. */
 	static uint32_t heads[NUM_RINGS];
 
-	bool updated = 0; /* set to 1 if at least one active task */
+	bool updated = false; /* set to 1 if at least one active task */
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
 		task_t* self = &s_tasks[t];
@@ -377,7 +377,7 @@ tasks_get_heads (void)
 			{
 				for (int r = 0; r < NUM_RINGS; r++)
 					heads[r] = self->heads[r];
-				updated = 1;
+				updated = true;
 			}
 		}
 	}
@@ -417,8 +417,8 @@ task_activate (task_t* self)
 		self->heads[r] = tes_ifring_head (rxring);
 	}
 
-	self->active = 1;
-	self->just_activated = 1;
+	self->active = true;
+	self->just_activated = true;
 
 	return 0;
 }
@@ -456,7 +456,7 @@ task_deactivate (task_t* self)
 		}
 	}
 
-	self->active = 0;
+	self->active = false;
 
 	return 0;
 }
@@ -478,7 +478,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 	task_t* self = (task_t*) self_;
 	dbg_assert ( ! self->busy );
-	self->busy = 1;
+	self->busy = true;
 	
 	int sig = zsock_wait (reader);
 	dbg_assert (sig != -1); /* we don't get interrupted */
@@ -502,19 +502,19 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 				"First inactive wakeup");
 		self->dbg_stats.wakeups_inactive++;
 #endif
-		self->busy = 0;
+		self->busy = false;
 		return 0;
 	}
 #if DEBUG_LEVEL >= VERBOSE
 	self->dbg_stats.wakeups++;
 #endif
-	// self->busy = 1;
+	// self->busy = true;
 
 	/* Process packets. */
 #if DEBUG_LEVEL >= VERBOSE
-	bool first = 1;
+	bool first = true;
 #endif
-	while (1)
+	while (true)
 	{
 		uint16_t missed;   /* will hold the jump in frame seq */
 		int next_ring_id = s_task_next_ring (self, &missed);
@@ -532,13 +532,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 			break;
 		}
 #if DEBUG_LEVEL >= VERBOSE
-		first = 0;
+		first = false;
 #endif
 
 		int rc = s_task_dispatch (self, loop, next_ring_id, missed);
 		/* In case packet hanlder or dispatcher need to know that
 		 * it's the first time after activation. */
-		self->just_activated = 0;
+		self->just_activated = false;
 
 		if (rc == TASK_SLEEP)
 		{
@@ -548,12 +548,12 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 		if (rc == TASK_ERROR)
 		{ /* either pkt_handler or task_deactivate failed */
-			self->error = 1;
+			self->error = true;
 			break;
 		}
 	}
 
-	self->busy = 0;
+	self->busy = false;
 	return (self->error ? -1 : 0);
 }
 
@@ -579,7 +579,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 			"Task thread encountered an error");
 		return -1;
 	}
-	assert (0); /* we only deal with SIG_DIED  */
+	assert (false); /* we only deal with SIG_DIED  */
 }
 
 /*
@@ -655,7 +655,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 #endif
 
 	// logmsg (0, LOG_DEBUG, "Simulating error");
-	// self->error = 1;
+	// self->error = true;
 	// goto cleanup;
 
 	/* Open the public interfaces */
@@ -667,7 +667,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not open the public interfaces");
-			self->error = 1;
+			self->error = true;
 			goto cleanup;
 		}
 		rc = zsock_attach (frontend->sock, frontend->addresses, 1);
@@ -675,7 +675,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not bind the public interfaces");
-			self->error = 1;
+			self->error = true;
 			goto cleanup;
 		}
 		logmsg (0, LOG_INFO,
@@ -696,7 +696,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not register the zloop frontend readers");
-			self->error = 1;
+			self->error = true;
 			goto cleanup;
 		}
 	}
@@ -706,7 +706,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	{
 		logmsg (errno, LOG_ERR,
 			"Could not register the zloop PAIR reader");
-		self->error = 1;
+		self->error = true;
 		goto cleanup;
 	}
 
@@ -718,7 +718,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not initialize thread data");
-			self->error = 1;
+			self->error = true;
 			goto cleanup;
 		}
 	}
@@ -733,7 +733,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not autoactivate task");
-			self->error = 1;
+			self->error = true;
 			goto cleanup;
 		}
 		dbg_assert (rc == 0);
@@ -1038,7 +1038,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	 */
 	uint16_t fseq_gap = 0;
 #if DEBUG_LEVEL >= VERBOSE
-	bool first = 1;
+	bool first = true;
 #endif
 	for ( ; self->heads[ring_id] != tes_ifring_tail (rxring);
 		self->heads[ring_id] = tes_ifring_following (
@@ -1083,7 +1083,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 #if DEBUG_LEVEL >= VERBOSE
 		if (first)
 			dbg_assert (fseq_gap == missed);
-		first = 0;
+		first = false;
 		self->dbg_stats.pkts.rcvd_in[ring_id]++;
 		self->dbg_stats.pkts.missed += fseq_gap;
 #endif

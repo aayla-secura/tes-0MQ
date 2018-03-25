@@ -9,8 +9,13 @@
 #  include <hdf5.h>
 #endif
 
+#include <string.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <syslog.h>
 #include <errno.h>
 #include <assert.h>
 
@@ -117,10 +122,10 @@ s_crt_grp (hid_t lid, const char* group, hid_t bkp_lid,
 	if (gid < 0)
 		return -1;
 
-	bool exists = 0;
+	bool exists = false;
 	if (gid > 0)
 	{
-		exists = 1;
+		exists = true;
 		H5Gclose (gid); /* we don't need it */
 	}
 

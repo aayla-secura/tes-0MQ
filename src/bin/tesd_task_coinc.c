@@ -201,7 +201,7 @@ s_apply_conf (struct s_data_t* data)
 			data->util.get_counts = s_from_dp;
 			break;
 		default:
-			assert (0);
+			assert (false);
 	}
 	data->conf.changed = 0;
 }
@@ -488,26 +488,26 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	 * not happen. */
 	assert (rc != -1);
 	
-	bool invalid = 0;
+	bool invalid = false;
 	if (buf == NULL)
 		assert (len == 0); /* query current conf */
 	if (len % 4 != 0)
 	{
 		logmsg (0, LOG_INFO,
 			"Received malformed threshold data, size is %lu", len);
-		invalid = 1;
+		invalid = true;
 	}
 	else if (meas >= NUM_MEAS)
 	{
 		logmsg (0, LOG_INFO,
 			"Invalid measurement id %hhu", meas);
-		invalid = 1;
+		invalid = true;
 	}
 	else if (channel >= TES_NCHANNELS)
 	{
 		logmsg (0, LOG_INFO,
 			"Invalid channel number %hhu", meas);
-		invalid = 1;
+		invalid = true;
 	}
 	
 	if (invalid)
@@ -584,7 +584,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! data->publishing && is_tick )
 	{
-		data->publishing = 1; /* start accumulating */
+		data->publishing = true; /* start accumulating */
 		dbg_assert (data->cur_frame.cur_group.num_ongoing == 0);
 	}
 	
@@ -723,7 +723,7 @@ task_coinc_wakeup (task_t* self)
 
 	memset (&data->coinc, TOK_NONE, MAX_COINC_VECS*CVEC_SIZE);
 	memset (&data->cur_frame, 0, sizeof (data->cur_frame));
-	data->publishing = 0;
+	data->publishing = false;
 	return 0;
 }
 

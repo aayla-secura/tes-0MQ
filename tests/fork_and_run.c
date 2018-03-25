@@ -15,7 +15,7 @@ int foo (void* arg)
 /* Check the system logger to confirm all is ok */
 int main (void)
 {
-	set_verbose (1);
+	set_verbose (true);
 	int rc = fork_and_run (foo, foo, NULL, 5);
 	if (rc != 0)
 	{

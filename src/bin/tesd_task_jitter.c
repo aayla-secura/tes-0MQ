@@ -252,7 +252,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! data->publishing && is_tick )
-		data->publishing = 1; /* start accumulating */
+		data->publishing = true; /* start accumulating */
 
 	if ( ! data->publishing || err || ! tespkt_is_event (pkt) )
 		return 0;
@@ -389,7 +389,7 @@ task_jitter_wakeup (task_t* self)
 
 	memset (&data->points, 0, sizeof (data->points));
 	/* Wait for first tick and reference frame. */
-	data->publishing = 0;
+	data->publishing = false;
 	data->cur_npts = 0;
 	s_prep_next (data);
 	return 0;

@@ -21,7 +21,8 @@
 #define __HDF5CONV_H__INCLUDED__
 
 #include <stdint.h>
-#include <czmq_prelude.h> // bool type
+#include <stdbool.h>
+#include <unistd.h>
 
 /*
  * Exactly one of filename and buffer must be set.

@@ -114,7 +114,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if ( ! trace->recording && tespkt_is_header (pkt) )
 	{ /* start the trace */
-		trace->recording = 1;
+		trace->recording = true;
 		trace->size = tespkt_trace_size (pkt);
 	}
 
@@ -184,11 +184,11 @@ done:
 				TES_AVGTR_REQ_OK, &trace->buf, trace->size);
 			break;
 		default:
-			assert (0);
+			assert (false);
 	}
 
 	/* Reset stats. */
-	trace->recording = 0;
+	trace->recording = false;
 	trace->cur_size = 0;
 	trace->size = 0;
 

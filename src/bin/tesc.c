@@ -163,7 +163,7 @@ s_prompt (void)
 		}
 
 		printf ("Reply with 'y' or 'n': ");
-	} while (1);
+	} while (true);
 }
 
 /* --------------------- PACKET INFO -------------------- */
@@ -206,10 +206,10 @@ s_server_info (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 
@@ -270,7 +270,7 @@ s_server_info (const char* server, const char* filename,
 				events);
 			break;
 		default:
-			assert (0);
+			assert (false);
 	}
 
 	return 0;
@@ -322,11 +322,11 @@ s_jitter_conf (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				printf ("%c, %c, %d\n",opt,optopt, optind);
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 
@@ -416,11 +416,11 @@ s_coinc_conf (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				printf ("%c, %c, %d\n",opt,optopt, optind);
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 
@@ -538,11 +538,11 @@ s_coinc_th_conf (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				printf ("%c, %c, %d\n",opt,optopt, optind);
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 
@@ -655,10 +655,10 @@ s_local_save_trace (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 
@@ -731,7 +731,7 @@ s_local_save_trace (const char* server, const char* filename,
 				trsize);
 			break;
 		default:
-			assert (0);
+			assert (false);
 	}
 
 	/* Write to file */
@@ -796,10 +796,10 @@ s_local_save_generic (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 	assert (num_hist > 0);
@@ -1012,11 +1012,11 @@ s_remote_save_all (const char* server, const char* filename,
 				return -1;
 			case ':': /* missing argument to option */
 				/* this should have been caught in main */
-				assert (0);
+				assert (false);
 			default:
 				printf ("%c, %c, %d\n",opt,optopt, optind);
 				/* we forgot to handle an option */
-				assert (0);
+				assert (false);
 		}
 	}
 
@@ -1125,7 +1125,7 @@ s_remote_save_all (const char* server, const char* filename,
 				ticks, events, traces, hists, frames, missed, dropped);
 			break;
 		default:
-			assert (0);
+			assert (false);
 	}
 
 	return 0;
@@ -1209,31 +1209,31 @@ main (int argc, char* argv[])
 	optind = 1; /* reset getopt position */
 	cmd_hn* callback = NULL;
 	char* defport = NULL;
-	bool require_filename = 1;
+	bool require_filename = true;
 
 	if (strcmp (cmd, "server_info") == 0)
 	{
 		callback = s_server_info;
 		defport = TES_INFO_LPORT;
-		require_filename = 0;
+		require_filename = false;
 	}
 	else if (strcmp (cmd, "jitter_conf") == 0)
 	{
 		callback = s_jitter_conf;
 		defport = TES_JITTER_REP_LPORT;
-		require_filename = 0;
+		require_filename = false;
 	}
 	else if (strcmp (cmd, "coinc_conf") == 0)
 	{
 		callback = s_coinc_conf;
 		defport = TES_COINC_REP_LPORT;
-		require_filename = 0;
+		require_filename = false;
 	}
 	else if (strcmp (cmd, "coinc_th_conf") == 0)
 	{
 		callback = s_coinc_th_conf;
 		defport = TES_COINC_REP_TH_LPORT;
-		require_filename = 0;
+		require_filename = false;
 	}
 	else if (strcmp (cmd, "remote_all") == 0)
 	{
