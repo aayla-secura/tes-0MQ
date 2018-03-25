@@ -53,9 +53,9 @@ static uint16_t delays[MAX_NUM_CHANNELS] = {10, 20, 10, 5, 10, 5, 5, 15};
 #  define DELAY(x) delays[x]
 #endif
 
-#define MAX_AREA UINT32_MAX
-#define MAX_HEIGHT UINT16_MAX
-#define MAX_DP UINT32_MAX /* it's 6 bytes, nevermind */
+#define MAX_AREA   200
+#define MAX_HEIGHT 200
+#define MAX_DP     200
 
 #define TICK_LEN (TESPKT_HDR_LEN + TESPKT_TICK_HDR_LEN)
 #define DP_LEN   (TESPKT_HDR_LEN + \
