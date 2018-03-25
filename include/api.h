@@ -69,17 +69,18 @@
 /* Publish raw coincidences */
 #define TES_COINC_REQ_PIC   "21"
 #define TES_COINC_REP_PIC   TES_COINC_REQ_PIC
-#define TES_COINC_REQ_TH_PIC  "11b"
 #define TES_COINC_REQ_TH_OK    0
 #define TES_COINC_REQ_TH_EINV  1 // malformed request
-#define TES_COINC_REP_TH_PIC  "1b"
-#define TES_COINC_REP_LPORT "55558"
+#define TES_COINC_REQ_TH_PIC  "11b"
+#define TES_COINC_REP_TH_PIC   "1b"
+#define TES_COINC_REP_LPORT    "55558"
 #define TES_COINC_REP_TH_LPORT "55559"
-#define TES_COINC_PUB_LPORT "55568"
+#define TES_COINC_PUB_LPORT    "55568"
 #define TES_COINC_MAX_PHOTONS 17
 #define TES_COINC_MEAS_AREA 0
 #define TES_COINC_MEAS_PEAK 1
 #define TES_COINC_MEAS_DOTP 2
 #define TES_COINC_MAX_WINDOW UINT16_MAX
+#define TES_COINC_MAX_SIZE  (TES_NCHANNELS*256)
 
 #endif
