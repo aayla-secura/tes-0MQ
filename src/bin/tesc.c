@@ -606,10 +606,11 @@ s_coinc_th_conf (const char* server, const char* filename,
 	memcpy (&thresholds, tbuf, tlen);
 	/* Print reply */
 	printf ("\n");
-	printf ("Set thresholds: ");
-	for (int t = 0; t < TES_COINC_MAX_PHOTONS; t++)
-		printf ("%u%s", thresholds[t],
-			(t == TES_COINC_MAX_PHOTONS-1) ? "\n" : ", ");
+	printf ("Set thresholds: %u", thresholds[0]);
+	for (int t = 1; t < TES_COINC_MAX_PHOTONS &&
+		thresholds[t] > 0; t++)
+		printf (", %u", thresholds[t]);
+	printf ("\n");
 
 	return 0;
 }
