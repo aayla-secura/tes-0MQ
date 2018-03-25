@@ -51,6 +51,7 @@
  *    TOK_TICK vectors with this flag
 #endif
  */
+#define FLAG_MASK    0xE0
 #define UNRESOLVED   (1 << 7)
 #define BAD          (1 << 6)
 #define TICK_WITH_COINC     0 // or 1
@@ -144,7 +145,7 @@ static s_event_check_fn s_is_bad_dp;
 static s_count_fn s_from_area;
 static s_count_fn s_from_peak;
 static s_count_fn s_from_dp;
-static int s_add_to_group (task_t* self, uint8_t flags);
+static int s_add_to_group (task_t* self);
 static int s_add_ticks (task_t* self, int n, uint8_t flags);
 static int s_publish (task_t* self);
 
@@ -210,11 +211,18 @@ static inline uint16_t
 s_count_from_thres (uint32_t val,
 	uint32_t (*thres)[TES_COINC_MAX_PHOTONS])
 {
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+		logmsg (0, LOG_DEBUG, "Measurement value is %u", val);
+#endif
 		uint16_t p = 0;
 		for (; val >= (*thres)[p] &&
 			p < TES_COINC_MAX_PHOTONS &&
 			(p == 0 || (*thres)[p] > 0); p++)
-			;
+		{
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+			logmsg (0, LOG_DEBUG, "Threshold %hu is %u", p, (*thres)[p]);
+#endif
+		}
 		return p;
 }
 
@@ -287,33 +295,49 @@ s_from_dp (tespkt* pkt, uint16_t e,
 	return TOK_UNKNOWN;
 }
 
+#if 0
+static inline uint8_t
+s_get_vec_flags (task_t* self, int id)
+{
+	dbg_assert (self != NULL);
+	
+	if (id == -1)
+		id = self->data->cur_frame.idx;
+	dbg_assert (id >= 0);
+	
+	uint8_t (*cvec)[TES_NCHANNELS] = &self->data->coinc[id];
+	return ((*cvec)[0] & FLAG_MASK);
+}
+
+static inline void
+s_set_vec_flags (task_t* self, uint8_t flags, int id)
+{
+	dbg_assert (self != NULL);
+	
+	if (id == -1)
+		id = self->data->cur_frame.idx;
+	dbg_assert (id >= 0);
+	
+	uint8_t (*cvec)[TES_NCHANNELS] = &self->data->coinc[id];
+	(*cvec)[0] |= flags;
+}
+#endif
+
 static int
-s_add_to_group (task_t* self, uint8_t flags)
+s_add_to_group (task_t* self)
 {
 	dbg_assert (self != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	
-	/* If the UNRESOLVED bit is to be set for the first time in this
-	 * group, it is because num_ongoing == 1, and vice versa. */
-	uint8_t (*cvec)[TES_NCHANNELS] = &data->coinc[data->cur_frame.idx];
-	if (data->cur_frame.cur_group.num_ongoing == 1)
-		dbg_assert ((flags & UNRESOLVED) &&
-			! ((*(cvec-1))[0] & UNRESOLVED));
-	else if (data->cur_frame.cur_group.num_ongoing > 1)
-		dbg_assert ((flags & UNRESOLVED) &&
-			((*(cvec-1))[0] & UNRESOLVED));
-	(*cvec)[0] |= flags;
-
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
-	if (data->cur_frame.cur_group.num_ongoing == 0)
-		logmsg (0, LOG_DEBUG, "New group");
-	else
-		logmsg (0, LOG_DEBUG, "New vector in group");
-#endif
-
+	uint8_t flags = 0;
+	if (data->cur_frame.cur_group.num_ongoing > 0)
+	{ /* pick up UNRESOLVED from previous vector */
+		uint8_t (*cvec)[TES_NCHANNELS] =
+			&data->coinc[data->cur_frame.idx];
+		flags |= ((*cvec)[0] & UNRESOLVED);
+	}
 #if TICK > 0
-	if (data->cur_frame.cur_group.ticks > 0 &&
-		data->cur_frame.cur_group.num_ongoing == 0)
+	else if (data->cur_frame.cur_group.ticks > 0)
 	{
 		dbg_assert (data->cur_frame.cur_group.ticks == 1);
 		flags |= TICK;
@@ -324,12 +348,23 @@ s_add_to_group (task_t* self, uint8_t flags)
 		data->cur_frame.cur_group.num_ongoing > 0);
 #endif
 	
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+	if (data->cur_frame.cur_group.num_ongoing == 0)
+		logmsg (0, LOG_DEBUG, "New group");
+	else
+		logmsg (0, LOG_DEBUG, "New vector in group");
+#endif
+	
 	data->cur_frame.cur_group.channels = 0;
 	data->cur_frame.idx++;
 	data->cur_frame.cur_group.num_ongoing++;
 	
 	if (data->cur_frame.idx == MAX_COINC_VECS)
 		return s_publish (self);
+
+	uint8_t (*cvec)[TES_NCHANNELS] =
+		&data->coinc[data->cur_frame.idx];
+	(*cvec)[0] |= flags;
 	return 0;
 }
 
@@ -394,10 +429,10 @@ s_publish (task_t* self)
 	{
 		logmsg (0, LOG_DEBUG,
 			"Too many vectors in current group");
-		/* Keep at least two, since s_add_to_group treats first two
-		 * differently. */
-		num_ready = MAX_COINC_VECS - 2;
-		data->cur_frame.cur_group.num_ongoing = 2;
+		/* Keep at least one, since s_add_to_group needs to pick up the
+		 * flags. */
+		num_ready = MAX_COINC_VECS - 1;
+		data->cur_frame.cur_group.num_ongoing = 1;
 	}
 	if (num_ready == 0)
 	{
@@ -463,6 +498,10 @@ task_coinc_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	if (s_save_conf (data, &conf) == -1)
 		logmsg (0, LOG_DEBUG,
 			"Not changing configuration");
+	else
+		logmsg (0, LOG_INFO,
+			"Setting measurement to %hhu, window to %hhu",
+			conf.measurement, conf.window);
 	zsock_send (frontend, TES_COINC_REP_PIC,
 		data->conf.window, data->conf.measurement);
 	
@@ -537,7 +576,8 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		}
 		else
 			logmsg (0, LOG_INFO,
-				"Setting new thresholds");
+				"Setting new thresholds for measurement %hhu on channel %hhu",
+				meas, channel);
 	}
 	else
 	{
@@ -626,6 +666,9 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if (data->cur_frame.cur_group.delay_since_last >
 				data->window)
 		{ /* ongoing group ends */
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+			logmsg (0, LOG_DEBUG, "Group ends");
+#endif
 			data->cur_frame.cur_group.num_ongoing = 0;
 			data->cur_frame.cur_group.delay_since_start = 0;
 			data->cur_frame.cur_group.delay_since_last = 0;
@@ -642,14 +685,21 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		{ /* ongoing group continues */
 			bool ch_seen =
 				data->cur_frame.cur_group.channels & (1 << ef->CH);
-			uint8_t flags = 0;
+			
 			if (ch_seen || (data->cur_frame.cur_group.delay_since_start >
 					data->window))
-				flags = UNRESOLVED;
+			{
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+				logmsg (0, LOG_DEBUG, "Group is unresolved");
+#endif
+				uint8_t (*cvec)[TES_NCHANNELS] =
+					&data->coinc[data->cur_frame.idx];
+				(*cvec)[0] |= UNRESOLVED;
+			}
 			
 			if (ch_seen)
 			{ /* new vector in the group */
-				if (s_add_to_group (self, flags) == TASK_ERROR)
+				if (s_add_to_group (self) == TASK_ERROR)
 					return TASK_ERROR;
 			}
 		}
@@ -660,11 +710,14 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
 		logmsg (0, LOG_DEBUG, "Channel %hhu frame, delay is %hu",
 			ef->CH, delay);
+		logmsg (0, LOG_DEBUG, "Delay since start: %hu, since last: %hu",
+			data->cur_frame.cur_group.delay_since_start,
+			data->cur_frame.cur_group.delay_since_last);
 #endif
 		
 		if (data->cur_frame.cur_group.num_ongoing == 0)
 		{ /* new group */
-			if (s_add_to_group (self, 0) == TASK_ERROR)
+			if (s_add_to_group (self) == TASK_ERROR)
 				return TASK_ERROR;
 		}
 
