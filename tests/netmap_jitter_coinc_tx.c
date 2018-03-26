@@ -49,7 +49,7 @@
 				(double)rand () * MAX_DELAY / RAND_MAX))
 #else
 #  define RAND_CH_EVERY 10000
-static uint16_t delays[MAX_NUM_CHANNELS] = {10, 20, 10, 5, 10, 5, 5, 15};
+static uint16_t delays[MAX_NUM_CHANNELS] = {100, 10, 11, 12, 13, 14, 15, 16};
 #  define DELAY(x) delays[x]
 #endif
 
