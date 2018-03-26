@@ -2,8 +2,6 @@
  * TO FIX:
  *  - discard the first coincidence if it starts before the first tick
  *  - don't publish first tick on its own
- *  - when a tick ends a coincidence group it should not be
- *    published as UNRESOLVED
  */
 
 #include "tesd_tasks.h"
@@ -110,7 +108,8 @@ struct s_data_t
 		struct
 		{
 			int num_ongoing; // no. of vectors in the group
-			int ticks; // since start of group
+			uint16_t ticks;  // since start of group
+			uint16_t ticks_since_last;  // since last event
 			uint16_t delay_since_start; // since start of group
 			uint16_t delay_since_last;	// since relevant event in group
 			uint8_t channels;
@@ -148,8 +147,8 @@ static s_count_fn s_from_area;
 static s_count_fn s_from_peak;
 static s_count_fn s_from_dp;
 static int s_add_to_group (task_t* self);
-static int s_add_ticks (task_t* self, int n, uint8_t flags);
-static int s_publish (task_t* self);
+static int s_add_ticks (task_t* self, uint16_t nlater);
+static int s_publish (task_t* self, uint16_t reserve);
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
@@ -338,7 +337,7 @@ s_add_to_group (task_t* self)
 			&data->coinc[data->cur_frame.idx];
 		flags |= ((*cvec)[0] & UNRESOLVED);
 	}
-#if TICK > 0
+#if TICK_WITH_COINC > 0
 	else if (data->cur_frame.cur_group.ticks > 0)
 	{
 		dbg_assert (data->cur_frame.cur_group.ticks == 1);
@@ -349,6 +348,7 @@ s_add_to_group (task_t* self)
 	dbg_assert (data->cur_frame.cur_group.ticks == 0 ||
 		data->cur_frame.cur_group.num_ongoing > 0);
 #endif
+	dbg_assert (data->cur_frame.cur_group.ticks_since_last == 0);
 	
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
 	if (data->cur_frame.cur_group.num_ongoing == 0)
@@ -362,7 +362,7 @@ s_add_to_group (task_t* self)
 	data->cur_frame.cur_group.num_ongoing++;
 	
 	if (data->cur_frame.idx == MAX_COINC_VECS)
-		return s_publish (self);
+		return s_publish (self, 0);
 
 	uint8_t (*cvec)[TES_NCHANNELS] =
 		&data->coinc[data->cur_frame.idx];
@@ -374,58 +374,60 @@ s_add_to_group (task_t* self)
 }
 
 static int
-s_add_ticks (task_t* self, int n, uint8_t flags)
+s_add_ticks (task_t* self, uint16_t nlater)
 {
 	dbg_assert (self != NULL);
-	dbg_assert (n > 0);
-	
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	dbg_assert (data->cur_frame.cur_group.num_ongoing == 0);
+	dbg_assert (nlater == 0 || nlater == TICK_WITH_COINC);
 	
+	int num = data->cur_frame.cur_group.ticks - nlater;
+	if (num <= 0)
+		return 0;
+	
+	int num_unres = num - data->cur_frame.cur_group.ticks_since_last;
+	dbg_assert (num_unres >= 0);
 #ifdef DEFER_EMPTY
 	if (data->cur_frame.idx + 1 > data->cur_frame.ticks)
 	{
-		if (s_publish (self) == TASK_ERROR)
+		if (s_publish (self, num) == TASK_ERROR)
 			return TASK_ERROR;
 	}
 #else
-	if (s_publish (self) == TASK_ERROR)
+	if (s_publish (self, num) == TASK_ERROR)
 		return TASK_ERROR;
 #endif
 	
 	dbg_assert (data->cur_frame.idx ==
 		data->cur_frame.cur_group.num_ongoing - 1);
-	dbg_assert (data->cur_frame.idx + n < MAX_COINC_VECS);
+	dbg_assert (data->cur_frame.idx + num < MAX_COINC_VECS);
 	dbg_assert (data->cur_frame.idx + 1 >= 0);
-	
-	if (data->conf.changed)
-		s_apply_conf (data);
 	
 	uint8_t (*tick)[TES_NCHANNELS] =
 		&data->coinc[data->cur_frame.idx + 1];
-	memset (tick, TOK_TICK, n*TES_NCHANNELS);
-	for (int t = 0; t < n; t++)
-		(*tick)[t] |= (flags | TICK);
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
-	logmsg (0, LOG_DEBUG, "Added %d ticks with flags = 0x%x",
-		n, (flags | TICK));
-#endif
-	
-	data->cur_frame.idx += n;
-	if (flags & UNRESOLVED)
+	memset (tick, TOK_TICK, num*TES_NCHANNELS);
+	for (int t = 0; t < num; t++, tick++)
 	{
-		data->cur_frame.cur_group.ticks -= n;
-		dbg_assert (data->cur_frame.cur_group.ticks == TICK_WITH_COINC);
+		(*tick)[0] |= ( t < num_unres ? UNRESOLVED : 0 | TICK );
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+		logmsg (0, LOG_DEBUG, "Added a tick with flags = 0x%x",
+			((*tick)[0] & FLAG_MASK));
+#endif
 	}
-	else
-		dbg_assert (data->cur_frame.cur_group.ticks == 0);
-	data->cur_frame.ticks += n;
+	
+	data->cur_frame.idx += num;
+	data->cur_frame.ticks += num;
+	data->cur_frame.cur_group.ticks -= num;
+	data->cur_frame.cur_group.ticks_since_last = 0;
+	
+	if (data->conf.changed)
+		s_apply_conf (data);
 	
 	return 0;
 }
 
 static int
-s_publish (task_t* self)
+s_publish (task_t* self, uint16_t reserve)
 {
 	dbg_assert (self != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
@@ -434,7 +436,7 @@ s_publish (task_t* self)
 		data->cur_frame.idx - data->cur_frame.cur_group.num_ongoing + 1;
 	dbg_assert (num_ready >= 0);
 
-	if (data->cur_frame.idx - num_ready >= MAX_COINC_VECS)
+	if (data->cur_frame.idx + reserve - num_ready >= MAX_COINC_VECS)
 	{
 		logmsg (0, LOG_DEBUG,
 			"Too many vectors in current group");
@@ -638,6 +640,8 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	dbg_assert (data->cur_frame.idx < MAX_COINC_VECS);
 	dbg_assert (data->cur_frame.idx + 1 >= data->cur_frame.ticks +
 		data->cur_frame.cur_group.num_ongoing);
+	dbg_assert (data->cur_frame.cur_group.ticks >=
+		data->cur_frame.cur_group.ticks_since_last);
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! data->publishing && is_tick )
@@ -658,14 +662,11 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 	if (is_tick)
 	{
-		if (ongoing_coinc)
-			data->cur_frame.cur_group.ticks++; /* add them later */
-		else if (s_add_ticks (self, 1, 0) == TASK_ERROR)
-			return TASK_ERROR;
+		data->cur_frame.cur_group.ticks++;
+		data->cur_frame.cur_group.ticks_since_last++;
+		if ( ! ongoing_coinc )
+			return s_add_ticks (self, 0);
 	}
-
-	if (is_tick && ! ongoing_coinc)
-			return 0; /* no ongoing coincidence */
 
 	dbg_assert (! is_tick /* set counts */
 		|| ongoing_coinc    /* add to delay_since_* */
@@ -678,9 +679,6 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		data->cur_frame.cur_group.delay_since_start += delay;
 		struct tespkt_event_flags* ef = tespkt_evt_fl (pkt, e);
 		
-		/* Start a new coincidence vector if the current channel has been
-		 * seen in this coincidence group, or if this is the first
-		 * measurement event since last group concluded. */
 		if (data->cur_frame.cur_group.delay_since_last >
 				data->window)
 		{ /* ongoing group ends */
@@ -691,15 +689,33 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			data->cur_frame.cur_group.delay_since_start = 0;
 			data->cur_frame.cur_group.delay_since_last = 0;
 			data->cur_frame.cur_group.channels = 0;
-			if (data->cur_frame.cur_group.ticks > TICK_WITH_COINC)
-			{
-				if (s_add_ticks (self,
-						data->cur_frame.cur_group.ticks - TICK_WITH_COINC,
-						UNRESOLVED) == TASK_ERROR)
-					return TASK_ERROR;
-			}
+			if (s_add_ticks (self, TICK_WITH_COINC) == TASK_ERROR)
+				return TASK_ERROR;
 		}
-		else if ( ! is_tick )
+
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+		logmsg (0, LOG_DEBUG, "Channel %hhu %s, delay is %hu",
+			ef->CH, is_tick ? "tick " : "frame", delay);
+		logmsg (0, LOG_DEBUG, "Delay since start: %hu, since last: %hu",
+			data->cur_frame.cur_group.delay_since_start,
+			data->cur_frame.cur_group.delay_since_last);
+#endif
+		
+		if (is_tick)
+			break;
+			
+		data->cur_frame.cur_group.delay_since_last = 0;
+		data->cur_frame.cur_group.ticks_since_last = 0;
+		
+		/* Start a new coincidence vector if the current channel has been
+		 * seen in this coincidence group, or if this is the first
+		 * measurement event since last group concluded. */
+		if (data->cur_frame.cur_group.num_ongoing == 0)
+		{ /* new group */
+			if (s_add_to_group (self) == TASK_ERROR)
+				return TASK_ERROR;
+		}
+		else
 		{ /* ongoing group continues */
 			bool ch_seen =
 				data->cur_frame.cur_group.channels & (1 << ef->CH);
@@ -722,27 +738,9 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			}
 		}
 
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
-		logmsg (0, LOG_DEBUG, "Channel %hhu %s, delay is %hu",
-			ef->CH, is_tick ? "tick " : "frame", delay);
-		logmsg (0, LOG_DEBUG, "Delay since start: %hu, since last: %hu",
-			data->cur_frame.cur_group.delay_since_start,
-			data->cur_frame.cur_group.delay_since_last);
-#endif
-		
-		if (is_tick)
-			break;
-			
-		if (data->cur_frame.cur_group.num_ongoing == 0)
-		{ /* new group */
-			if (s_add_to_group (self) == TASK_ERROR)
-				return TASK_ERROR;
-		}
-
 		dbg_assert (data->cur_frame.idx < MAX_COINC_VECS);
 		dbg_assert (data->cur_frame.idx >= 0);
 		dbg_assert (data->cur_frame.cur_group.num_ongoing > 0);
-		data->cur_frame.cur_group.delay_since_last = 0;
 		
 		data->cur_frame.cur_group.channels |= (1 << ef->CH);
 		uint8_t (*cvec)[TES_NCHANNELS] =
