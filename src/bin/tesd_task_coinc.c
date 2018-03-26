@@ -1,7 +1,8 @@
 /*
  * TO FIX:
  *  - discard the first coincidence if it starts before the first tick
- *  - don't publish first tick on its own
+ *  - don't publish empty frame when first tick comes
+ *  - unresolved flag for subsequent vectors??
  */
 
 #include "tesd_tasks.h"
@@ -39,12 +40,13 @@
  *    with the tick flag set, even if that tick occured during the
  *    coincidence; it will only be set for the extra, all TOK_TICK,
  *    vectors before that coincidence, if any of them also occured
- *    during the coincidence
+ *    during the coincidence (before the last non-tick event in the
+ *    window)
 #endif
  * BAD (coincidence vector):
  *  - measurement is not peak and there are multiple peaks within
  *    one of the events in the coincidence group
-#if TICK_WITH_COINC == 0
+#if TICK_WITH_COINC > 0
  * TICK (coincidence vector):
  *  - coincidence is first after a tick
  * TICK (tick vector):
@@ -57,9 +59,9 @@
 #define BAD          (1 << 6)
 #define TICK_WITH_COINC     0 // or 1
 #if TICK_WITH_COINC > 0
-#  define TICK              0
-#else
 #  define TICK       (1 << 5)
+#else
+#  define TICK              0
 #endif
 
 /*
@@ -147,7 +149,7 @@ static s_count_fn s_from_area;
 static s_count_fn s_from_peak;
 static s_count_fn s_from_dp;
 static int s_add_to_group (task_t* self);
-static int s_add_ticks (task_t* self, uint16_t nlater);
+static int s_add_ticks (task_t* self);
 static int s_publish (task_t* self, uint16_t reserve);
 
 /* -------------------------------------------------------------- */
@@ -219,11 +221,10 @@ s_count_from_thres (uint32_t val,
 		for (; val >= (*thres)[p] &&
 			p < TES_COINC_MAX_PHOTONS &&
 			(p == 0 || (*thres)[p] > 0); p++)
-		{
+			;
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
-			logmsg (0, LOG_DEBUG, "Threshold %hu is %u", p, (*thres)[p]);
+		logmsg (0, LOG_DEBUG, " -> %hhu photons", p);
 #endif
-		}
 		return p;
 }
 
@@ -332,14 +333,13 @@ s_add_to_group (task_t* self)
 	
 	uint8_t flags = 0;
 	if (data->cur_frame.cur_group.num_ongoing > 0)
-	{ /* pick up UNRESOLVED from previous vector */
-		uint8_t (*cvec)[TES_NCHANNELS] =
-			&data->coinc[data->cur_frame.idx];
-		flags |= ((*cvec)[0] & UNRESOLVED);
+	{ /* must be UNRESOLVED */
+		dbg_assert (data->coinc[data->cur_frame.idx][0] & UNRESOLVED);
+		flags |= UNRESOLVED;
 	}
 #if TICK_WITH_COINC > 0
 	else if (data->cur_frame.cur_group.ticks > 0)
-	{
+	{ /* add TICK flag if new group follows a tick */
 		dbg_assert (data->cur_frame.cur_group.ticks == 1);
 		flags |= TICK;
 	}
@@ -374,14 +374,13 @@ s_add_to_group (task_t* self)
 }
 
 static int
-s_add_ticks (task_t* self, uint16_t nlater)
+s_add_ticks (task_t* self)
 {
 	dbg_assert (self != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	dbg_assert (data->cur_frame.cur_group.num_ongoing == 0);
-	dbg_assert (nlater == 0 || nlater == TICK_WITH_COINC);
 	
-	int num = data->cur_frame.cur_group.ticks - nlater;
+	int num = data->cur_frame.cur_group.ticks - TICK_WITH_COINC;
 	if (num <= 0)
 		return 0;
 	
@@ -440,8 +439,8 @@ s_publish (task_t* self, uint16_t reserve)
 	{
 		logmsg (0, LOG_DEBUG,
 			"Too many vectors in current group");
-		/* Keep at least one, since s_add_to_group needs to pick up the
-		 * flags. */
+		/* Keep at least one, since s_add_to_group needs to know whether
+		 * to set UNRESOLVED. */
 		num_ready = MAX_COINC_VECS - 1;
 		data->cur_frame.cur_group.num_ongoing = 1;
 	}
@@ -520,7 +519,7 @@ task_coinc_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 			"Not changing configuration");
 	else
 		logmsg (0, LOG_INFO,
-			"Setting measurement to %hhu, window to %hhu",
+			"Setting measurement to %hhu, window to %hu",
 			conf.measurement, conf.window);
 	zsock_send (frontend, TES_COINC_REP_PIC,
 		data->conf.window, data->conf.measurement);
@@ -665,7 +664,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		data->cur_frame.cur_group.ticks++;
 		data->cur_frame.cur_group.ticks_since_last++;
 		if ( ! ongoing_coinc )
-			return s_add_ticks (self, 0);
+			return s_add_ticks (self);
 	}
 
 	dbg_assert (! is_tick /* set counts */
@@ -689,7 +688,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			data->cur_frame.cur_group.delay_since_start = 0;
 			data->cur_frame.cur_group.delay_since_last = 0;
 			data->cur_frame.cur_group.channels = 0;
-			if (s_add_ticks (self, TICK_WITH_COINC) == TASK_ERROR)
+			if (s_add_ticks (self) == TASK_ERROR)
 				return TASK_ERROR;
 		}
 
@@ -756,9 +755,6 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			(*cvec)[0] |= BAD;
 		}
 		(*cvec)[ef->CH] = data->util.get_counts (pkt, e, thres);
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
-		logmsg (0, LOG_DEBUG, "  %hhu photons", (*cvec)[ef->CH]);
-#endif
 	}
 
 	return 0;
@@ -805,6 +801,7 @@ task_coinc_wakeup (task_t* self)
 	memset (&data->coinc, TOK_NONE, MAX_COINC_VECS*CVEC_SIZE);
 	memset (&data->cur_frame, 0, sizeof (data->cur_frame));
 	data->publishing = false;
+	data->cur_frame.idx = -1;
 	return 0;
 }
 
