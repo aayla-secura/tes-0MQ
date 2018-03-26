@@ -1,7 +1,9 @@
 /*
- * TO DO:
- *  - FIX: discard the first coincidence if it starts before the first tick
- *  - Don't publish first tick on its own
+ * TO FIX:
+ *  - discard the first coincidence if it starts before the first tick
+ *  - don't publish first tick on its own
+ *  - when a tick ends a coincidence group it should not be
+ *    published as UNRESOLVED
  */
 
 #include "tesd_tasks.h"
@@ -365,6 +367,9 @@ s_add_to_group (task_t* self)
 	uint8_t (*cvec)[TES_NCHANNELS] =
 		&data->coinc[data->cur_frame.idx];
 	(*cvec)[0] |= flags;
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+	logmsg (0, LOG_DEBUG, "Added vector with flags = 0x%x", flags);
+#endif
 	return 0;
 }
 
@@ -400,7 +405,11 @@ s_add_ticks (task_t* self, int n, uint8_t flags)
 		&data->coinc[data->cur_frame.idx + 1];
 	memset (tick, TOK_TICK, n*TES_NCHANNELS);
 	for (int t = 0; t < n; t++)
-		(*tick)[t] |= flags | TICK;
+		(*tick)[t] |= (flags | TICK);
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+	logmsg (0, LOG_DEBUG, "Added %d ticks with flags = 0x%x",
+		n, (flags | TICK));
+#endif
 	
 	data->cur_frame.idx += n;
 	if (flags & UNRESOLVED)
@@ -641,7 +650,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( ! data->publishing || err || ! tespkt_is_event (pkt) )
 		return 0;
 
-	bool ongoing_coinc = data->cur_frame.cur_group.num_ongoing != 0;
+	bool ongoing_coinc = (data->cur_frame.cur_group.num_ongoing != 0);
 	dbg_assert ( (
 			data->cur_frame.cur_group.delay_since_last == 0 &&
 			data->cur_frame.cur_group.channels == 0)
@@ -650,7 +659,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (is_tick)
 	{
 		if (ongoing_coinc)
-			data->cur_frame.cur_group.ticks++;
+			data->cur_frame.cur_group.ticks++; /* add them later */
 		else if (s_add_ticks (self, 1, 0) == TASK_ERROR)
 			return TASK_ERROR;
 	}
@@ -713,17 +722,17 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			}
 		}
 
-		if (is_tick)
-			break;
-			
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
-		logmsg (0, LOG_DEBUG, "Channel %hhu frame, delay is %hu",
-			ef->CH, delay);
+		logmsg (0, LOG_DEBUG, "Channel %hhu %s, delay is %hu",
+			ef->CH, is_tick ? "tick " : "frame", delay);
 		logmsg (0, LOG_DEBUG, "Delay since start: %hu, since last: %hu",
 			data->cur_frame.cur_group.delay_since_start,
 			data->cur_frame.cur_group.delay_since_last);
 #endif
 		
+		if (is_tick)
+			break;
+			
 		if (data->cur_frame.cur_group.num_ongoing == 0)
 		{ /* new group */
 			if (s_add_to_group (self) == TASK_ERROR)
@@ -742,7 +751,12 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			&(*data->thresholds)[ef->CH];
 		
 		if (data->util.is_bad (pkt, e))
+		{
+#if DEBUG_LEVEL >= ARE_YOU_NUTS
+			logmsg (0, LOG_DEBUG, "Measurement is bad");
+#endif
 			(*cvec)[0] |= BAD;
+		}
 		(*cvec)[ef->CH] = data->util.get_counts (pkt, e, thres);
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
 		logmsg (0, LOG_DEBUG, "  %hhu photons", (*cvec)[ef->CH]);
