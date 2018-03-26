@@ -1,6 +1,7 @@
 /*
  * TO DO:
  *  - FIX: discard the first coincidence if it starts before the first tick
+ *  - Don't publish first tick on its own
  */
 
 #include "tesd_tasks.h"
@@ -77,8 +78,8 @@
  */
 #define TOK_TICK      0 /* tick vector */
 #define TOK_NONE      0 /* no event in this channel */
-#define TOK_NOISE   '-' /* measurement below threshold */
-#define TOK_UNKNOWN '?' /* an event with no measurement */
+#define TOK_NOISE   (TES_COINC_MAX_PHOTONS+1) /* measurement below threshold */
+#define TOK_UNKNOWN (TES_COINC_MAX_PHOTONS+2) /* an event with no measurement */
 
 typedef bool (s_frame_check_fn)(tespkt* pkt);
 typedef bool (s_event_check_fn)(tespkt* pkt, uint16_t event);
@@ -100,8 +101,7 @@ struct s_conf_t
 struct s_data_t
 {
 #if DEBUG_LEVEL >= VERBOSE
-	uint64_t published;    // number of published histograms
-	uint64_t dropped;      // number of aborted histograms
+	uint64_t published;    // number of published coincidences
 #endif
 	struct
 	{
@@ -455,6 +455,15 @@ s_publish (task_t* self)
 			"Cannot send the coincidence");
 		return TASK_ERROR;
 	}
+#if DEBUG_LEVEL >= VERBOSE
+	else
+	{
+		data->published++;
+		if (data->published % 50)
+			logmsg (0, LOG_DEBUG,
+				"Published 50 more coincidences");
+	}
+#endif
 
 	/* TO DO: employ circular buffer instead of moving */
 	if (data->cur_frame.cur_group.num_ongoing > 0)
@@ -752,6 +761,13 @@ task_coinc_init (task_t* self)
 	assert (self->frontends[ENDP_REP].type == ZMQ_REP);
 	assert (self->frontends[ENDP_REP_TH].type == ZMQ_REP);
 	assert (self->frontends[ENDP_PUB].type == ZMQ_XPUB);
+	assert ((UNRESOLVED & FLAG_MASK) == UNRESOLVED);
+	assert ((BAD & FLAG_MASK) == BAD);
+	assert ((TICK & FLAG_MASK) == TICK);
+	assert ((TOK_TICK & FLAG_MASK) == 0);
+	assert ((TOK_NONE & FLAG_MASK) == 0);
+	assert ((TOK_NOISE & FLAG_MASK) == 0);
+	assert ((TOK_UNKNOWN & FLAG_MASK) == 0);
 
 	static struct s_data_t data;
 	assert (sizeof (data.coinc[0]) == CVEC_SIZE);
