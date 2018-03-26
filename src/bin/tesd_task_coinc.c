@@ -74,9 +74,9 @@
  * A vector of all TOK_TICK is a tick vector, otherwise it's
  * a coincidence vector.
  * TOK_TICK cannot be between 1 and 17, and it cannot be TOK_NOISE or
- * TOK_UNKNOWN, since it would cause an ambiguity. But it can be TOK_NONE,
- * since a vector of all TOK_NONE would never be published as
- * a coincidence.
+ * TOK_UNKNOWN, since it would cause an ambiguity. But it can be
+ * TOK_NONE, since a vector of all TOK_NONE would never be published
+ * as a coincidence.
  */
 #define TOK_TICK      0 /* tick vector */
 #define TOK_NONE      0 /* no event in this channel */
@@ -754,7 +754,8 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #endif
 			(*cvec)[0] |= BAD;
 		}
-		(*cvec)[ef->CH] = data->util.get_counts (pkt, e, thres);
+		dbg_assert (((*cvec)[ef->CH] & (~FLAG_MASK)) == 0);
+		(*cvec)[ef->CH] |= data->util.get_counts (pkt, e, thres);
 	}
 
 	return 0;
@@ -776,6 +777,7 @@ task_coinc_init (task_t* self)
 	assert ((TOK_NONE & FLAG_MASK) == 0);
 	assert ((TOK_NOISE & FLAG_MASK) == 0);
 	assert ((TOK_UNKNOWN & FLAG_MASK) == 0);
+	assert ((TES_COINC_MAX_PHOTONS & FLAG_MASK) == 0);
 
 	static struct s_data_t data;
 	assert (sizeof (data.coinc[0]) == CVEC_SIZE);
