@@ -1,8 +1,6 @@
 /*
  * TO FIX:
  *  - discard the first coincidence if it starts before the first tick
- *  - don't publish empty frame when first tick comes
- *  - unresolved flag for subsequent vectors??
  */
 
 #include "tesd_tasks.h"
@@ -649,7 +647,6 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		dbg_assert (data->cur_frame.cur_group.num_ongoing == 0);
 	}
 	
-	/* FIX: don't return if not publishing */
 	if ( ! data->publishing || err || ! tespkt_is_event (pkt) )
 		return 0;
 
@@ -706,13 +703,13 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		data->cur_frame.cur_group.delay_since_last = 0;
 		data->cur_frame.cur_group.ticks_since_last = 0;
 		
-		/* Start a new coincidence vector if the current channel has been
-		 * seen in this coincidence group, or if this is the first
-		 * measurement event since last group concluded. */
+		/* Start a new coincidence vector if this is the first measurement
+		 * event since last group concluded or if the current channel has
+		 * been seen in this coincidence group. */
+		bool add_vec = 0;
 		if (data->cur_frame.cur_group.num_ongoing == 0)
 		{ /* new group */
-			if (s_add_to_group (self) == TASK_ERROR)
-				return TASK_ERROR;
+			add_vec = true;
 		}
 		else
 		{ /* ongoing group continues */
@@ -732,10 +729,12 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			
 			if (ch_seen)
 			{ /* new vector in the group */
-				if (s_add_to_group (self) == TASK_ERROR)
-					return TASK_ERROR;
+				add_vec = true;
 			}
 		}
+
+		if (add_vec && s_add_to_group (self) == TASK_ERROR)
+				return TASK_ERROR;
 
 		dbg_assert (data->cur_frame.idx < MAX_COINC_VECS);
 		dbg_assert (data->cur_frame.idx >= 0);
