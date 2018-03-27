@@ -1,6 +1,8 @@
 /*
  * TO DO:
- *  - test with DEFER_EMPTY off and with TICK_WITH_COINC = 1
+ *  - test with DEFER_EMPTY off
+ *  - test with TICK_WITH_COINC = 1
+ *  - test with TES_NCHANNELS > 2
  * TO FIX:
  *  - discard the first coincidence if it starts before the first tick
  */
@@ -234,7 +236,7 @@ s_count_from_thres (uint32_t val,
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
 		logmsg (0, LOG_DEBUG, " -> %hhu photons", p);
 #endif
-		return p;
+		return (p == 0 ? TOK_NOISE : p);
 }
 
 static inline bool
@@ -384,7 +386,7 @@ s_add_to_group (task_t* self)
 		&data->coinc[data->cur_frame.idx];
 	(*cvec)[0] |= flags;
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
-	logmsg (0, LOG_DEBUG, "Added vector with flags = 0x%x", flags);
+	logmsg (0, LOG_DEBUG, "Added a vector with flags = 0x%02x", flags);
 #endif
 	return 0;
 }
@@ -430,7 +432,7 @@ s_add_ticks (task_t* self)
 	{
 		(*tick)[0] |= ( t < num_unres ? UNRESOLVED : 0 | TICK );
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
-		logmsg (0, LOG_DEBUG, "Added a tick with flags = 0x%x",
+		logmsg (0, LOG_DEBUG, "Added a   tick with flags = 0x%02x",
 			((*tick)[0] & FLAG_MASK));
 #endif
 	}
