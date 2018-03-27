@@ -85,11 +85,13 @@
 static struct
 {
 	struct nm_desc* nmd;
-	struct {
+	struct
+	{
 		struct timeval start;
 		struct timeval last_check;
 	} timers;
-	struct {
+	struct
+	{
 		tespkt* slots[MAX_PKTS];
 		int last;       /* highest allocated index */
 
@@ -102,14 +104,15 @@ static struct
 	u_int32_t loop;
 } gobj = { .pkts.last = -1, .pkts.cur = -1 };
 
-static inline
-tespkt* next_pkt (void)
+static inline tespkt*
+next_pkt (void)
 {
 	if (gobj.pkts.last == -1)
 		return NULL;
 
 	tespkt* pkt;
-	do {
+	do
+	{
 		if (gobj.pkts.cur == gobj.pkts.last)
 			gobj.pkts.cur = -1;
 		pkt = gobj.pkts.slots[ ++gobj.pkts.cur ];
@@ -431,7 +434,8 @@ dump_pkt (tespkt* _pkt)
 	const char* pkt = (const char*)_pkt;
 	char buf[ 4*DUMP_ROW_LEN + DUMP_OFF_LEN + 2 + 1 ] = {0};
 
-	for (int r = 0; r < len; r += DUMP_ROW_LEN) {
+	for (int r = 0; r < len; r += DUMP_ROW_LEN)
+	{
 		sprintf (buf, "%0*x: ", DUMP_OFF_LEN, r);
 
 		/* hexdump */

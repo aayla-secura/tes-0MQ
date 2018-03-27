@@ -146,10 +146,11 @@ $ modprobe -r netmap
 * [comments] replace: FIX with XXX
 * replace `<type>* <pt>` with `<type> *<pt>`
 * remove cast of `malloc`/`mmap`
-* remove space after function name
+* remove space after function name?
+* when splitting lines, put operator on the new line
 
 * move debugging tespkt functions in `tespkt.h` to `tespkt.c`?
-* [tescap_tx]: inject from fidx + adat and autodetect headers in `*dat` files
+* [`tescap_tx.c`]: inject from fidx + adat and autodetect headers in `*dat` files
 * move `tespkt_is_valid` check to coordinator and have result available to threads?
 
 * non-gcc support?

@@ -156,7 +156,8 @@ struct s_aiobuf_t
 		size_t waiting;      // copied to buffer since last aio_write
 		size_t enqueued;     // queued for writing at last aio_write
 #if DEBUG_LEVEL >= VERBOSE
-		struct {
+		struct
+		{
 			size_t prev_enqueued;
 			size_t prev_waiting;
 			size_t last_written;
@@ -775,7 +776,8 @@ s_flush (struct s_data_t* sjob)
 	int jobrc;
 	for (int s = 0; s < NUM_DSETS ; s++)
 	{
-		do {
+		do
+		{
 			jobrc = s_queue_aiobuf (&sjob->aio[s], true);
 		} while (jobrc == EINPROGRESS);
 	}

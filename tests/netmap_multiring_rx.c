@@ -36,11 +36,13 @@
 static struct
 {
 	struct nm_desc* nmd;
-	struct {
+	struct
+	{
 		struct timeval start;
 		struct timeval last_check;
 	} timers;
-	struct {
+	struct
+	{
 		u_int32_t last_rcvd;
 		u_int32_t rcvd;
 		u_int32_t missed;
@@ -221,7 +223,8 @@ static int nm_dispatch_fixed (struct nm_desc *d,
 	 * of buffers and the int is large enough that we never wrap,
 	 * so we can omit checking for -1
 	 */
-	for (c=0; c < n && cnt != got; c++, ri++) {
+	for (c=0; c < n && cnt != got; c++, ri++)
+	{
 		/* compute current ring to use */
 		struct netmap_ring *ring;
 
@@ -229,7 +232,8 @@ static int nm_dispatch_fixed (struct nm_desc *d,
 			ri = d->first_rx_ring;
 		d->cur_rx_ring = ri;
 		ring = NETMAP_RXRING(d->nifp, ri);
-		for ( ; !nm_ring_empty(ring) && cnt != got; got++) {
+		for ( ; !nm_ring_empty(ring) && cnt != got; got++)
+		{
 			u_int i = ring->cur;
 			u_int idx = ring->slot[i].buf_idx;
 			u_char *buf = (u_char *)NETMAP_BUF(ring, idx);

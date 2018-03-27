@@ -41,11 +41,13 @@
 static struct
 {
 	struct nm_desc* nmd;
-	struct {
+	struct
+	{
 		struct timeval start;
 		struct timeval last_check;
 	} timers;
-	struct {
+	struct
+	{
 		u_int32_t last_sent;
 		u_int32_t sent;
 		u_int32_t inslot[MAX_RINGS];

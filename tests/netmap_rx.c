@@ -38,11 +38,13 @@ static struct
 	void* save_map;
 	u_int64_t b_written;
 #endif /* SAVE_FILE */
-	struct {
+	struct
+	{
 		struct timeval start;
 		struct timeval last_check;
 	} timers;
-	struct {
+	struct
+	{
 		tespkt* cur_mca;
 		u_int32_t last_rcvd;
 		u_int32_t rcvd;

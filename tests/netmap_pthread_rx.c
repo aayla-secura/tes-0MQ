@@ -37,11 +37,13 @@ static struct
 #ifdef SAVE_FILE
 	u_int64_t b_written;
 #endif /* SAVE_FILE */
-	struct {
+	struct
+	{
 		struct timeval start;
 		struct timeval last_check;
 	} timers;
-	struct {
+	struct
+	{
 		tespkt* cur_mca;
 		u_int32_t last_rcvd;
 		u_int32_t rcvd;
@@ -49,7 +51,8 @@ static struct
 		u_int32_t missed;
 	} pkts;
 	u_int32_t loop;
-	struct {
+	struct
+	{
 		pthread_t th_id;
 		int pipefd[2];
 	} tes_th;
