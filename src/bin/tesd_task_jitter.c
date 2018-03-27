@@ -346,7 +346,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				TES_JITTER_SIZE, rc);
 
 		data->published++;
-		if (data->published % 50)
+		if (data->published % 50 == 0)
 			logmsg (0, LOG_DEBUG,
 				"Published 50 more histogtams");
 #endif

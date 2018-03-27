@@ -154,7 +154,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				hist->cur_size, rc);
 
 		hist->published++;
-		if (hist->published % 50)
+		if (hist->published % 50 == 0)
 			logmsg (0, LOG_DEBUG,
 				"Published 50 more histogtams");
 #endif

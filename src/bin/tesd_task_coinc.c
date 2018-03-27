@@ -467,7 +467,7 @@ s_publish (task_t* self, uint16_t reserve)
 	else
 	{
 		data->published++;
-		if (data->published % 50)
+		if (data->published % 50 == 0)
 			logmsg (0, LOG_DEBUG,
 				"Published 50 more coincidences");
 	}
