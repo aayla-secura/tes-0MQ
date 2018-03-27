@@ -600,12 +600,17 @@ s_coinc_th_conf (const char* server, const char* filename,
 	if (rc == -1)
 		return -1;
 
-	assert (tlen == sizeof (thresholds));
-	assert (meas < 3);
-	memset (&thresholds, 0, sizeof (thresholds));
-	memcpy (&thresholds, tbuf, tlen);
 	/* Print reply */
 	printf ("\n");
+	if (req_stat == TES_COINC_REQ_TH_EINV)
+		printf ("Request was invalid\n");
+	
+	if (tlen == 0)
+		return 0;
+	
+	assert (tlen == sizeof (thresholds));
+	memset (&thresholds, 0, sizeof (thresholds));
+	memcpy (&thresholds, tbuf, tlen);
 	printf ("Set thresholds: %u", thresholds[0]);
 	for (int t = 1; t < TES_COINC_MAX_PHOTONS &&
 		thresholds[t] > 0; t++)
