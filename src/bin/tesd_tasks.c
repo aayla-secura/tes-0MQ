@@ -120,6 +120,7 @@
  * -----------------------------------------------------------------
  ------------------------------- TO DO -----------------------------
  * -----------------------------------------------------------------
+ * - Alert subscribers to PUB tasks when shutting down.
  * - Test with using more than one of the rings: how to get the NIC
  *   to fill the rest.
  * - Why does writing to file fail with "unhandled syscall" when

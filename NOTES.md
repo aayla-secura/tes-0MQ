@@ -149,6 +149,7 @@ $ modprobe -r netmap
 * remove space after function name?
 * when splitting lines, put operator on the new line
 
+* remove unnecessary `dbg_assert (<smth> != NULL)` at start of most functions
 * move debugging tespkt functions in `tespkt.h` to `tespkt.c`?
 * [`tescap_tx.c`]: inject from fidx + adat and autodetect headers in `*dat` files
 * move `tespkt_is_valid` check to coordinator and have result available to threads?
