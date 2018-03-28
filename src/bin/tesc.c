@@ -761,13 +761,13 @@ s_local_save_trace (const char* server, const char* filename,
 	return 0;
 }
 
-/* ---------------------- HISTOGRAM --------------------- */
+/* ----------------------- GENERIC ---------------------- */
 
 static int
 s_local_save_generic (const char* server, const char* filename,
 	int argc, char* argv[], size_t max_size)
 {
-	uint64_t num_hist = 1;
+	uint64_t num_msgs = 1;
 
 	/* Command-line */
 	char* buf = NULL;
@@ -790,8 +790,8 @@ s_local_save_generic (const char* server, const char* filename,
 			case 'F':
 				break;
 			case 'n':
-				num_hist = strtoul (optarg, &buf, 10);
-				if (strlen (buf) || num_hist == 0)
+				num_msgs = strtoul (optarg, &buf, 10);
+				if (strlen (buf) || num_msgs == 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -808,12 +808,13 @@ s_local_save_generic (const char* server, const char* filename,
 				assert (false);
 		}
 	}
-	assert (num_hist > 0);
+	assert (num_msgs > 0);
 
 	/* Proceed? */
 	printf ("Will save %lu message%s to local file '%s'.\n"
 		"Maximum total size is %lu.\n",
-		num_hist, (num_hist > 1)? "s" : "", filename, num_hist*max_size);
+		num_msgs, (num_msgs > 1)? "s" : "",
+		filename, num_msgs*max_size);
 	if ( s_prompt () )
 		return -1;
 
@@ -850,7 +851,7 @@ s_local_save_generic (const char* server, const char* filename,
 		printf ("Appending to file of size %lu\n", fsize);
 
 	/* Allocate space */
-	int rc = posix_fallocate (fd, fsize, num_hist*max_size);
+	int rc = posix_fallocate (fd, fsize, num_msgs*max_size);
 	if (rc)
 	{
 		errno = rc; /* posix_fallocate does not set it */
@@ -864,7 +865,7 @@ s_local_save_generic (const char* server, const char* filename,
 	/* TO DO: map starting at the last page boundary before end of
 	 * file. */
 	unsigned char* map = (unsigned char*)mmap (NULL,
-		fsize + num_hist*max_size,
+		fsize + num_msgs*max_size,
 		PROT_WRITE, MAP_SHARED, fd, 0);
 	if (map == (void*)-1)
 	{
@@ -878,12 +879,13 @@ s_local_save_generic (const char* server, const char* filename,
 	size_t hsize = 0;
 	void* sock_h = zsock_resolve (sock);
 	assert (sock_h != NULL);
-	for (; ! zsys_interrupted && h < num_hist; h++)
+	for (; ! zsys_interrupted && h < num_msgs; h++)
 	{
 		rc = zmq_recv (sock_h, map + fsize + hsize, max_size, 0);
 		if (rc == -1)
 		{
-			perror ("Could not write to file");
+			if (! zsys_interrupted)
+				perror ("Could not write to file");
 			break;
 		}
 		else if ((size_t)rc > max_size)
@@ -894,12 +896,12 @@ s_local_save_generic (const char* server, const char* filename,
 		}
 		hsize += (size_t)rc;
 	}
-	if (h < num_hist - 1)
-		printf ("Saved %lu histogram%s\n",
-			h, (num_hist > 1)? "s" : "");
+	if (h < num_msgs - 1)
+		printf ("Saved %lu messages%s\n",
+			h, (num_msgs > 1)? "s" : "");
 
 	zsock_destroy (&sock);
-	munmap (map, num_hist*max_size);
+	munmap (map, num_msgs*max_size);
 	rc = ftruncate (fd, fsize + hsize);
 	if (rc == -1)
 		perror ("Could not truncate file");
