@@ -1,8 +1,6 @@
 /*
  * TO DO:
- *  - test with DEFER_EMPTY off
- *  - test with TICK_WITH_COINC = 1
- *  - test with TES_NCHANNELS > 2
+ *  - test with other measurement types
  * TO FIX:
  *  - discard the first coincidence if it starts before the first tick
  */
@@ -19,7 +17,7 @@
  * If DEFER_EMPTY is set, do not publish when a tick comes unless
  * there have been completed coincidences since the last one.
  */
-/* #define DEFER_EMPTY */
+// #define DEFER_EMPTY
 
 /*
  * Flags in the first byte of a vector.
@@ -59,7 +57,7 @@
 #define FLAG_MASK    0xE0
 #define UNRESOLVED   (1 << 7)
 #define BAD          (1 << 6)
-#define TICK_WITH_COINC     0 // or 1
+#define TICK_WITH_COINC     0 // 0 or 1
 #if TICK_WITH_COINC > 0
 #  define TICK       (1 << 5)
 #else
@@ -119,7 +117,7 @@ struct s_data_t
 			uint8_t channels;
 		} cur_group;
 		int idx; // index into coinc of current vector
-		int ticks; // no. of ticks at start of frame
+		int ticks; // no. of TOK_TICK vectors at start of frame
 	} cur_frame;
 	
 	struct s_conf_t conf; // to be read only in s_apply_conf or req_*_hn
@@ -153,6 +151,8 @@ static s_count_fn s_from_dp;
 static int s_add_to_group (task_t* self);
 static int s_add_ticks (task_t* self);
 static int s_publish (task_t* self, uint16_t reserve);
+static inline bool s_ongoing (struct s_data_t* data);
+static inline int  s_num_completed (struct s_data_t* data);
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
@@ -362,8 +362,8 @@ s_add_to_group (task_t* self)
 	}
 	data->cur_frame.cur_group.ticks = 0;
 #else
-	dbg_assert (data->cur_frame.cur_group.ticks == 0 ||
-		data->cur_frame.cur_group.num_ongoing > 0);
+	else
+		dbg_assert (data->cur_frame.cur_group.ticks == 0);
 #endif
 	dbg_assert (data->cur_frame.cur_group.ticks_since_last == 0);
 	
@@ -394,8 +394,9 @@ s_add_to_group (task_t* self)
 /*
  * Publish all ticks and coincidences so far, then add any ticks since
  * the start of the last coincidence group.
- * Should only be called when a coincidence group has ended (or when a
- * tick came and no ongoing coincidence was there.
+ * Should always be called when a coincidence group has ended after a
+ * tick, or when a tick came and no ongoing coincidence was there, and
+ * only in those two cases.
  * Returns 0 on success, TASK_ERROR on error.
  */
 static int
@@ -404,23 +405,34 @@ s_add_ticks (task_t* self)
 	dbg_assert (self != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	dbg_assert (data->cur_frame.cur_group.num_ongoing == 0);
+	assert (data->cur_frame.cur_group.ticks > 0);
 	
 	int num = data->cur_frame.cur_group.ticks - TICK_WITH_COINC;
-	if (num <= 0)
-		return 0;
+	dbg_assert (num >= 0);
 	
-	int num_unres = num - data->cur_frame.cur_group.ticks_since_last;
-	dbg_assert (num_unres >= 0);
 #ifdef DEFER_EMPTY
-	if (data->cur_frame.idx + 1 > data->cur_frame.ticks)
+	if (s_num_completed (data) > 0 ||
+		data->cur_frame.idx + num >= MAX_COINC_VECS)
 	{
 		if (s_publish (self, num) == TASK_ERROR)
 			return TASK_ERROR;
 	}
+#  if DEBUG_LEVEL >= ARE_YOU_NUTS
+	else
+		logmsg (0, LOG_DEBUG, "Defering publishing");
+#  endif
 #else
 	if (s_publish (self, num) == TASK_ERROR)
 		return TASK_ERROR;
 #endif
+	
+	dbg_assert (s_num_completed (data) == 0);
+	if (num == 0)
+		return 0;
+	
+	int num_unres = data->cur_frame.cur_group.ticks -
+		data->cur_frame.cur_group.ticks_since_last;
+	dbg_assert (num_unres >= 0);
 	
 	dbg_assert (data->cur_frame.idx + num < MAX_COINC_VECS);
 	dbg_assert (data->cur_frame.idx + 1 >= 0);
@@ -462,8 +474,7 @@ s_publish (task_t* self, uint16_t reserve)
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	dbg_assert (reserve + 1 < MAX_COINC_VECS);
 	
-	int num_ready =
-		data->cur_frame.idx - data->cur_frame.cur_group.num_ongoing + 1;
+	int num_ready = s_num_completed (data) + data->cur_frame.ticks;
 	dbg_assert (num_ready >= 0);
 
 	if (data->cur_frame.idx + reserve - num_ready >= MAX_COINC_VECS)
@@ -530,6 +541,19 @@ s_publish (task_t* self, uint16_t reserve)
 		CVEC_SIZE * (MAX_COINC_VECS - idx_next));
 	
 	return 0;
+}
+
+static inline bool
+s_ongoing (struct s_data_t* data)
+{
+	return (data->cur_frame.cur_group.num_ongoing > 0);
+}
+
+static inline int
+s_num_completed (struct s_data_t* data)
+{
+	return (data->cur_frame.idx + 1 - data->cur_frame.ticks -
+		data->cur_frame.cur_group.num_ongoing);
 }
 
 /* -------------------------------------------------------------- */
@@ -677,10 +701,9 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	dbg_assert (self != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	dbg_assert (data->cur_frame.idx < MAX_COINC_VECS);
-	dbg_assert (data->cur_frame.idx + 1 >= data->cur_frame.ticks +
-		data->cur_frame.cur_group.num_ongoing);
 	dbg_assert (data->cur_frame.cur_group.ticks >=
 		data->cur_frame.cur_group.ticks_since_last);
+	dbg_assert (s_num_completed (data) >= 0);
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if ( ! data->publishing && is_tick )
@@ -696,18 +719,16 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	logmsg (0, LOG_DEBUG, "------------------------------");
 #endif
 
-	bool ongoing_coinc = (data->cur_frame.cur_group.num_ongoing != 0);
-	
 	if (is_tick)
 	{
 		data->cur_frame.cur_group.ticks++;
 		data->cur_frame.cur_group.ticks_since_last++;
-		if ( ! ongoing_coinc )
+		if ( ! s_ongoing (data) )
 			return s_add_ticks (self);
 	}
 
 	dbg_assert (! is_tick /* set counts */
-		|| ongoing_coinc    /* add to delay_since_* */
+		|| s_ongoing (data) /* add to delay_since_* */
 		);
 
 	for (int e = 0; e < tespkt_event_nums (pkt); e++)
@@ -725,14 +746,15 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			data->cur_frame.cur_group.delay_since_last);
 #endif
 		
-		if (data->cur_frame.cur_group.delay_since_last >
-				data->window)
+		if (s_ongoing (data) &&
+			data->cur_frame.cur_group.delay_since_last > data->window)
 		{ /* ongoing group ends */
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
 			logmsg (0, LOG_DEBUG, "Group ends");
 #endif
 			data->cur_frame.cur_group.num_ongoing = 0;
-			if (s_add_ticks (self) == TASK_ERROR)
+			if (data->cur_frame.cur_group.ticks > 0 &&
+				s_add_ticks (self) == TASK_ERROR)
 				return TASK_ERROR;
 		}
 
@@ -746,7 +768,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		 * event since last group concluded or if the current channel has
 		 * been seen in this coincidence group. */
 		bool add_vec = 0;
-		if (data->cur_frame.cur_group.num_ongoing == 0)
+		if (! s_ongoing (data))
 		{ /* new group */
 			data->cur_frame.cur_group.delay_since_start = 0;
 			add_vec = true;
@@ -766,7 +788,8 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 					(data->cur_frame.cur_group.num_ongoing > 1 ||
 						TES_NCHANNELS > 2));
 #if DEBUG_LEVEL >= ARE_YOU_NUTS
-				logmsg (0, LOG_DEBUG, "Group is unresolved");
+				if (data->cur_frame.cur_group.num_ongoing == 1)
+					logmsg (0, LOG_DEBUG, "Group becomes unresolved");
 #endif
 				uint8_t (*cvec)[TES_NCHANNELS] =
 					&data->coinc[data->cur_frame.idx];
@@ -784,7 +807,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 		dbg_assert (data->cur_frame.idx < MAX_COINC_VECS);
 		dbg_assert (data->cur_frame.idx >= 0);
-		dbg_assert (data->cur_frame.cur_group.num_ongoing > 0);
+		dbg_assert (s_ongoing (data));
 		
 		data->cur_frame.cur_group.channels |= (1 << ef->CH);
 		uint8_t (*cvec)[TES_NCHANNELS] =
