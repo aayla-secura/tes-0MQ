@@ -237,7 +237,7 @@ s_int_hn (int sig)
 static int
 s_fopen (const char* basefname, const char* ext)
 {
-	char tmpfname[PATH_MAX];
+	char tmpfname[PATH_MAX] = {0};
 
 	/* Index */
 	int rc = snprintf (tmpfname, PATH_MAX, "%s%s%s",
@@ -631,7 +631,7 @@ main (int argc, char* argv[])
 	{ /* read from index and reconstruct headers,
 	   * data file must NOT contain headers */
 		size_t baselen = ext - filename;
-		char basefname[PATH_MAX];
+		char basefname[PATH_MAX] = {0};
 		rc = snprintf (basefname, baselen + 1, "%s", filename);
 		if (rc < 0)
 		{

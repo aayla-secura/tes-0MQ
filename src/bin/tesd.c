@@ -647,7 +647,7 @@ main (int argc, char **argv)
 		}
 	}
 
-	char log_id[32];
+	char log_id[32] = {0};
 	if (be_daemon)
 		snprintf (log_id, sizeof (log_id), "[Coordinator] ");
 	else

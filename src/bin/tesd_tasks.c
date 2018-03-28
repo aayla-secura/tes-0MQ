@@ -599,7 +599,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 	assert (self->id > 0);
 
 	/* Set log prefix. */
-	char log_id[32];
+	char log_id[32] = {0};
 	if (ami_daemon())
 		snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
 	else if (self->color != NULL)

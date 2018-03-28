@@ -23,8 +23,7 @@
 #endif
 
 #define REQUIRE_FILENAME // for now we don't generate filename
-// #define SINGLE_FILE      // save all payloads (with
-//                          // headers) to single .dat file
+// #define SINGLE_FILE      // save all payloads to a single .dat file
 // #define SAVE_HEADERS     // save headers in .*dat files
 // #define NO_BAD_FRAMES    // drop bad frames
 
@@ -1397,7 +1396,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #else
 	struct s_aiobuf_t* aiodat = NULL; /* set later */
 #endif
-	struct s_fidx_t fidx;
+	struct s_fidx_t fidx = {0};
 	fidx.length = datlen;
 	fidx.esize = esize;
 	fidx.changed = 0;
