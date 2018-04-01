@@ -150,7 +150,7 @@ task_info_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		info->mcas++;
 	else if (is_tr_header)
 		info->traces++;
-	else /* FIX: check num events for dp trace */
+	else if (tespkt_is_event (pkt))
 		info->events += tespkt_event_nums (pkt);
 
 	return 0;
