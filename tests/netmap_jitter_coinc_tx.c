@@ -181,7 +181,6 @@ main (void)
 		memset (&pkt->body, 0, TESPKT_MTU - TESPKT_HDR_LEN);
 
 		/* Toss a coin for tick vs non-tick */
-		assert (tespkt_event_nums (pkt) == 1);
 		if ( (int) ((double) rand () * TICK_EVERY / RAND_MAX) == 0 )
 		{
 			tespkt_set_etype_tick (pkt);
@@ -191,7 +190,9 @@ main (void)
 		{
 			tespkt_set_etype_trace (pkt, TESPKT_TRACE_TYPE_DP);
 			tespkt_set_len (pkt, DP_LEN);
+			tespkt_set_esize (pkt, 4);
 		}
+		assert (tespkt_event_nums (pkt) == 1);
 
 		ch++;
 		if ((int)((double)rand() * RAND_CH_EVERY / RAND_MAX) == 0 )

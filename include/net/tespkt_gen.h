@@ -93,7 +93,8 @@ tespkt_set_etype_nontrace (tespkt* pkt, int pkt_type)
 static inline void
 tespkt_set_etype_trace (tespkt* pkt, int tr_type)
 {
-	tespkt_set_esize (pkt, 1);
+	if (tr_type != TESPKT_TRACE_TYPE_DP)
+		tespkt_set_esize (pkt, 1);
 	struct tespkt_event_type* et = tespkt_etype (pkt);
 	et->T = 0;
 	et->PKT = TESPKT_TYPE_TRACE;
