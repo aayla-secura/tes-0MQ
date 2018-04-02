@@ -117,7 +117,7 @@ s_save_points (struct s_data_t* data)
 		if (bin > pt->delay_until)
 			bin = - (int)pt->delay_until;
 
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, "Added a point at %d", bin);
 #endif
 
@@ -283,7 +283,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if ( ! is_ref )
 			s_add_to_since (&data->points[data->cur_npts - 1], delay);
 
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
 			ef->CH, is_tick ? " (tick)" : "       ", delay);
 		for (uint8_t p = 0; p < data->cur_npts; p++)

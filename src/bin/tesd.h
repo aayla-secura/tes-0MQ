@@ -38,11 +38,12 @@
 #include <czmq.h>
 
 /* Debug levels. */
-#define NO_DEBUG      0
-#define CAUTIOUS      1
-#define TESTING       5
-#define VERBOSE      10
-#define ARE_YOU_NUTS 50 // expect output every ~1 packet
+#define NO_DEBUG       0
+#define CAUTIOUS       1
+#define TESTING        5
+#define VERBOSE       10
+#define LETS_GET_NUTS 50 // Have you ever debugged with the devil
+                         // by the pale moon light?
 #ifndef DEBUG_LEVEL
 #  define DEBUG_LEVEL TESTING
 #endif

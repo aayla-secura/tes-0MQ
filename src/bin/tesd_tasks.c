@@ -1021,7 +1021,7 @@ static int s_task_dispatch (task_t* self, zloop_t* loop,
 	dbg_assert ( self->heads[ring_id] != tes_ifring_tail (rxring) );
 #if DEBUG_LEVEL >= VERBOSE
 	self->dbg_stats.rings_dispatched++;
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 	if (missed)
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (

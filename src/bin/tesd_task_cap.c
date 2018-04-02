@@ -1408,7 +1408,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	/* Check for sequence error. */
 	if (missed > 0)
 	{
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, "Missed %hu at frame #%lu",
 			missed, sjob->st.frames - 1);
 #endif
@@ -1528,7 +1528,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			(is_trace && ! sjob->cur_stream.is_event) ||
 			(is_mca && sjob->cur_stream.is_event) ||
 			( ! is_trace && ! is_mca ) );
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 		if (missed == 0)
 		{ /* should only happen in case of FPGA fault */
 			logmsg (0, LOG_NOTICE,
@@ -1575,7 +1575,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		sjob->cur_stream.cur_size += paylen;
 		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
 		{ /* extra bytes */
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 			logmsg (0, LOG_DEBUG, "Extra %s data "
 				"at frame #%lu",
 				is_mca ? "histogram" : "trace",
@@ -1619,7 +1619,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 			if ( ! sjob->cur_stream.discard )
 			{
-#if DEBUG_LEVEL >= ARE_YOU_NUTS
+#if DEBUG_LEVEL >= LETS_GET_NUTS
 				logmsg (0, LOG_DEBUG,
 					"Received a non-header %s frame (#%lu) "
 					"while no stream was ongoing",
