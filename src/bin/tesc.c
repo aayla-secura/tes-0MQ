@@ -24,7 +24,7 @@
 #define DEFAULT_SERVER "tcp://localhost"
 
 typedef int (cmd_hn)(const char*, const char*, int, char*[]);
-static cmd_hn s_server_info;
+static cmd_hn s_packet_info;
 static cmd_hn s_jitter_conf;
 static cmd_hn s_coinc_conf;
 static cmd_hn s_coinc_th_conf;
@@ -58,7 +58,7 @@ s_usage (void)
 		"The format for <server> is <proto>://<host>[:<port>]. Default is " DEFAULT_SERVER ".\n"
 		"Port defaults to the default port for the selected task.\n"
 		"Allowed commands:\n\n"
-		ANSI_FG_GREEN "server_info" ANSI_RESET ": Gets packet rate statistics.\n"
+		ANSI_FG_GREEN "packet_info" ANSI_RESET ": Gets packet rate statistics.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -w <seconds>       " ANSI_RESET "Number of seconds to accumulate for.\n"
 		              "                       "            "Default is 1.\n\n"
@@ -169,7 +169,7 @@ s_prompt (void)
 /* --------------------- PACKET INFO -------------------- */
 
 static int
-s_server_info (const char* server, const char* filename,
+s_packet_info (const char* server, const char* filename,
 	int argc, char* argv[])
 {
 	uint32_t timeout = 1;
@@ -229,7 +229,7 @@ s_server_info (const char* server, const char* filename,
 	zsock_send (sock, TES_INFO_REQ_PIC, timeout);
 	puts ("Waiting for reply");
 
-	uint8_t rep;
+	uint8_t rep, event_types;
 	uint64_t processed, missed, bad, ticks, mcas, traces, events;
 	int rc = zsock_recv (sock, TES_INFO_REP_PIC,
 		&rep,
@@ -239,7 +239,8 @@ s_server_info (const char* server, const char* filename,
 		&ticks,
 		&mcas,
 		&traces,
-		&events); 
+		&events,
+		&event_types);
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -268,6 +269,23 @@ s_server_info (const char* server, const char* filename,
 				mcas,
 				traces,
 				events);
+			printf (
+				"event packets seen:\n"
+				" peak:        %s\n"
+				" area:        %s\n"
+				" pulse:       %s\n"
+				" dot-product: %s\n"
+				"trace packets seen:\n"
+				" single:      %s\n"
+				" average:     %s\n"
+				" dot-product: %s\n",
+				event_types & (1 << TES_INFO_ETYPE_PEAK) ? "yes" : "no",
+				event_types & (1 << TES_INFO_ETYPE_AREA) ? "yes" : "no",
+				event_types & (1 << TES_INFO_ETYPE_PULSE) ? "yes" : "no",
+				event_types & (1 << TES_INFO_ETYPE_TRACE_DP) ? "yes" : "no",
+				event_types & (1 << TES_INFO_ETYPE_TRACE_SGL) ? "yes" : "no",
+				event_types & (1 << TES_INFO_ETYPE_TRACE_AVG) ? "yes" : "no",
+				event_types & (1 << TES_INFO_ETYPE_TRACE_DPTR) ? "yes" : "no");
 			break;
 		default:
 			assert (false);
@@ -1047,7 +1065,7 @@ s_remote_save_all (const char* server, const char* filename,
 				"capture"),
 			filename, measurement,
 			(ovrwtmode == TES_H5_OVRWT_FILE) ?
-				"Will overwrite file.\n" : 
+				"Will overwrite file.\n" :
 				(ovrwtmode == TES_H5_OVRWT_RELINK) ?
 					"Will backup measurement group.\n" : "",
 			min_ticks, min_events);
@@ -1088,7 +1106,7 @@ s_remote_save_all (const char* server, const char* filename,
 		&hists,
 		&frames,
 		&missed,
-		&dropped); 
+		&dropped);
 	zsock_destroy (&sock);
 
 	if (rc == -1)
@@ -1219,9 +1237,9 @@ main (int argc, char* argv[])
 	char* defport = NULL;
 	bool require_filename = true;
 
-	if (strcmp (cmd, "server_info") == 0)
+	if (strcmp (cmd, "packet_info") == 0)
 	{
-		callback = s_server_info;
+		callback = s_packet_info;
 		defport = TES_INFO_LPORT;
 		require_filename = false;
 	}

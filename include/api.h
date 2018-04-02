@@ -9,8 +9,16 @@
 #define TES_INFO_REQ_OK    0 // accepted, reply/action follows
 #define TES_INFO_REQ_EINV  1 // malformed request
 
-#define TES_INFO_REQ_PIC        "4"
-#define TES_INFO_REP_PIC "18888888"
+#define TES_INFO_REQ_PIC         "4"
+#define TES_INFO_REP_PIC "188888881"
+
+#define TES_INFO_ETYPE_PEAK       1
+#define TES_INFO_ETYPE_AREA       2
+#define TES_INFO_ETYPE_PULSE      3
+#define TES_INFO_ETYPE_TRACE_SGL  4
+#define TES_INFO_ETYPE_TRACE_AVG  5
+#define TES_INFO_ETYPE_TRACE_DP   6
+#define TES_INFO_ETYPE_TRACE_DPTR 7
 
 /* Capture to file */
 #define TES_CAP_LPORT "55555"

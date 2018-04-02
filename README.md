@@ -9,12 +9,12 @@ connected to the FPGA.
 
 The server talks to clients over [ØMQ](http://zeromq.org/) sockets. 
 
-## SERVER INFO REP INTERFACE
+## PACKET INFO REP INTERFACE
 
 This interface accepts requests to reply with and log statistics, such
 as bandwidth, missed packets etc.
 
-Valid requests have a picture of "4", replies have a picture of "18888888".
+Valid requests have a picture of "4", replies have a picture of "188888881".
 
 #### Message frames in a valid request
 
@@ -48,6 +48,26 @@ Valid requests have a picture of "4", replies have a picture of "18888888".
 
    This is the number of (non-tick, non-trace) events. Each non-tick,
    non-trace event frame contains several of those.
+
+9. **Event types seen**
+
+   This is a bitmask of event types seen:
+
+     bit 1: peak
+
+     bit 2: area
+
+     bit 3: pulse
+
+     bit 4: trace single
+
+     bit 5: trace average
+
+     bit 6: dot-product
+
+     bit 7: trace dot-product
+
+   If 0, no events were seen (only ticks and possibly MCAs).
 
 ## CAPTURE REP INTERFACE
 

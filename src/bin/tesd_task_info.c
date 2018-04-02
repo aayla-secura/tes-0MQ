@@ -17,10 +17,18 @@ struct s_data_t
 	uint64_t missed;
 	uint64_t bad;
 	uint64_t ticks;
-	uint64_t mcas;
-	uint64_t traces;
-	uint64_t events;
+	uint64_t mcas;   // header frames only
+	uint64_t traces; // header frames only
+	uint64_t events; // non-tick, non-trace
+	uint8_t  event_types; // each set bit is a type that was seen
 };
+
+/*
+ * Event_types is 0 if no events were seen.
+ * See api.h for resulting bit-offset.
+ */
+#define linear_etype(pkt_type,tr_type) \
+	( (pkt_type == TESPKT_TYPE_TRACE) ? 4 + tr_type : pkt_type + 1 )
 
 static zloop_timer_fn  s_timeout_hn;
 
@@ -51,14 +59,15 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 		"%lu bad, "
 		"%lu ticks, "
 		"%lu mcas, "
-		"%lu traces"
+		"%lu traces, "
 		"%lu other events",
 		info->received,
 		info->missed,
 		info->bad,
 		info->ticks,
 		info->mcas,
-		info->traces);
+		info->traces,
+		info->events);
 	zsock_send (self->frontends[0].sock, TES_INFO_REP_PIC,
 		TES_INFO_REQ_OK,
 		info->received,
@@ -67,7 +76,8 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 		info->ticks,
 		info->mcas,
 		info->traces,
-		info->events);
+		info->events,
+		info->event_types);
 
 	memset (info, 0, sizeof (struct s_data_t));
 
@@ -100,7 +110,7 @@ task_info_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
 		zsock_send (frontend, TES_INFO_REP_PIC,
-			TES_INFO_REQ_EINV, 0, 0, 0, 0, 0);
+			TES_INFO_REQ_EINV, 0, 0, 0, 0, 0, 0, 0, 0);
 		return 0;
 	}
 
@@ -135,23 +145,31 @@ task_info_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	dbg_assert (self != NULL);
 	struct s_data_t* info = (struct s_data_t*) self->data;
 
+	bool is_tick = tespkt_is_tick (pkt);
 	bool is_header = tespkt_is_header (pkt);
 	bool is_tr_header = (tespkt_is_trace_long (pkt) && is_header) ||
 		tespkt_is_trace_dp (pkt); /* FIX: should trace_dp count here */
 	bool is_mca_header = tespkt_is_mca (pkt) && is_header;
+	bool is_event = (tespkt_is_event (pkt) && ! is_tick);
 
 	info->received++;
 	info->missed += missed;
 	if (err)
 		info->bad++;
-	else if (tespkt_is_tick (pkt))
+	else if (is_tick)
 		info->ticks++;
 	else if (is_mca_header)
 		info->mcas++;
 	else if (is_tr_header)
 		info->traces++;
-	else if (tespkt_is_event (pkt))
+	else if (is_event) // and not a trace
 		info->events += tespkt_event_nums (pkt);
+
+	if (is_event) // including trace
+	{
+		const struct tespkt_event_type* etype = tespkt_etype (pkt);
+		info->event_types |= (1 << linear_etype (etype->PKT, etype->TR));
+	}
 
 	return 0;
 }
@@ -160,6 +178,18 @@ int
 task_info_init (task_t* self)
 {
 	assert (self != NULL);
+
+	assert (linear_etype (TESPKT_TYPE_PEAK, 0) == TES_INFO_ETYPE_PEAK);
+	assert (linear_etype (TESPKT_TYPE_AREA, 0) == TES_INFO_ETYPE_AREA);
+	assert (linear_etype (TESPKT_TYPE_PULSE, 0) == TES_INFO_ETYPE_PULSE);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_SGL) ==
+		TES_INFO_ETYPE_TRACE_SGL);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_AVG) ==
+		TES_INFO_ETYPE_TRACE_AVG);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_DP) ==
+		TES_INFO_ETYPE_TRACE_DP);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_DPTR) ==
+		TES_INFO_ETYPE_TRACE_DPTR);
 
 	static struct s_data_t info;
 
