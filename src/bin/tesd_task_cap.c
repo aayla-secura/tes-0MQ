@@ -44,16 +44,16 @@
 struct s_ftype_t
 {
 	/* PT: */
-#define FTYPE_PEAK        0
-#define FTYPE_AREA        1
-#define FTYPE_PULSE       2
-#define FTYPE_TRACE_SGL   3
-#define FTYPE_TRACE_AVG   4
-#define FTYPE_TRACE_DP    5
-#define FTYPE_TRACE_DP_TR 6
-#define FTYPE_TICK        7
-#define FTYPE_MCA         8
-#define FTYPE_BAD         9
+#define FTYPE_PEAK       0
+#define FTYPE_AREA       1
+#define FTYPE_PULSE      2
+#define FTYPE_TRACE_SGL  3
+#define FTYPE_TRACE_AVG  4
+#define FTYPE_TRACE_DP   5
+#define FTYPE_TRACE_DPTR 6
+#define FTYPE_TICK       7
+#define FTYPE_MCA        8
+#define FTYPE_BAD        9
 	uint8_t PT  : 4;
 	uint8_t     : 2; /* reserved */
 	uint8_t HDR : 1; /* header frame in multi-frame stream */
@@ -1731,6 +1731,18 @@ task_cap_init (task_t* self)
 	assert (memcmp (s_dsets[DSET_TDAT].extension, "tdat", 4) == 0);
 	assert (memcmp (s_dsets[DSET_EDAT].extension, "edat", 4) == 0);
 #endif
+
+	assert (linear_etype (TESPKT_TYPE_PEAK, 0) == FTYPE_PEAK);
+	assert (linear_etype (TESPKT_TYPE_AREA, 0) == FTYPE_AREA);
+	assert (linear_etype (TESPKT_TYPE_PULSE, 0) == FTYPE_PULSE);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_SGL) ==
+		FTYPE_TRACE_SGL);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_AVG) ==
+		FTYPE_TRACE_AVG);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_DP) ==
+		FTYPE_TRACE_DP);
+	assert (linear_etype (TESPKT_TYPE_TRACE, TESPKT_TRACE_TYPE_DPTR) ==
+		FTYPE_TRACE_DPTR);
 
 	static struct s_data_t sjob;
 	sjob.statfd = -1;
