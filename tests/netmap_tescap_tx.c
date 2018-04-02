@@ -49,16 +49,16 @@
 struct s_ftype_t
 {
 	/* PT: */
-#define FTYPE_PEAK        0
-#define FTYPE_AREA        1
-#define FTYPE_PULSE       2
-#define FTYPE_TRACE_SGL   3
-#define FTYPE_TRACE_AVG   4
-#define FTYPE_TRACE_DP    5
-#define FTYPE_TRACE_DP_TR 6
-#define FTYPE_TICK        7
-#define FTYPE_MCA         8
-#define FTYPE_BAD         9
+#define FTYPE_PEAK       0
+#define FTYPE_AREA       1
+#define FTYPE_PULSE      2
+#define FTYPE_TRACE_SGL  3
+#define FTYPE_TRACE_AVG  4
+#define FTYPE_TRACE_DP   5
+#define FTYPE_TRACE_DPTR 6
+#define FTYPE_TICK       7
+#define FTYPE_MCA        8
+#define FTYPE_BAD        9
 	uint8_t PT  : 4;
 	uint8_t     : 2; /* reserved */
 	uint8_t HDR : 1; /* header frame in multi-frame stream */
@@ -360,7 +360,7 @@ s_inject_from_fidx (const char* basefname,
 			case FTYPE_TRACE_SGL:
 			case FTYPE_TRACE_AVG:
 			case FTYPE_TRACE_DP:
-			case FTYPE_TRACE_DP_TR:
+			case FTYPE_TRACE_DPTR:
 				pkt->eth_hdr.ether_type = htons (ETHERTYPE_F_EVENT);
 				datfd = edatfd;
 				break;
@@ -389,7 +389,7 @@ s_inject_from_fidx (const char* basefname,
 			case FTYPE_TRACE_SGL:
 			case FTYPE_TRACE_AVG:
 			case FTYPE_TRACE_DP:
-			case FTYPE_TRACE_DP_TR:
+			case FTYPE_TRACE_DPTR:
 				pkt->tes_hdr.etype.PKT = TESPKT_TYPE_TRACE;
 				pkt->tes_hdr.etype.TR = fidx.ftype.PT - 3;
 				break;
