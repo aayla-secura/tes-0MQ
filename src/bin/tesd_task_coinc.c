@@ -3,8 +3,6 @@
  *  - add a flag when configuration has changed (either replacing TICK
  *    or set to another entry in the first vector of the frame)
  *  - save/read conf from file
- * TO FIX:
- *  - discard the first coincidence if it starts before the first tick
  */
 
 #include "tesd_tasks.h"
@@ -679,21 +677,23 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 }
 
 /*
+ * Wait for the first tick, and then for the start of a new
+ * coincidence (event delay > window) before adding any coincidence
+ * vectors.
+ *
  * If the event type contains the relevant measurement, save the
  * counts. If the channel has been seen before, start a new vector in
  * the same coincidence group, set the UNRESOLVED flag.
  *
- * If the event type does not contain the relevant measurement and
- * there is an ongoing coincidence, set the channel count to
- * TOK_UNKNOWN.
+ * If the event type does not contain the relevant measurement set the
+ * channel count to TOK_UNKNOWN.
  *
  * Either way, if it's a tick, and if DEFER_EMPTY is not set or there
  * have been completed coincidences since the last publishing, publish
- * the tick, followed by any completed coincidences. It is sent as a
- * multi-frame message with ticks in the first frame(s), and all
- * coincidences in the last frame. If DEFER_EMPTY is not set, there
- * may be only tick frames. Either way, there may be only the
- * coincidence frame if we are publishing because the buffer is full.
+ * the tick, followed by any completed coincidences.
+ * If DEFER_EMPTY is not set, there may be only tick vectors. Either
+ * way, there may be only the coincidence frame if we are publishing
+ * because the buffer is full.
  */
 int
 task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
@@ -705,21 +705,16 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	dbg_assert (data->cur_frame.cur_group.ticks >=
 		data->cur_frame.cur_group.ticks_since_last);
 	dbg_assert (s_num_completed (data) >= 0);
+	dbg_assert (data->publishing || ! s_ongoing (data));
 
-	bool is_tick = tespkt_is_tick (pkt);
-	if ( ! data->publishing && is_tick )
-	{
-		data->publishing = true; /* start accumulating */
-		dbg_assert (data->cur_frame.cur_group.num_ongoing == 0);
-	}
-	
-	if ( ! data->publishing || err || ! tespkt_is_event (pkt) )
+	if ( err || ! tespkt_is_event (pkt) )
 		return 0;
 
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 	logmsg (0, LOG_DEBUG, "------------------------------");
 #endif
 
+	bool is_tick = tespkt_is_tick (pkt);
 	if (is_tick)
 	{
 		data->cur_frame.cur_group.ticks++;
@@ -727,8 +722,12 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if ( ! s_ongoing (data) )
 			return s_add_ticks (self);
 	}
+	else if ( ! data->publishing && data->cur_frame.ticks == 0)
+		return 0; /* no ticks yet */
 
 	dbg_assert (! is_tick /* set counts */
+		|| ( ! data->publishing &&
+			data->cur_frame.ticks > 0 ) /* wait for coinc start */
 		|| s_ongoing (data) /* add to delay_since_* */
 		);
 
@@ -747,16 +746,22 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			data->cur_frame.cur_group.delay_since_last);
 #endif
 		
-		if (s_ongoing (data) &&
-			data->cur_frame.cur_group.delay_since_last > data->window)
-		{ /* ongoing group ends */
+		if (data->cur_frame.cur_group.delay_since_last > data->window)
+		{
+			/* Start publishing if not doing so already, since this begins a
+			 * new coincidence after a tick. */
+			data->publishing = true;
+			
+			if (s_ongoing (data))
+			{ /* ongoing group ends */
 #if DEBUG_LEVEL >= LETS_GET_NUTS
-			logmsg (0, LOG_DEBUG, "Group ends");
+				logmsg (0, LOG_DEBUG, "Group ends");
 #endif
-			data->cur_frame.cur_group.num_ongoing = 0;
-			if (data->cur_frame.cur_group.ticks > 0 &&
-				s_add_ticks (self) == TASK_ERROR)
-				return TASK_ERROR;
+				data->cur_frame.cur_group.num_ongoing = 0;
+				if (data->cur_frame.cur_group.ticks > 0 &&
+						s_add_ticks (self) == TASK_ERROR)
+					return TASK_ERROR;
+			}
 		}
 
 		if (is_tick)
@@ -765,6 +770,9 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		data->cur_frame.cur_group.delay_since_last = 0;
 		data->cur_frame.cur_group.ticks_since_last = 0;
 		
+		if ( ! data->publishing )
+			continue; /* wait for start of next coincidence */
+			
 		/* Start a new coincidence vector if this is the first measurement
 		 * event since last group concluded or if the current channel has
 		 * been seen in this coincidence group. */
