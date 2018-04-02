@@ -1,6 +1,8 @@
 /*
  * TO DO:
- *  - test with other measurement types
+ *  - add a flag when configuration has changed (either replacing TICK
+ *    or set to another entry in the first vector of the frame)
+ *  - save/read conf from file
  * TO FIX:
  *  - discard the first coincidence if it starts before the first tick
  */
@@ -304,8 +306,7 @@ s_from_dp (tespkt* pkt, uint16_t e,
 {
 	if ( ! s_has_dp (pkt) )
 		return TOK_UNKNOWN;
-	/* TO DO */
-	return TOK_UNKNOWN;
+	return tespkt_trace_dp (pkt, e);
 }
 
 #if 0
