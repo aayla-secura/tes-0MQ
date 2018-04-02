@@ -241,6 +241,11 @@ static inline uint16_t tespkt_multipeak_ptime (tespkt* pkt,
 	uint16_t e, uint8_t p);
 
 /*
+ * Get dot-product (only dot-product and trace dot-product frames).
+ */
+static inline uint64_t tespkt_trace_dp (tespkt* pkt, uint16_t e);
+
+/*
  * Get trace's size, area, length, time offset (only trace frames).
  */
 static inline uint16_t tespkt_trace_size (tespkt* pkt);
@@ -801,11 +806,10 @@ static inline uint32_t
 tespkt_mca_bin (tespkt* pkt, uint16_t bin)
 {
 	if (tespkt_is_header (pkt))
-		return ftohl *(uint32_t*)(
-			(char*)&pkt->body + bin*TESPKT_MCA_BIN_LEN + TESPKT_MCA_HDR_LEN);
+		return ftohl ( ((uint32_t*)(
+			(char*)&pkt->body + TESPKT_MCA_HDR_LEN))[bin] );
 	else
-		return ftohl *(uint32_t*)(
-			(char*)&pkt->body + bin*TESPKT_MCA_BIN_LEN);
+		return ftohl ( ((uint32_t*)((char*)&pkt->body))[bin] );
 }
 
 static inline struct tespkt_mca_flags*
@@ -1018,6 +1022,15 @@ tespkt_multipeak_ptime (tespkt* pkt, uint16_t e, uint8_t p)
 {
 	struct tespkt_peak* ph = tespkt_peak (pkt, e, p);
 	return ftohs (ph->toff);
+}
+
+static inline uint64_t
+tespkt_trace_dp (tespkt* pkt, uint16_t e)
+{
+	/* e must always be 0 for trace_dptr. */
+	struct tespkt_event_hdr* eh = tespkt_ehdr (pkt, e);
+	return ftohs ( ((struct tespkt_dot_prod*) (
+		((char*)eh + tespkt_pulse_size (pkt, e) - 8) ))->dot_prod );
 }
 
 static inline uint16_t
