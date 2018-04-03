@@ -65,8 +65,19 @@ pth_set_cpuaff (int cpu)
 	return (rc == 0 ? 0 : -1);
 }
 
+int
+mkdirr (const char* path, mode_t mode)
+{
+	char finalpath[PATH_MAX] = {0};
+	char* rp = canonicalize_path (NULL, path, finalpath, false,
+		mode);
+	if (rp == NULL)
+		return -1;
+	return 0;
+}
+
 char*
-canonicalize_path (const char* root_, const char* path,
+canonicalize_path (const char* root, const char* path,
 	char* finalpath, bool mustexist, mode_t mode)
 {
 	assert (path != NULL);
@@ -81,35 +92,48 @@ canonicalize_path (const char* root_, const char* path,
 	}
 
 	/*
-	 * Make sure root starts and ends with a slash.
-	 * It must end with a slash for memcmp to determine if inside root.
+	 * Make sure realroot starts and ends with a slash.
+	 * It must end with a slash for memcmp to determine if inside
+	 * realroot.
 	 */
-	char root[PATH_MAX] = {0};
-	if (root_ == NULL || strlen (root_) == 0)
-		strcpy (root, "/");
-	else
-		snprintf (root, PATH_MAX, "%s%s%s",
-			(root_[0] == '/' ? "" : "/"), root_,
-			(root_[strlen (root_) - 1] == '/' ? "" : "/"));
-
+	char realroot[PATH_MAX] = {0};
 	char buf[PATH_MAX] = {0};
-	int rc = snprintf (buf, PATH_MAX, "%s%s", root, path);
+	if (root == NULL || strlen (root) == 0 || root[0] != '/')
+	{ /* prepend cwd if needed */
+		char* rs = getcwd (buf, PATH_MAX);
+		if (rs == NULL)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not get current working directory");
+			return NULL;
+		}
+		snprintf (realroot, PATH_MAX, "%s%s",
+			buf, (buf[strlen (buf) - 1] == '/' ? "" : "/"));
+	}
+	if (root != NULL && strlen (root) > 0)
+	{ /* add given root */
+		snprintf (realroot, PATH_MAX, "%s%s%s", realroot, root,
+				(root[strlen (root) - 1] == '/' ? "" : "/"));
+	}
+
+	int rc = snprintf (buf, PATH_MAX, "%s%s", realroot, path);
 	if (rc >= PATH_MAX)
 	{
 		logmsg (0, LOG_DEBUG, "Filename too long");
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
+	logmsg (0, LOG_DEBUG, "Canonicalizing path '%s'", buf);
 
 	/* Check if the file exists first. */
 	errno = 0;
-	size_t rlen = strlen (root);
+	size_t rlen = strlen (realroot);
 	char* rs = realpath (buf, finalpath);
 	if (rs)
 	{
 		errno = 0;
 		assert (rs == finalpath);
-		if ( memcmp (finalpath, root, rlen) != 0 )
+		if ( memcmp (finalpath, realroot, rlen) != 0 )
 		{
 			logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
 				finalpath);
@@ -132,11 +156,11 @@ canonicalize_path (const char* root_, const char* path,
 	if (errno != ENOENT)
 		return NULL;
 
-	/* Start from the top-most component (after root) and
+	/* Start from the top-most component (after realroot) and
 	 * create directories as needed. */
 	memset (&buf, 0, PATH_MAX);
 	assert (rlen < PATH_MAX);
-	strcpy (buf, root);
+	strcpy (buf, realroot);
 
 	const char* cur_seg = path;
 	const char* next_seg = NULL;
@@ -162,6 +186,7 @@ canonicalize_path (const char* root_, const char* path,
 		len += thislen;
 		assert (len == strlen (buf));
 
+		logmsg (0, LOG_DEBUG, "Creating dir '%s'", buf);
 		errno = 0;
 		rc = mkdir (buf, mode);
 		if (rc && errno != EEXIST)
@@ -183,7 +208,7 @@ canonicalize_path (const char* root_, const char* path,
 		assert (len == strlen (finalpath) || len == PATH_MAX);
 	}
 
-	if ( memcmp (finalpath, root, rlen) != 0)
+	if ( memcmp (finalpath, realroot, rlen) != 0)
 	{
 		logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
 			finalpath);

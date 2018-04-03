@@ -26,8 +26,9 @@ int pth_set_cpuaff (int cpu);
 
 /*
  * Prepends root to path and canonicalizes the path via realpath.
- * If root is NULL it defaults to '/'. A leading slash is prepended if
- * missing.
+ * If root is NULL it defaults to the current directory.
+ * If root doesn't start with a slash, the current directory is
+ * prepended.
  *
  * If mustexist is true, path must exist and resolve to a path under
  * root.
@@ -43,5 +44,14 @@ int pth_set_cpuaff (int cpu);
  */
 char* canonicalize_path (const char* root, const char* path,
 	char* finalpath, bool mustexist, mode_t mode);
+
+/*
+ * Recursively create missing directories for path.
+ * If path ends with a slash it is a directory and is to be created.
+ * Otherwise the basename is ignored and the parent is the final
+ * directory created.
+ * Returns 0 on success, -1 on error.
+ */
+int mkdirr (const char* path, mode_t mode);
 
 #endif
