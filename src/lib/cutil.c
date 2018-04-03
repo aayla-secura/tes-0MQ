@@ -66,7 +66,7 @@ pth_set_cpuaff (int cpu)
 }
 
 int
-mkdirr (const char* path, mode_t mode)
+mkdirr (const char* path, mode_t mode, bool create_basename)
 {
 	if (path == NULL || strlen (path) == 0)
 		return -1;
@@ -83,6 +83,8 @@ mkdirr (const char* path, mode_t mode)
 		( cur_seg[0] == '/' && cur_seg[1] == '\0' )) )
 	{
 		next_seg = strchrnul (cur_seg + 1, '/');
+		if (*next_seg == '\0' && ! create_basename)
+			break;
 		/* Copy from leading slash of cur_seg to leading slash of next_seg
 		 * excluding. */
 		size_t thislen = next_seg - cur_seg;
@@ -106,8 +108,9 @@ mkdirr (const char* path, mode_t mode)
 
 		cur_seg = next_seg;
 	}
-	assert (strlen (cur_seg) == 0 ||
-		(strlen (cur_seg) == 1 && cur_seg[0] == '/'));
+	if (create_basename)
+		assert (strlen (cur_seg) == 0 ||
+			(strlen (cur_seg) == 1 && cur_seg[0] == '/'));
 	return 0;
 }
 
@@ -147,7 +150,7 @@ canonicalize_path (const char* root, const char* path,
 
 	/* Canonicalize the root, since we need to know the realpath for
 	 * later comparison (to determine if outside of root). */
-	if ( ! mustexist && mkdirr (buf, mode) == -1)
+	if ( ! mustexist && mkdirr (buf, mode, true) == -1)
 		return NULL;
 	char realroot[PATH_MAX] = {0};
 	char* rs = realpath (buf, realroot);
@@ -197,6 +200,9 @@ canonicalize_path (const char* root, const char* path,
 				finalpath);
 			return NULL;
 		}
+#if DEBUG_LEVEL >= VERBOSE
+		logmsg (0, LOG_DEBUG, "Path resolved to '%s'", finalpath);
+#endif
 		return finalpath;
 	}
 
@@ -220,7 +226,7 @@ canonicalize_path (const char* root, const char* path,
 	char* basename = strrchr (buf, '/');
 	basename++;
 	snprintf (dirbuf, basename - buf, "%s", buf);
-	if (mkdirr (dirbuf, mode) == -1)
+	if (mkdirr (dirbuf, mode, true) == -1)
 		return NULL;
 
 	/* Canonicalize the directory path. The file doesn't exist (checked
@@ -250,5 +256,8 @@ canonicalize_path (const char* root, const char* path,
 		return NULL;
 	}
 
+#if DEBUG_LEVEL >= VERBOSE
+	logmsg (0, LOG_DEBUG, "Path resolved to '%s'", finalpath);
+#endif
 	return finalpath;
 }

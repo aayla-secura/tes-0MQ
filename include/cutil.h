@@ -47,11 +47,12 @@ char* canonicalize_path (const char* root, const char* path,
 
 /*
  * Recursively create missing directories for path.
- * If path ends with a slash it is a directory and is to be created.
- * Otherwise the basename is ignored and the parent is the final
- * directory created.
+ * If path ends with a slash or create_basename is true, the final
+ * part is treated as a directory and is created.
+ * Otherwise the basename is ignored and the part before the last
+ * slash is the final directory created.
  * Returns 0 on success, -1 on error.
  */
-int mkdirr (const char* path, mode_t mode);
+int mkdirr (const char* path, mode_t mode, bool create_basename);
 
 #endif
