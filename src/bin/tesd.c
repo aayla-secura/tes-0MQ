@@ -555,7 +555,6 @@ main (int argc, char **argv)
 #if DEBUG_LEVEL >= CAUTIOUS
 	tespkt_self_test ();
 #endif
-	int rc;
 
 	/* Process command-line options. */
 	bool be_daemon = true;
@@ -576,7 +575,8 @@ main (int argc, char **argv)
 		{
 			case 'c':
 				snprintf (data.confdir, sizeof (data.confdir),
-					"%s", optarg);
+					"%s%s", optarg,
+					optarg[strlen (optarg) - 1] == '/' ? "" : "/");
 				break;
 			case 'p':
 				snprintf (pidfile, sizeof (pidfile),
@@ -616,7 +616,19 @@ main (int argc, char **argv)
 				assert (false);
 		}
 	}
+	set_verbose (be_verbose);
 	
+	/* Create confdir and directory of pidfile if they don't exist. */
+	int rc = mkdirr (data.confdir, 0700);
+	if (rc == 0)
+		rc = mkdirr (pidfile, 0755);
+	if (rc == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not create required directories");
+		exit (EXIT_FAILURE);
+	}
+
 	if (strlen (ifname_req) == 0)
 	{
 		sprintf (ifname_req, TES_IFNAME);
@@ -628,7 +640,6 @@ main (int argc, char **argv)
 
 	data.ifname_req = ifname_req;
 
-	set_verbose (be_verbose);
 	if (be_daemon)
 	{
 		if (strlen (pidfile) > 0)
