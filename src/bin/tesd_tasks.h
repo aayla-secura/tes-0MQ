@@ -34,7 +34,6 @@
 #define TASK_SLEEP  1
 #define TASK_ERROR -1
 
-/* Shorthand */
 typedef struct _task_t task_t;
 typedef struct _task_endpoint_t task_endp_t;
 
@@ -115,13 +114,24 @@ int task_activate (task_t* self);
  */
 int  task_deactivate (task_t* self);
 
+/*
+ * Read/write configuration to tasks' config file. The file name is constructed
+ * as the global <config_dir>/task_<id>.bin.
+ * cmd is one of TES_TASK_*_CONF.
+ * Returns 0 if saving configuration is disabled.
+ * On success returns number of bytes read/written on success.
+ * On error returns -1.
+ */
+#define TES_TASK_SAVE_CONF 0
+#define TES_TASK_READ_CONF 1
+ssize_t task_conf (task_t* self, void* conf, size_t len, int cmd);
+
 /* ------------------------ TASK HANDLERS ----------------------- */
 
-/* Server info */
+/* Packet info */
 zloop_reader_fn task_info_req_hn;
 task_pkt_fn     task_info_pkt_hn;
 task_data_fn    task_info_init;
-task_data_fn    task_info_fin;
 
 /* Capture to file */
 zloop_reader_fn task_cap_req_hn;
@@ -133,20 +143,17 @@ task_data_fn    task_cap_fin;
 zloop_reader_fn task_avgtr_req_hn;
 task_pkt_fn     task_avgtr_pkt_hn;
 task_data_fn    task_avgtr_init;
-task_data_fn    task_avgtr_fin;
 
 /* Publish MCA histogram */
 task_pkt_fn     task_hist_pkt_hn;
 task_data_fn    task_hist_init;
 task_data_fn    task_hist_wakeup;
-task_data_fn    task_hist_fin;
 
 /* Publish jitter histogram */
 zloop_reader_fn task_jitter_req_hn;
 task_pkt_fn     task_jitter_pkt_hn;
 task_data_fn    task_jitter_init;
 task_data_fn    task_jitter_wakeup;
-task_data_fn    task_jitter_fin;
 
 /* Publish raw coincidences */
 zloop_reader_fn task_coinc_req_hn;
@@ -154,6 +161,5 @@ zloop_reader_fn task_coinc_req_th_hn;
 task_pkt_fn     task_coinc_pkt_hn;
 task_data_fn    task_coinc_init;
 task_data_fn    task_coinc_wakeup;
-task_data_fn    task_coinc_fin;
 
 #endif

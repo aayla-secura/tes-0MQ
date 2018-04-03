@@ -1,27 +1,25 @@
 /*
  * Also see README for the API.
  *
- *  -------         -------        -------         -------          
- *  | REQ |         | SUB |        | REQ |         | REQ |    client
- *  -------         -------        -------         -------          
- *     |               |              |               |             
- *                                                                  
- * save to file -- histogram -- average trace -- packet info -------
- *                                                                  
- *     |               |              |               |             
- *  -------         -------        -------         -------          
- *  | REP |         | PUB |        | REP |         | REP |          
- *  -------         -------        -------         -------          
- *                                                    |             
- *  --------        --------       --------        --------         
- *  | PAIR |        | PAIR |       | PAIR |        | PAIR |         
- *  --------        --------       --------        --------   server
- *     |               |              |               |             
- *  ----------- task coordinator -----------------------------------
- *     |               |              |               |             
- *  --------        --------       --------        --------         
- *  | PAIR |        | PAIR |       | PAIR |        | PAIR |         
- *  --------        --------       --------        --------         
+ * ---------    ---------      | ---------    ---------             
+ * | FE #1 |    | FE #2 | ...  | | FE #1 |    | FE #2 | ...   client
+ * ---------    ---------      | ---------    ---------             
+ *     |            |          |     |            |                 
+ * ------- task #1 -------------------- task #2 ---------------- ...
+ *     |            |          |     |            |                 
+ * ---------    ---------      | ---------    ---------             
+ * | BE #1 |    | BE #1 | ...  | | BE #1 |    | BE #2 | ...         
+ * ---------    ---------      | ---------    ---------             
+ *                             |                                    
+ *        --------             |        --------                    
+ *        | PAIR |             |        | PAIR |                    
+ *        --------             |        --------              server
+ *           |                 |           |                        
+ * ----------------------- task coordinator ------------------------
+ *           |                 |           |                        
+ *        --------             |        --------                    
+ *        | PAIR |             |        | PAIR |                    
+ *        --------             |        --------                    
  *
  * -----------------------------------------------------------------
  * --------------------------- DEV NOTES ---------------------------
@@ -59,9 +57,10 @@
  * -----------------------------------------------------------------
  * ----------------------------- TO DO -----------------------------
  * -----------------------------------------------------------------
- * - print statistics from another thread?
- * - print statistics in color when in foreground
- * - print statistics one second after receiving a SIGHUP
+ * - check if pidfile and confdir are in an allowed location
+ * - create confdir if it doesn't exist
+ * - drop privileges before daemonizing, so pidfile is owned by new user
+ * - remove pidfile
  */
 
 #include "tesd.h"
@@ -97,6 +96,7 @@
 #define UPDATE_INTERVAL 1 // in seconds
 #define TES_IFNAME "netmap:" IFNAME
 #define PIDFILE "/var/run/" PROGNAME ".pid"
+#define CONFDIR "/var/lib/" PROGNAME "/config"
 
 /*
  * Statistics, only used in foreground mode
@@ -122,6 +122,7 @@ struct data_t
 	tes_ifdesc* ifd;
 	char* ifname_req;
 	long int stat_period;
+	char confdir[PATH_MAX];
 };
 
 static void s_usage (const char* self);
@@ -140,9 +141,13 @@ s_usage (const char* self)
 	fprintf (stderr,
 		ANSI_BOLD "Usage: " ANSI_RESET "%s " ANSI_FG_RED "[<options>]" ANSI_RESET "\n\n"
 		ANSI_BOLD "Options:\n" ANSI_RESET
+		ANSI_FG_RED "    -c <dir>          " ANSI_RESET "Save task configuration in <dir>.\n"
+		            "                      "            "Defaults to " CONFDIR ".\n"
+		            "                      "            "Set to empty to disable saving config.\n"
 		ANSI_FG_RED "    -p <file>         " ANSI_RESET "Write pid to file <file>.\n"
 		            "                      "            "Only in daemon mode.\n"
 		            "                      "            "Defaults to " PIDFILE ".\n"
+		            "                      "            "Set to empty to disable pidfile.\n"
 		ANSI_FG_RED "    -i <if>           " ANSI_RESET "Read packets from <if> interface.\n"
 		            "                      "            "Defaults to " TES_IFNAME ".\n"
 		ANSI_FG_RED "    -f                " ANSI_RESET "Run in foreground.\n"
@@ -488,12 +493,15 @@ s_coordinator_body (void* data_)
 
 	/* Start the tasks and register the readers. */
 	zloop_t* loop = zloop_new ();
-	int rc = tasks_start (data->ifd, loop);
+	int rc = tasks_start (data->ifd, loop,
+		strlen (data->confdir) > 0 ? data->confdir : NULL);
 	if (rc == -1)
 	{
 		logmsg (0, LOG_DEBUG, "Tasks failed to start");
 		goto cleanup;
 	}
+
+	/* Set the configuration dir. */
 
 	/* Register the TES interface as a poller. */
 	struct zmq_pollitem_t pitem = {0};
@@ -559,10 +567,17 @@ main (int argc, char **argv)
 	long int stat_period = -1;
 	char ifname_req[IFNAMSIZ] = {0};
 	char pidfile[PATH_MAX] = {0};
-	while ( (opt = getopt (argc, argv, "p:i:U:u:g:fvh")) != -1 )
+	snprintf (pidfile, sizeof (pidfile), "%s", PIDFILE);
+	struct data_t data = {0};
+	snprintf (data.confdir, sizeof (data.confdir), "%s", CONFDIR);
+	while ( (opt = getopt (argc, argv, "c:p:i:U:u:g:fvh")) != -1 )
 	{
 		switch (opt)
 		{
+			case 'c':
+				snprintf (data.confdir, sizeof (data.confdir),
+					"%s", optarg);
+				break;
 			case 'p':
 				snprintf (pidfile, sizeof (pidfile),
 					"%s", optarg);
@@ -601,10 +616,7 @@ main (int argc, char **argv)
 				assert (false);
 		}
 	}
-	if (strlen (pidfile) == 0)
-	{
-		sprintf (pidfile, PIDFILE);
-	}
+	
 	if (strlen (ifname_req) == 0)
 	{
 		sprintf (ifname_req, TES_IFNAME);
@@ -614,17 +626,18 @@ main (int argc, char **argv)
 		stat_period = UPDATE_INTERVAL;
 	}
 
-	struct data_t data = {0};
 	data.ifname_req = ifname_req;
 
 	set_verbose (be_verbose);
 	if (be_daemon)
 	{
-		logmsg (0, LOG_INFO,
-			"Going to background, pidfile is '%s'", pidfile);
+		if (strlen (pidfile) > 0)
+			logmsg (0, LOG_INFO,
+				"Going to background, pidfile is '%s'", pidfile);
 
 		/* Go into background. */
-		rc = daemonize (pidfile, s_init, &data, INIT_TOUT);
+		rc = daemonize (strlen (pidfile) > 0 ? pidfile : NULL,
+			s_init, &data, INIT_TOUT);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
@@ -704,7 +717,6 @@ main (int argc, char **argv)
 	data.stat_period = stat_period;
 	rc = s_coordinator_body (&data);
 
-	/* Should we remove the pidfile? */
 	logmsg (0, LOG_INFO, "Shutting down");
 	assert (data.ifd != NULL);
 	rc = tes_if_close (data.ifd);

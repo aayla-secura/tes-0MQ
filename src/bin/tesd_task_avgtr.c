@@ -207,12 +207,3 @@ task_avgtr_init (task_t* self)
 	self->data = &trace;
 	return 0;
 }
-
-int
-task_avgtr_fin (task_t* self)
-{
-	assert (self != NULL);
-
-	self->data = NULL;
-	return 0;
-}

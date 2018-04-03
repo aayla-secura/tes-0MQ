@@ -2,7 +2,6 @@
  * TO DO:
  *  - add a flag when configuration has changed (either replacing TICK
  *    or set to another entry in the first vector of the frame)
- *  - save/read conf from file
  */
 
 #include "tesd_tasks.h"
@@ -134,8 +133,8 @@ struct s_data_t
 	bool publishing; // discard all coincidences before first tick
 };
 
-static int  s_save_conf (struct s_data_t* data,
-	struct s_conf_t* conf);
+static int s_check_conf (struct s_conf_t* conf);
+static int s_save_conf (task_t* self, struct s_conf_t* conf);
 static void s_apply_conf (struct s_data_t* data);
 static inline uint16_t s_count_from_thres (uint32_t val,
 	uint32_t (*thres)[TES_COINC_MAX_PHOTONS]);
@@ -159,15 +158,12 @@ static inline int  s_num_completed (struct s_data_t* data);
 /* -------------------------------------------------------------- */
 
 /*
- * Check if conf is valid and if so, copy to data.conf.
+ * Check if conf is valid.
  * Returns 0 on success, -1 if conf was invalid.
  */
 static int
-s_save_conf (struct s_data_t* data, struct s_conf_t* conf)
+s_check_conf (struct s_conf_t* conf)
 {
-	dbg_assert (data != NULL);
-	dbg_assert (conf != NULL);
-	
 	if (conf->measurement >= NUM_MEAS ||
 		conf->window == 0 ||
 		conf->window > TES_COINC_MAX_WINDOW)
@@ -183,10 +179,30 @@ s_save_conf (struct s_data_t* data, struct s_conf_t* conf)
 						return -1;
 				else if (conf->thresholds[m][c][p] == 0)
 					rest_is_zero = 1;
+	return 0;
+}
+
+/*
+ * Check if conf is valid and if so, copy conf to data.conf, set
+ * changed flag and save to file.
+ * Returns 0 on success, ECONFINVAL if conf was invalid, ECONFWR if
+ * failed to write expected bytes.
+ */
+#define ECONFINVAL -1
+#define ECONFWR     1
+static int
+s_save_conf (task_t* self, struct s_conf_t* conf)
+{
+	if (s_check_conf (conf) == -1)
+		return ECONFINVAL;
+	struct s_data_t* data = (struct s_data_t*) self->data;
 	
 	memcpy (&data->conf, conf, sizeof (struct s_conf_t));
 	data->conf.changed = 1;
-	/* TO DO: save conf to file */
+	ssize_t rc = task_conf (self, conf, sizeof (struct s_conf_t),
+		TES_TASK_SAVE_CONF);
+	if (rc == -1 || (size_t)rc != sizeof (struct s_conf_t))
+		return ECONFWR;
 	return 0;
 }
 
@@ -577,13 +593,21 @@ task_coinc_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	 * not happen. */
 	assert (rc != -1);
 
-	if (s_save_conf (data, &conf) == -1)
+	rc = s_save_conf (self, &conf);
+	if (rc == ECONFINVAL)
 		logmsg (0, LOG_DEBUG,
 			"Not changing configuration");
 	else
 		logmsg (0, LOG_INFO,
 			"Setting measurement to %hhu, window to %hu",
 			conf.measurement, conf.window);
+
+	if (rc == ECONFWR)
+	{
+		logmsg (errno, LOG_WARNING,
+			"Could not save configuration");
+		// return TASK_ERROR;
+	}
 	zsock_send (frontend, TES_COINC_REP_PIC,
 		data->conf.window, data->conf.measurement);
 	
@@ -650,7 +674,9 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 			&conf.thresholds[meas][channel];
 		memset (thres, 0, sizeof (*thres));
 		memcpy (thres, buf, len);
-		if (s_save_conf (data, &conf) == -1)
+
+		rc = s_save_conf (self, &conf);
+		if (rc == ECONFINVAL)
 		{
 			logmsg (0, LOG_INFO,
 				"Invalid configuration");
@@ -660,6 +686,13 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 			logmsg (0, LOG_INFO,
 				"Setting new thresholds for measurement %hhu on channel %hhu",
 				meas, channel);
+
+		if (rc == ECONFWR)
+		{
+			logmsg (errno, LOG_WARNING,
+				"Could not save configuration");
+			// return TASK_ERROR;
+		}
 	}
 	else
 	{
@@ -759,7 +792,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #endif
 				data->cur_frame.cur_group.num_ongoing = 0;
 				if (data->cur_frame.cur_group.ticks > 0 &&
-						s_add_ticks (self) == TASK_ERROR)
+					s_add_ticks (self) == TASK_ERROR)
 					return TASK_ERROR;
 			}
 		}
@@ -812,7 +845,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		}
 
 		if (add_vec && s_add_to_group (self) == TASK_ERROR)
-				return TASK_ERROR;
+			return TASK_ERROR;
 
 		dbg_assert (data->cur_frame.idx < MAX_COINC_VECS);
 		dbg_assert (data->cur_frame.idx >= 0);
@@ -863,13 +896,51 @@ task_coinc_init (task_t* self)
 	assert (sizeof (data.coinc) == MAX_COINC_VECS*CVEC_SIZE);
 	assert (TES_COINC_MAX_SIZE == MAX_COINC_VECS*CVEC_SIZE);
 	
-	/* Default conf. Thresholds of all zero means 1 threshold = 0. */
-	data.conf.window = 100;
-	data.conf.measurement = TES_COINC_MEAS_AREA;
-	s_apply_conf (&data);
-	/* TO DO: read conf */
-
 	self->data = &data;
+
+	struct s_conf_t conf = {0};
+	ssize_t rc = task_conf (self, &conf, sizeof (struct s_conf_t),
+		TES_TASK_READ_CONF);
+	if (rc == 0)
+		return 0; /* config disabled */
+	
+	bool set_default = false;
+	if ((size_t)rc != sizeof (struct s_conf_t))
+	{
+		if (rc != -1)
+			logmsg (0, LOG_WARNING,
+				"Read unexpected number of bytes from config file: %lu", rc);
+		set_default = true;
+	}
+	else
+	{
+		if (s_check_conf (&conf) == -1)
+		{
+			logmsg (0, LOG_WARNING,
+					"Read invalid configuration");
+			set_default = true;
+		}
+		else
+			memcpy (&data.conf, &conf, sizeof (struct s_conf_t));
+	}
+
+	if (set_default)
+	{
+		/* Thresholds of all zero means 1 threshold = 0. */
+		conf.window = 100;
+		conf.measurement = TES_COINC_MEAS_AREA;
+		rc = s_save_conf (self, &conf);
+		assert (rc != ECONFINVAL);
+		if (rc == ECONFWR)
+		{
+			logmsg (errno, LOG_WARNING,
+				"Could not save configuration");
+			// return TASK_ERROR;
+		}
+	}
+
+	s_apply_conf (&data);
+
 	return 0;
 }
 
@@ -883,14 +954,5 @@ task_coinc_wakeup (task_t* self)
 	memset (&data->cur_frame, 0, sizeof (data->cur_frame));
 	data->publishing = false;
 	data->cur_frame.idx = -1;
-	return 0;
-}
-
-int
-task_coinc_fin (task_t* self)
-{
-	assert (self != NULL);
-
-	self->data = NULL;
 	return 0;
 }

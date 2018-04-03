@@ -189,12 +189,3 @@ task_hist_wakeup (task_t* self)
 	hist->discard = true;
 	return 0;
 }
-
-int
-task_hist_fin (task_t* self)
-{
-	assert (self != NULL);
-
-	self->data = NULL;
-	return 0;
-}

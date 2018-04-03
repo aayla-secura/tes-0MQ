@@ -3,21 +3,18 @@
  * --------------------------- DEV NOTES ---------------------------
  * -----------------------------------------------------------------
  * There is a separate thread for each "task". Threads are zactors.
- * Currently there are two tasks:
- * 1) Listen on a REP socket and save all frames to file (until
- *    a requested number of ticks pass).
- * 2) Collate MCA frames for publishing via a PUB socket.
+ * Tasks are defined in a static global array, see THE TASK LIST.
+ *
+ * Tasks are largely similar, so we pass the same handler,
+ * s_task_shim, to zactor_new. It is responsible for doing most of
+ * the work. Tasks are described by a struct _task_t (see
+ * tesd_tasks.h).
  *
  * Tasks have read-only access to rings (they cannot modify the
  * cursor or head) and each task keeps its own head (for each ring),
  * which is visible by the coordinator (tesd.c). For each ring, the
  * coordinator sets the true head to the per-task head which lags
  * behind all others.
- *
- * Tasks are largely similar, so we pass the same handler,
- * s_task_shim, to zactor_new. It is responsible for doing most of
- * the work. Tasks are described by a struct _task_t (see
- * tesd_tasks.h).
  *
  * s_task_shim registers a generic reader, s_sig_hn, for handling
  * the signals from the coordinator. Upon SIG_STOP s_sig_hn exits,
@@ -87,8 +84,6 @@
  * task_activate, task_deactivate and return codes (0,
  * TASK_SLEEP or TASK_ERROR).
  *
- * Tasks are defined in a static global array, see THE TASK LIST.
- *
  * Note on zactor:
  * We start the task threads using zactor high-level class, which on
  * UNIX systems is a wrapper around pthread_create. zactor_new
@@ -136,13 +131,16 @@
 #include "tesd_tasks_coordinator.h"
 
 #ifndef NUMCPUS
-#define NUMCPUS 4L /* fallback if sysconf (_SC_NPROCESSORS_ONLN) fails */
+#  define NUMCPUS 4L // fallback if sysconf
+                     // (_SC_NPROCESSORS_ONLN) fails
 #endif
 
+static const char* s_config_dir; // stored and given by coordinator
+
+static zactor_fn       s_task_shim;
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
 static zloop_reader_fn s_sub_hn;
-static zactor_fn       s_task_shim;
 
 static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
@@ -154,10 +152,9 @@ static int  s_task_dispatch (task_t* self, zloop_t* loop,
 
 #define NUM_TASKS 6
 static task_t s_tasks[] = {
-	{ // PACKET INFO
+	{ /* PACKET INFO */
 		.pkt_handler = task_info_pkt_hn,
 		.data_init   = task_info_init,
-		.data_fin    = task_info_fin,
 		.frontends   = {
 			{
 				.handler   = task_info_req_hn,
@@ -168,7 +165,7 @@ static task_t s_tasks[] = {
 		},
 		.color       = ANSI_FG_YELLOW,
 	},
-	{ // CAPTURE
+	{ /* CAPTURE */
 		.pkt_handler = task_cap_pkt_hn,
 		.data_init   = task_cap_init,
 		.data_fin    = task_cap_fin,
@@ -182,10 +179,9 @@ static task_t s_tasks[] = {
 		},
 		.color       = ANSI_FG_BLUE,
 	},
-	{ // GET AVG TRACE
+	{ /* GET AVG TRACE */
 		.pkt_handler = task_avgtr_pkt_hn,
 		.data_init   = task_avgtr_init,
-		.data_fin    = task_avgtr_fin,
 		.frontends   = {
 			{
 				.handler   = task_avgtr_req_hn,
@@ -196,11 +192,10 @@ static task_t s_tasks[] = {
 		},
 		.color       = ANSI_FG_GREEN,
 	},
-	{ // PUBLISH MCA HIST
+	{ /* PUBLISH MCA HIST */
 		.pkt_handler = task_hist_pkt_hn,
 		.data_init   = task_hist_init,
 		.data_wakeup = task_hist_wakeup,
-		.data_fin    = task_hist_fin,
 		.frontends   = {
 			{
 				.addresses = "tcp://*:" TES_HIST_LPORT,
@@ -210,11 +205,10 @@ static task_t s_tasks[] = {
 		},
 		.color       = ANSI_FG_CYAN,
 	},
-	{ // PUBLISH JITTER HIST
+	{ /* PUBLISH JITTER HIST */
 		.pkt_handler = task_jitter_pkt_hn,
 		.data_init   = task_jitter_init,
 		.data_wakeup = task_jitter_wakeup,
-		.data_fin    = task_jitter_fin,
 		.frontends   = {
 			{
 				.handler   = task_jitter_req_hn,
@@ -229,11 +223,10 @@ static task_t s_tasks[] = {
 		},
 		.color       = ANSI_FG_MAGENTA,
 	},
-	{ // RAW COINCIDENCE
+	{ /* RAW COINCIDENCE */
 		.pkt_handler = task_coinc_pkt_hn,
 		.data_init   = task_coinc_init,
 		.data_wakeup = task_coinc_wakeup,
-		.data_fin    = task_coinc_fin,
 		.frontends   = {
 			{
 				.handler   = task_coinc_req_hn,
@@ -260,10 +253,13 @@ static task_t s_tasks[] = {
 /* -------------------------------------------------------------- */
 
 int
-tasks_start (tes_ifdesc* ifd, zloop_t* c_loop)
+tasks_start (tes_ifdesc* ifd, zloop_t* c_loop, const char* confdir)
 {
 	assert (ifd != NULL);
 	assert (sizeof (s_tasks) == NUM_TASKS * sizeof (task_t));
+	
+	s_config_dir = confdir;
+	
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
 	{
@@ -393,6 +389,7 @@ int
 task_activate (task_t* self)
 {
 	assert (self != NULL);
+	assert (self->pkt_handler != NULL);
 
 	if (self->data_wakeup != NULL)
 	{
@@ -462,15 +459,253 @@ task_deactivate (task_t* self)
 	return 0;
 }
 
+ssize_t
+task_conf (task_t* self, void* conf, size_t len, int cmd)
+{
+	assert (self != NULL);
+	assert (cmd == TES_TASK_SAVE_CONF || cmd == TES_TASK_READ_CONF);
+	if (s_config_dir == NULL)
+		return 0;
+
+	char conffile[PATH_MAX];
+	snprintf (conffile, PATH_MAX, "%s/task_%d.bin",
+		s_config_dir, self->id);
+	int flags = 0;
+	
+	if (cmd == TES_TASK_SAVE_CONF)
+		flags = O_CREAT | O_TRUNC | O_WRONLY;
+	else
+		flags = O_RDONLY;
+
+	int fd = open (conffile, flags, S_IRUSR | S_IWUSR);
+	if (fd == -1)
+	{
+		logmsg (errno, LOG_WARNING,
+			"Could not open config file '%s'", conffile);
+		return -1;
+	}
+
+	if (cmd == TES_TASK_SAVE_CONF)
+		return write (fd, conf, len);
+	return read (fd, conf, len);
+}
+
 /* -------------------------------------------------------------- */
 /* -------------------------- INTERNAL -------------------------- */
 /* -------------------------------------------------------------- */
 
 /*
+ * A generic body for a task.
+ */
+static void
+s_task_shim (zsock_t* pipe, void* self_)
+{
+	assert (self_ != NULL);
+	zsock_signal (pipe, 0); /* zactor_new will wait for this */
+
+	int rc;
+	task_t* self = (task_t*) self_;
+	assert (self->ifd != NULL);
+	assert (self->id > 0);
+
+	/* Set log prefix. */
+	char log_id[32] = {0};
+	if (ami_daemon())
+		snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
+	else if (self->color != NULL)
+		snprintf (log_id, sizeof (log_id), "%s[Task #%d]%s     ",
+			self->color, self->id, ANSI_RESET);
+	set_logid (log_id);
+
+	/* Set CPU affinity. */
+	pthread_t pt = pthread_self ();
+	cpuset_t cpus;
+	CPU_ZERO (&cpus);
+	long ncpus = sysconf (_SC_NPROCESSORS_ONLN);
+	if (ncpus == -1)
+	{
+		logmsg (errno, LOG_WARNING,
+				"Cannot determine number of online cpus, "
+				"using a fallback value of %ld", NUMCPUS);
+		ncpus = NUMCPUS;
+	}
+	CPU_SET (self->id % (ncpus - 1), &cpus);
+	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
+	if (rc == 0)
+		rc = pthread_getaffinity_np (pt, sizeof(cpuset_t), &cpus);
+	if (rc == 0)
+	{
+		for (long cpu = 0; cpu < ncpus; cpu++)
+		{
+			if (CPU_ISSET (cpu, &cpus) && cpu != self->id)
+			{
+				rc = -1; /* unknown error */
+				break;
+			}
+		}
+	}
+	if (rc != 0)
+	{ /* errno is not set by pthread_*etaffinity_np, rc is the error */
+		logmsg ((rc > 0 ? rc : 0), LOG_WARNING,
+			"Cannot set cpu affinity");
+	}
+	
+	/* Block signals in each tasks's thread. */
+	struct sigaction sa = {0};
+	sigfillset (&sa.sa_mask);
+	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
+	
+	zloop_t* loop = zloop_new ();
+	self->loop = loop;
+	/* Only the coordinator thread should get interrupted, we wait
+	 * for SIG_STOP. */
+#if (CZMQ_VERSION_MAJOR > 3)
+	zloop_set_nonstop (loop, 1);
+#else
+	zloop_ignore_interrupts (loop);
+#endif
+
+	// logmsg (0, LOG_DEBUG, "Simulating error");
+	// self->error = true;
+	// goto cleanup;
+
+	/* Open and bind the public interfaces */
+	for (task_endp_t* frontend = &self->frontends[0];
+			frontend->addresses != NULL; frontend++)
+	{
+		frontend->sock = zsock_new (frontend->type);
+		if (frontend->sock == NULL)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not open the public interfaces");
+			self->error = true;
+			goto cleanup;
+		}
+		rc = zsock_attach (frontend->sock, frontend->addresses, 1);
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not bind the public interfaces");
+			self->error = true;
+			goto cleanup;
+		}
+		logmsg (0, LOG_INFO,
+			"Listening on port(s) %s", frontend->addresses);
+
+		rc = 0;
+		if (frontend->handler != NULL)
+			rc = zloop_reader (loop, frontend->sock,
+				frontend->handler, self);
+		
+		if (rc == 0 && frontend->autosleep)
+		{
+			assert (frontend->type == ZMQ_XPUB);
+			rc = zloop_reader (loop, frontend->sock, s_sub_hn, self);
+		}
+		
+		if (rc == -1)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not register the zloop frontend readers");
+			self->error = true;
+			goto cleanup;
+		}
+	}
+
+	/* Register the coordinator pipe. */
+	rc = zloop_reader (loop, pipe, s_sig_hn, self);
+	if (rc == -1)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not register the zloop PAIR reader");
+		self->error = true;
+		goto cleanup;
+	}
+
+	/* Call initializer */
+	if (self->data_init != NULL)
+	{
+		rc = self->data_init (self);
+		if (rc != 0)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not initialize thread data");
+			self->error = true;
+			goto cleanup;
+		}
+	}
+
+	logmsg (0, LOG_DEBUG, "Polling");
+	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
+	
+	if (self->autoactivate)
+	{
+		rc = task_activate (self);
+		if (rc == TASK_ERROR)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not autoactivate task");
+			self->error = true;
+			goto cleanup;
+		}
+		dbg_assert (rc == 0);
+	}
+	
+	rc = zloop_start (loop);
+	dbg_assert (rc == -1); /* we don't get interrupted */
+
+cleanup:
+	/*
+	 * zactor_destroy waits for a signal from s_thread_shim (see DEV
+	 * NOTES). To avoid returning from zactor_destroy prematurely,
+	 * we only send SIG_DIED if we exited due to an error on our
+	 * part (in one of the handlers).
+	 */
+	if (self->error)
+		zsock_signal (pipe, SIG_DIED);
+
+	if (self->data_fin != NULL)
+	{
+		rc = self->data_fin (self);
+		if (rc != 0)
+		{
+			logmsg (errno, LOG_ERR,
+				"Could not cleanup thread data");
+		}
+		dbg_assert (self->data == NULL);
+	}
+	zloop_destroy (&loop);
+	for (task_endp_t* frontend = &self->frontends[0];
+			frontend->addresses != NULL; frontend++)
+		zsock_destroy (&frontend->sock);
+	logmsg (0, LOG_DEBUG, "Done");
+
+	if (self->pkt_handler == NULL)
+		return;
+
+#if DEBUG_LEVEL >= VERBOSE
+	logmsg (0, LOG_DEBUG,
+		"Woken up %lu times, %lu when not active, "
+		"%lu when no new packets, dispatched "
+		"%lu rings, %lu packets missed",
+		self->dbg_stats.wakeups,
+		self->dbg_stats.wakeups_inactive,
+		self->dbg_stats.wakeups_false,
+		self->dbg_stats.rings_dispatched,
+		self->dbg_stats.pkts.missed
+		);
+	for (int r = 0; r < NUM_RINGS; r++)
+		logmsg (0, LOG_DEBUG,
+			"Ring %d received: %lu", r,
+			self->dbg_stats.pkts.rcvd_in[r]);
+#endif
+}
+
+/*
  * Registered with each task's loop. Receives signals sent on behalf
  * of the coordinator (via tasks_wakeup or tasks_stop). On
  * SIG_WAKEUP calls the task's packet handler. On SIG_STOP
- * terminates the task's loop. 
+ * terminates the task's loop.
  */
 static int
 s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
@@ -560,7 +795,7 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 
 /*
  * Registered with the coordinator's loop. Receives SIG_DIED sent by
- * a task and terminates the coordinator's loop. 
+ * a task and terminates the coordinator's loop.
  */
 static int
 s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
@@ -581,209 +816,6 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 		return -1;
 	}
 	assert (false); /* we only deal with SIG_DIED  */
-}
-
-/*
- * A generic body for a task.
- */
-static void
-s_task_shim (zsock_t* pipe, void* self_)
-{
-	assert (self_ != NULL);
-	zsock_signal (pipe, 0); /* zactor_new will wait for this */
-
-	int rc;
-	task_t* self = (task_t*) self_;
-	assert (self->pkt_handler != NULL);
-	assert (self->ifd != NULL);
-	assert (self->id > 0);
-
-	/* Set log prefix. */
-	char log_id[32] = {0};
-	if (ami_daemon())
-		snprintf (log_id, sizeof (log_id), "[Task #%d]     ", self->id);
-	else if (self->color != NULL)
-		snprintf (log_id, sizeof (log_id), "%s[Task #%d]%s     ",
-			self->color, self->id, ANSI_RESET);
-	set_logid (log_id);
-
-	/* Set CPU affinity. */
-	pthread_t pt = pthread_self ();
-	cpuset_t cpus;
-	CPU_ZERO (&cpus);
-	long ncpus = sysconf (_SC_NPROCESSORS_ONLN);
-	if (ncpus == -1)
-	{
-		logmsg (errno, LOG_WARNING,
-				"Cannot determine number of online cpus, "
-				"using a fallback value of %ld", NUMCPUS);
-		ncpus = NUMCPUS;
-	}
-	CPU_SET (self->id % (ncpus - 1), &cpus);
-	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc == 0)
-		rc = pthread_getaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc == 0)
-	{
-		for (long cpu = 0; cpu < ncpus; cpu++)
-		{
-			if (CPU_ISSET (cpu, &cpus) && cpu != self->id)
-			{
-				rc = -1; /* unknown error */
-				break;
-			}
-		}
-	}
-	if (rc != 0)
-	{ /* errno is not set by pthread_*etaffinity_np, rc is the error */
-		logmsg ((rc > 0 ? rc : 0), LOG_WARNING,
-			"Cannot set cpu affinity");
-	}
-	
-	/* Block signals in each tasks's thread. */
-	struct sigaction sa = {0};
-	sigfillset (&sa.sa_mask);
-	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
-	
-	zloop_t* loop = zloop_new ();
-	self->loop = loop;
-	/* Only the coordinator thread should get interrupted, we wait
-	 * for SIG_STOP. */
-#if (CZMQ_VERSION_MAJOR > 3)
-	zloop_set_nonstop (loop, 1);
-#else
-	zloop_ignore_interrupts (loop);
-#endif
-
-	// logmsg (0, LOG_DEBUG, "Simulating error");
-	// self->error = true;
-	// goto cleanup;
-
-	/* Open the public interfaces */
-	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL; frontend++)
-	{
-		frontend->sock = zsock_new (frontend->type);
-		if (frontend->sock == NULL)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not open the public interfaces");
-			self->error = true;
-			goto cleanup;
-		}
-		rc = zsock_attach (frontend->sock, frontend->addresses, 1);
-		if (rc == -1)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not bind the public interfaces");
-			self->error = true;
-			goto cleanup;
-		}
-		logmsg (0, LOG_INFO,
-			"Listening on port(s) %s", frontend->addresses);
-
-		rc = 0;
-		if (frontend->handler != NULL)
-			rc = zloop_reader (loop, frontend->sock,
-				frontend->handler, self);
-		
-		if (rc == 0 && frontend->autosleep)
-		{
-			assert (frontend->type == ZMQ_XPUB);
-			rc = zloop_reader (loop, frontend->sock, s_sub_hn, self);
-		}
-		
-		if (rc == -1)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not register the zloop frontend readers");
-			self->error = true;
-			goto cleanup;
-		}
-	}
-
-	rc = zloop_reader (loop, pipe, s_sig_hn, self);
-	if (rc == -1)
-	{
-		logmsg (errno, LOG_ERR,
-			"Could not register the zloop PAIR reader");
-		self->error = true;
-		goto cleanup;
-	}
-
-	/* Call initializer */
-	if (self->data_init != NULL)
-	{
-		rc = self->data_init (self);
-		if (rc != 0)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not initialize thread data");
-			self->error = true;
-			goto cleanup;
-		}
-	}
-
-	logmsg (0, LOG_DEBUG, "Polling");
-	zsock_signal (pipe, SIG_INIT); /* task_new will wait for this */
-	
-	if (self->autoactivate)
-	{
-		rc = task_activate (self);
-		if (rc == TASK_ERROR)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not autoactivate task");
-			self->error = true;
-			goto cleanup;
-		}
-		dbg_assert (rc == 0);
-	}
-	
-	rc = zloop_start (loop);
-	dbg_assert (rc == -1); /* we don't get interrupted */
-
-cleanup:
-	/*
-	 * zactor_destroy waits for a signal from s_thread_shim (see DEV
-	 * NOTES). To avoid returning from zactor_destroy prematurely,
-	 * we only send SIG_DIED if we exited due to an error on our
-	 * part (in one of the handlers).
-	 */
-	if (self->error)
-		zsock_signal (pipe, SIG_DIED);
-
-	if (self->data_fin != NULL)
-	{
-		rc = self->data_fin (self);
-		if (rc != 0)
-		{
-			logmsg (errno, LOG_ERR,
-				"Could not cleanup thread data");
-		}
-		dbg_assert (self->data == NULL);
-	}
-	zloop_destroy (&loop);
-	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL; frontend++)
-		zsock_destroy (&frontend->sock);
-	logmsg (0, LOG_DEBUG, "Done");
-#if DEBUG_LEVEL >= VERBOSE
-	logmsg (0, LOG_DEBUG,
-		"Woken up %lu times, %lu when not active, "
-		"%lu when no new packets, dispatched "
-		"%lu rings, %lu packets missed",
-		self->dbg_stats.wakeups,
-		self->dbg_stats.wakeups_inactive,
-		self->dbg_stats.wakeups_false,
-		self->dbg_stats.rings_dispatched,
-		self->dbg_stats.pkts.missed
-		);
-	for (int r = 0; r < NUM_RINGS; r++)
-		logmsg (0, LOG_DEBUG,
-			"Ring %d received: %lu", r, 
-			self->dbg_stats.pkts.rcvd_in[r]);
-#endif
 }
 
 /*
@@ -872,7 +904,6 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	return 0;
 }
 
-
 /*
  * Initializes a task_t and starts a new thread using zactor_new.
  * Registers the task's back end of the pipe with the coordinator's
@@ -935,7 +966,8 @@ s_task_stop (task_t* self)
 /*
  * Chooses the ring which contains the next packet to be inspected.
  */
-static int s_task_next_ring (task_t* self, uint16_t* missed_p)
+static int
+s_task_next_ring (task_t* self, uint16_t* missed_p)
 {
 	dbg_assert (self != NULL);
 
@@ -1011,7 +1043,8 @@ static int s_task_next_ring (task_t* self, uint16_t* missed_p)
  * Returns ?? if a jump in frame sequence is seen (TO DO).
  */
 
-static int s_task_dispatch (task_t* self, zloop_t* loop,
+static int
+s_task_dispatch (task_t* self, zloop_t* loop,
 		uint16_t ring_id, uint16_t missed)
 {
 	dbg_assert (self != NULL);

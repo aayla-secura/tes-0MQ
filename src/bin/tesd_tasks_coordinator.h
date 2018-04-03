@@ -15,7 +15,8 @@
  * reader for each task.
  * Returns 0 on success, -1 on error.
  */
-int  tasks_start (tes_ifdesc* ifd, zloop_t* c_loop);
+int  tasks_start (tes_ifdesc* ifd, zloop_t* c_loop,
+	const char* confdir);
 
 /*
  * Register a generic reader with the loop. The reader will listen

@@ -394,12 +394,3 @@ task_jitter_wakeup (task_t* self)
 	s_prep_next (data);
 	return 0;
 }
-
-int
-task_jitter_fin (task_t* self)
-{
-	assert (self != NULL);
-
-	self->data = NULL;
-	return 0;
-}

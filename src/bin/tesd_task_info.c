@@ -196,12 +196,3 @@ task_info_init (task_t* self)
 	self->data = &info;
 	return 0;
 }
-
-int
-task_info_fin (task_t* self)
-{
-	assert (self != NULL);
-
-	self->data = NULL;
-	return 0;
-}
