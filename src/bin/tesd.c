@@ -696,16 +696,8 @@ main (int argc, char **argv)
 	}
 
 	/* Set CPU affinity. */
-	pthread_t pt = pthread_self ();
-	cpuset_t cpus;
-	CPU_ZERO (&cpus);
-	CPU_SET (0, &cpus);
-	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc != 0)
-	{ /* errno is not set, rc is the error */
-		logmsg (rc, LOG_WARNING,
-			"Cannot set cpu affinity");
-	}
+	if (pth_set_cpuaff (0) == -1)
+		logmsg (errno, LOG_WARNING, "Cannot set cpu affinity");
 
 	/* Block all signals except SIGINT and SIGTERM */
 	struct sigaction sa = {0};

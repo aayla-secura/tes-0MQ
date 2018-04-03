@@ -130,11 +130,6 @@
 #include "tesd_tasks.h"
 #include "tesd_tasks_coordinator.h"
 
-#ifndef NUMCPUS
-#  define NUMCPUS 4L // fallback if sysconf
-                     // (_SC_NPROCESSORS_ONLN) fails
-#endif
-
 static const char* s_config_dir; // stored and given by coordinator
 
 static zactor_fn       s_task_shim;
@@ -518,37 +513,8 @@ s_task_shim (zsock_t* pipe, void* self_)
 	set_logid (log_id);
 
 	/* Set CPU affinity. */
-	pthread_t pt = pthread_self ();
-	cpuset_t cpus;
-	CPU_ZERO (&cpus);
-	long ncpus = sysconf (_SC_NPROCESSORS_ONLN);
-	if (ncpus == -1)
-	{
-		logmsg (errno, LOG_WARNING,
-				"Cannot determine number of online cpus, "
-				"using a fallback value of %ld", NUMCPUS);
-		ncpus = NUMCPUS;
-	}
-	CPU_SET (self->id % (ncpus - 1), &cpus);
-	rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc == 0)
-		rc = pthread_getaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc == 0)
-	{
-		for (long cpu = 0; cpu < ncpus; cpu++)
-		{
-			if (CPU_ISSET (cpu, &cpus) && cpu != self->id)
-			{
-				rc = -1; /* unknown error */
-				break;
-			}
-		}
-	}
-	if (rc != 0)
-	{ /* errno is not set by pthread_*etaffinity_np, rc is the error */
-		logmsg ((rc > 0 ? rc : 0), LOG_WARNING,
-			"Cannot set cpu affinity");
-	}
+	if (pth_set_cpuaff (self->id) == -1)
+		logmsg (errno, LOG_WARNING, "Cannot set cpu affinity");
 	
 	/* Block signals in each tasks's thread. */
 	struct sigaction sa = {0};

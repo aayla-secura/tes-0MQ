@@ -19,7 +19,7 @@
 #define SIDX_LEN 16 // MCA and trace indices
 #define STAT_LEN 64 // job statistics
 #ifndef DATAROOT
-#define DATAROOT "/media/data/captures/" // must have a trailing slash
+#define DATAROOT "/media/data/captures/"
 #endif
 
 #define REQUIRE_FILENAME // for now we don't generate filename
@@ -1023,23 +1023,6 @@ queue_as_is:
 	return EINPROGRESS;
 }
 
-/*
- * Prepends DATAROOT to filename and canonicalizes the path via
- * realpath.
- *
- * If mustexist is true, filename must exist and resolve to a path under
- * DATAROOT.
- * If mustexist is false, directory part must resolve to a path under
- * DATAROOT (or DATAROOT). Any missing directories are created.
- *
- * On success saves the result in finalpath, which must be able to hold
- * PATH_MAX characters, and returns a pointer to finalpath.
- * On error, returns NULL.
- *
- * If NULL is returned and errno is 0, it should be because the filename
- * is not allowed by us (i.e. outside of DATAROOT or ends with a
- * slash).
- */
 static char*
 s_canonicalize_path (const char* filename,
 	char* finalpath, bool mustexist)
@@ -1063,104 +1046,8 @@ s_canonicalize_path (const char* filename,
 	}
 #endif
 
-	char buf[PATH_MAX] = {0};
-	snprintf (buf, PATH_MAX, "%s%s", DATAROOT, filename);
-
-	/* Check if the file exists first. */
-	errno = 0;
-	char* rs = realpath (buf, finalpath);
-	if (rs)
-	{
-		errno = 0;
-		assert (rs == finalpath);
-		if ( memcmp (finalpath, DATAROOT, strlen (DATAROOT)) != 0 )
-		{
-			logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
-				finalpath);
-			return NULL; /* outside of root */
-		}
-		return finalpath;
-	}
-	if (mustexist)
-	{
-		logmsg (0, LOG_DEBUG, "File doesn't exist");
-		return NULL;
-	}
-
-	/*
-	 * We proceed only if some of the directories are missing, i.e.
-	 * errno is ENOENT.
-	 * errno is ENOTDIR only when a component of the parent path
-	 * exists but is not a directory.
-	 */
-	if (errno != ENOENT)
-		return NULL;
-
-	/* Start from the top-most component (after DATAROOT) and
-	 * create directories as needed. */
-	memset (&buf, 0, PATH_MAX);
-	strcpy (buf, DATAROOT);
-
-	const char* cur_seg = filename;
-	const char* next_seg = NULL;
-	len = strlen (buf);
-	while ( (next_seg = strchr (cur_seg, '/')) != NULL)
-	{
-		if (cur_seg[0] == '/')
-		{ /* multiple consecutive slashes */
-			cur_seg++;
-			continue;
-		}
-
-		/* Copy leading slash of next_seg here, at the end. */
-		assert (len < PATH_MAX);
-		size_t thislen = next_seg - cur_seg + 1;
-		if (len + thislen >= PATH_MAX)
-		{
-			logmsg (0, LOG_DEBUG, "Filename too long");
-			return NULL;
-		}
-		strncpy (buf + len, cur_seg, thislen);
-		len += thislen;
-		assert (len == strlen (buf));
-
-		errno = 0;
-		int rc = mkdir (buf, 0777);
-		if (rc && errno != EEXIST)
-			return NULL; /* don't handle other errors */
-
-		cur_seg = next_seg + 1; /* skip over leading slash */
-	}
-
-	/* Canonicalize the directory part. */
-	rs = realpath (buf, finalpath);
-	assert (rs != NULL); /* this shouldn't happen */
-	assert (rs == finalpath);
-
-	/* Add the basename (realpath removes the trailing slash). */
-#ifdef REQUIRE_FILENAME
-	assert (strlen (cur_seg) > 0);
-#else
-	/* TO DO: generate a filename is none is given. */
-	assert (false);
-#endif
-	len = strlen (finalpath);
-	if (strlen (cur_seg) + len >= PATH_MAX)
-	{
-		logmsg (0, LOG_DEBUG, "Filename too long");
-		return NULL;
-	}
-
-	snprintf (finalpath + len, PATH_MAX - len, "/%s", cur_seg);
-	errno = 0;
-	if ( memcmp (finalpath, DATAROOT, strlen (DATAROOT)) != 0)
-	{
-		logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
-			finalpath);
-		return NULL; /* outside of root */
-	}
-
-	return finalpath;
+	return canonicalize_path (DATAROOT, filename, finalpath,
+		mustexist, 0777);
 }
 
 #if DEBUG_LEVEL >= VERBOSE

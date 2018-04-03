@@ -5,22 +5,7 @@
 #ifndef __TESD_H__INCLUDED__
 #define __TESD_H__INCLUDED__
 
-/* CPU_SET and friends */
-#ifdef linux
-#  define _GNU_SOURCE
-#  include <pthread.h>
-#else
-#  include <pthread_np.h>
-#endif
-
 #include <sys/types.h>
-#ifdef linux
-#  include <sched.h>
-#  define cpuset_t cpu_set_t
-#else
-#  include <sys/_cpuset.h>
-#  include <sys/cpuset.h>
-#endif
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -55,20 +40,13 @@
 #  define dbg_assert(...)
 #endif
 
-#ifndef PATH_MAX
-#  ifdef MAXPATHLEN
-#    define PATH_MAX MAXPATHLEN
-#  else
-#    define PATH_MAX 4096
-#  endif
-#endif
-
 #ifndef NUM_RINGS
 #define NUM_RINGS 4 /* number of rx rings in interface */
 #endif
 
 #include "api.h"
 #include "daemon_ng.h"
+#include "cutil.h"
 #include "ansicolors.h"
 
 #endif
