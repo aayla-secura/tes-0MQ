@@ -57,8 +57,6 @@
  * -----------------------------------------------------------------
  * ----------------------------- TO DO -----------------------------
  * -----------------------------------------------------------------
- * - check if pidfile and confdir are in an allowed location
- * - create confdir if it doesn't exist
  * - drop privileges before daemonizing, so pidfile is owned by new user
  * - remove pidfile
  */
@@ -96,7 +94,7 @@
 #define UPDATE_INTERVAL 1 // in seconds
 #define TES_IFNAME "netmap:" IFNAME
 #define PIDFILE "/var/run/" PROGNAME ".pid"
-#define CONFDIR "/var/lib/" PROGNAME "/config"
+#define CONFDIR "/var/lib/" PROGNAME "/config/" // must end with a slash
 
 /*
  * Statistics, only used in foreground mode
@@ -576,7 +574,7 @@ main (int argc, char **argv)
 			case 'c':
 				snprintf (data.confdir, sizeof (data.confdir),
 					"%s%s", optarg,
-					optarg[strlen (optarg) - 1] == '/' ? "" : "/");
+					(optarg[strlen (optarg) - 1] == '/' ? "" : "/"));
 				break;
 			case 'p':
 				snprintf (pidfile, sizeof (pidfile),
@@ -619,13 +617,20 @@ main (int argc, char **argv)
 	set_verbose (be_verbose);
 	
 	/* Create confdir and directory of pidfile if they don't exist. */
-	int rc = mkdirr (data.confdir, 0700);
-	if (rc == 0)
-		rc = mkdirr (pidfile, 0755);
-	if (rc == -1)
+	assert (data.confdir[strlen (data.confdir) - 1] == '/');
+	char tmpname[PATH_MAX] = {0};
+	strncpy (tmpname, data.confdir, PATH_MAX);
+	char* rs = canonicalize_path (NULL, tmpname, data.confdir,
+		false, 0700);
+	if (rs != NULL)
+	{
+		strncpy (tmpname, pidfile, PATH_MAX);
+		rs = canonicalize_path (NULL, tmpname, pidfile, false, 0755);
+	}
+	if (rs == NULL)
 	{
 		logmsg (errno, LOG_ERR,
-			"Could not create required directories");
+			"Could not resolve directory names");
 		exit (EXIT_FAILURE);
 	}
 
@@ -640,6 +645,7 @@ main (int argc, char **argv)
 
 	data.ifname_req = ifname_req;
 
+	int rc;
 	if (be_daemon)
 	{
 		if (strlen (pidfile) > 0)

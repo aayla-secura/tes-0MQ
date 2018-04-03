@@ -1,5 +1,5 @@
-/* CPU_SET and friends */
 #ifdef linux
+/* _GNU_SOURCE needed for pthread_[sg]etaffinity_np and strchrnul */
 #  define _GNU_SOURCE
 #  include <pthread.h>
 #  include <sched.h>
@@ -68,11 +68,46 @@ pth_set_cpuaff (int cpu)
 int
 mkdirr (const char* path, mode_t mode)
 {
-	char finalpath[PATH_MAX] = {0};
-	char* rp = canonicalize_path (NULL, path, finalpath, false,
-		mode);
-	if (rp == NULL)
+	if (path == NULL || strlen (path) == 0)
 		return -1;
+	
+	/* Start from the root and create directories as needed. */
+	char buf[PATH_MAX] = {0};
+	const char* cur_seg = path;
+	const char* next_seg = NULL;
+	size_t len = 0;
+	/* Handle both cases of trailing and non-trailing slash. Break when
+	 * either the end of the string of the slash preceding the end is
+	 * reached. */
+	while ( ! (cur_seg[0] == '\0' ||
+		( cur_seg[0] == '/' && cur_seg[1] == '\0' )) )
+	{
+		next_seg = strchrnul (cur_seg + 1, '/');
+		/* Copy from leading slash of cur_seg to leading slash of next_seg
+		 * excluding. */
+		size_t thislen = next_seg - cur_seg;
+		if (len + thislen >= PATH_MAX)
+		{
+			logmsg (0, LOG_ERR, "Filename too long");
+			errno = ENAMETOOLONG;
+			return -1;
+		}
+		strncpy (buf + len, cur_seg, thislen);
+		len += thislen;
+		assert (len == strlen (buf));
+		assert (len < PATH_MAX);
+
+		/* If link is a dangling link, it will result in EEXIST.
+		 * On the next invocation it will be ENOENT. */
+		logmsg (0, LOG_DEBUG, "Creating dir '%s'", buf);
+		int rc = mkdir (buf, mode);
+		if (rc && errno != EEXIST)
+			return -1; /* don't handle other errors */
+
+		cur_seg = next_seg;
+	}
+	assert (strlen (cur_seg) == 0 ||
+		(strlen (cur_seg) == 1 && cur_seg[0] == '/'));
 	return 0;
 }
 
@@ -83,20 +118,11 @@ canonicalize_path (const char* root, const char* path,
 	assert (path != NULL);
 	assert (finalpath != NULL);
 
-	errno = 0;
-	size_t len = strlen (path);
-	if (len == 0)
-	{
-		logmsg (0, LOG_DEBUG, "Filename is empty");
-		return NULL;
-	}
-
 	/*
 	 * Make sure realroot starts and ends with a slash.
 	 * It must end with a slash for memcmp to determine if inside
 	 * realroot.
 	 */
-	char realroot[PATH_MAX] = {0};
 	char buf[PATH_MAX] = {0};
 	if (root == NULL || strlen (root) == 0 || root[0] != '/')
 	{ /* prepend cwd if needed */
@@ -107,46 +133,79 @@ canonicalize_path (const char* root, const char* path,
 				"Could not get current working directory");
 			return NULL;
 		}
-		snprintf (realroot, PATH_MAX, "%s%s",
-			buf, (buf[strlen (buf) - 1] == '/' ? "" : "/"));
+		assert (buf[0] == '/');
+#if DEBUG_LEVEL >= VERBOSE
+		logmsg (0, LOG_DEBUG,
+			"Prepending current working directory '%s'", buf);
+#endif
 	}
 	if (root != NULL && strlen (root) > 0)
 	{ /* add given root */
-		snprintf (realroot, PATH_MAX, "%s%s%s", realroot, root,
-				(root[strlen (root) - 1] == '/' ? "" : "/"));
+		snprintf (buf + strlen (buf),
+			PATH_MAX - strlen (buf), "/%s", root);
 	}
 
+	/* Canonicalize the root, since we need to know the realpath for
+	 * later comparison (to determine if outside of root). */
+	if ( ! mustexist && mkdirr (buf, mode) == -1)
+		return NULL;
+	char realroot[PATH_MAX] = {0};
+	char* rs = realpath (buf, realroot);
+	if (rs == NULL)
+	{
+		if ( ! mustexist || errno != ENOENT)
+			logmsg (errno, LOG_ERR,
+				"Could not resolve root");
+		return NULL;
+	}
+	assert (rs == realroot);
+	size_t rlen = strlen (realroot);
+	if (realroot[rlen - 1] != '/')
+	{
+		if (rlen == PATH_MAX)
+		{
+			logmsg (0, LOG_ERR, "Root path too long");
+			errno = ENAMETOOLONG;
+			return NULL;
+		}
+		strcpy (realroot + rlen, "/");
+		rlen++;
+		assert (rlen == strlen (realroot));
+	}
+
+	/* Add the given path, rlen must remain the length of the root
+	 * (including trailing slash) for later comparison. */
 	int rc = snprintf (buf, PATH_MAX, "%s%s", realroot, path);
 	if (rc >= PATH_MAX)
 	{
-		logmsg (0, LOG_DEBUG, "Filename too long");
+		logmsg (0, LOG_ERR, "Filename too long");
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
+#if DEBUG_LEVEL >= VERBOSE
 	logmsg (0, LOG_DEBUG, "Canonicalizing path '%s'", buf);
+#endif
 
 	/* Check if the file exists first. */
-	errno = 0;
-	size_t rlen = strlen (realroot);
-	char* rs = realpath (buf, finalpath);
+	rs = realpath (buf, finalpath);
 	if (rs)
 	{
-		errno = 0;
 		assert (rs == finalpath);
 		if ( memcmp (finalpath, realroot, rlen) != 0 )
 		{
-			logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
+			logmsg (0, LOG_DEBUG, "Resolved to '%s', outside of root",
 				finalpath);
 			return NULL;
 		}
 		return finalpath;
 	}
+
 	if (mustexist)
 	{
 		logmsg (0, LOG_DEBUG, "File doesn't exist");
 		return NULL;
 	}
-
+	
 	/*
 	 * We proceed only if some of the directories are missing, i.e.
 	 * errno is ENOENT.
@@ -156,76 +215,40 @@ canonicalize_path (const char* root, const char* path,
 	if (errno != ENOENT)
 		return NULL;
 
-	/* Start from the top-most component (after realroot) and
-	 * create directories as needed. */
-	memset (&buf, 0, PATH_MAX);
-	assert (rlen < PATH_MAX);
-	strcpy (buf, realroot);
+	/* Create missing directories (minus basename). */
+	char dirbuf[PATH_MAX] = {0};
+	char* basename = strrchr (buf, '/');
+	basename++;
+	snprintf (dirbuf, basename - buf, "%s", buf);
+	if (mkdirr (dirbuf, mode) == -1)
+		return NULL;
 
-	const char* cur_seg = path;
-	const char* next_seg = NULL;
-	len = strlen (buf);
-	while ( (next_seg = strchr (cur_seg, '/')) != NULL)
-	{
-		if (cur_seg[0] == '/')
-		{ /* multiple consecutive slashes */
-			cur_seg++;
-			continue;
-		}
-
-		/* Copy leading slash of next_seg here, at the end. */
-		assert (len < PATH_MAX);
-		size_t thislen = next_seg - cur_seg + 1;
-		if (len + thislen >= PATH_MAX)
-		{
-			logmsg (0, LOG_DEBUG, "Filename too long");
-			errno = ENAMETOOLONG;
-			return NULL;
-		}
-		strncpy (buf + len, cur_seg, thislen);
-		len += thislen;
-		assert (len == strlen (buf));
-
-		logmsg (0, LOG_DEBUG, "Creating dir '%s'", buf);
-		errno = 0;
-		rc = mkdir (buf, mode);
-		if (rc && errno != EEXIST)
-			return NULL; /* don't handle other errors */
-
-		cur_seg = next_seg + 1; /* skip over leading slash */
-	}
-
-	/* Canonicalize the directory part. */
-	rs = realpath (buf, finalpath);
-	assert (rs != NULL); /* this shouldn't happen */
-	assert (rs == finalpath);
+	/* Canonicalize the directory path. The file doesn't exist (checked
+	 * above), so would error here. */
+	rs = realpath (dirbuf, finalpath);
+	if (rs == NULL)
+		return NULL;
 	
-	len = strlen (finalpath); /* realpath removes the final slash */
+	size_t len = strlen (finalpath);
 	if (finalpath[len - 1] != '/')
+		len += snprintf (finalpath + len, PATH_MAX - len, "/");
+	if ( memcmp (finalpath, realroot, rlen) != 0 )
 	{
-		snprintf (finalpath + len, PATH_MAX - len, "/");
-		len++;
-		assert (len == strlen (finalpath) || len == PATH_MAX);
-	}
-
-	if ( memcmp (finalpath, realroot, rlen) != 0)
-	{
-		logmsg (0, LOG_DEBUG, "Resolved to %s, outside of root",
+		logmsg (0, LOG_DEBUG,
+			"Directory part resolved to %s, outside of root",
 			finalpath);
 		return NULL;
 	}
+	assert (len == strlen (finalpath) && finalpath[len - 1] == '/');
 	
-	if (strlen (cur_seg) == 0)
-		return finalpath;
-
-	/* Add the basename (realpath removes the trailing slash). */
-	if (strlen (cur_seg) + len >= PATH_MAX)
+	/* Add back the basename. */
+	len += snprintf (finalpath + len, PATH_MAX - len, "%s", basename);
+	if (len >= PATH_MAX)
 	{
-		logmsg (0, LOG_DEBUG, "Filename too long");
+		logmsg (0, LOG_ERR, "Filename too long");
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
 
-	snprintf (finalpath + len, PATH_MAX - len, "%s", cur_seg);
 	return finalpath;
 }
