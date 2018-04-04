@@ -25,6 +25,14 @@
 int pth_set_cpuaff (int cpu);
 
 /*
+ * Drop privileges of the current process. It calls setuid and setgid
+ * and if the calling process was privileged, makes sure it is not
+ * able to regain privileges.
+ * Returns 0 on success, -1 on error.
+ */
+int run_as (uid_t uid, gid_t gid);
+
+/*
  * Prepends root to path and canonicalizes the path via realpath.
  * If root is NULL it defaults to the current directory.
  * If root doesn't start with a slash, the current directory is

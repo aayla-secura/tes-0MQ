@@ -685,29 +685,10 @@ main (int argc, char **argv)
 			ANSI_FG_RED "[Coordinator] " ANSI_RESET);
 	set_logid (log_id);
 
-	/* Drop privileges, group first, then user, then check */
-	rc = 0;
-	if (run_as_gid != 0)
-		rc = setgid (run_as_gid);
-	if (rc == 0 && run_as_uid != 0)
+	/* Drop privileges. */
+	if (run_as (run_as_uid, run_as_gid) == -1)
 	{
-		rc = setuid (run_as_uid);
-		/* Check if we can regain user privilege. */
-		if (rc == 0 && setuid (0) != -1)
-			rc = -1;
-	}
-
-	/* Check if we can regain group privilege. */
-	if (rc == 0 &&
-		run_as_gid != 0 && /* we tried setting it */
-		geteuid () != 0 && /* we shouldn't be able to regain */
-		setgid (0) != -1)
-		rc = -1;
-
-	if (rc == -1)
-	{
-		logmsg (errno, LOG_ERR,
-			"Cannot drop privileges");
+		logmsg (errno, LOG_ERR, "Cannot drop privileges");
 		tes_if_close (data.ifd);
 		exit (EXIT_FAILURE);
 	}

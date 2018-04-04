@@ -66,6 +66,30 @@ pth_set_cpuaff (int cpu)
 }
 
 int
+run_as (uid_t uid, gid_t gid)
+{
+	/* Drop privileges, group first, then user, then check */
+	uid_t oldeuid = geteuid ();
+	gid_t oldegid = getegid ();
+	int rc = setgid (gid);
+	if (rc == 0)
+	{
+		rc = setuid (uid);
+		/* Check if we can regain user privilege, when we shouldn't. */
+		if (rc == 0 && oldeuid == 0 && uid != 0 && gid != 0 &&
+			setuid (0) != -1)
+			rc = -1;
+	}
+
+	/* Check if we can regain group privilege, when we shouldn't. */
+	if (rc == 0 && oldegid == 0 && uid != 0 && gid != 0 &&
+		setgid (0) != -1)
+		rc = -1;
+
+	return rc;
+}
+
+int
 mkdirr (const char* path, mode_t mode, bool create_basename)
 {
 	if (path == NULL || strlen (path) == 0)
@@ -101,9 +125,10 @@ mkdirr (const char* path, mode_t mode, bool create_basename)
 
 		/* If link is a dangling link, it will result in EEXIST.
 		 * On the next invocation it will be ENOENT. */
-		logmsg (0, LOG_DEBUG, "Creating dir '%s'", buf);
 		int rc = mkdir (buf, mode);
-		if (rc && errno != EEXIST)
+		if (rc == 0)
+			logmsg (0, LOG_DEBUG, "Created dir '%s'", buf);
+		else if (errno != EEXIST)
 			return -1; /* don't handle other errors */
 
 		cur_seg = next_seg;
