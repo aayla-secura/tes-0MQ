@@ -118,9 +118,12 @@ struct data_t
 {
 	struct stats_t stats;
 	tes_ifdesc* ifd;
-	char* ifname_req;
+	char ifname_req[IFNAMSIZ];
 	long int stat_period;
 	char confdir[PATH_MAX];
+	char pidfile[PATH_MAX];
+	gid_t run_as_gid;
+	uid_t run_as_uid;
 };
 
 static void s_usage (const char* self);
@@ -436,6 +439,8 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 
 /*
  * Open the interface in netmap mode, put it in promiscuous mode.
+ * Drop privileges, then create directories here, so that the pidfile
+ * is owned by the new uid/gid.
  */
 static int
 s_init (void* data_)
@@ -474,6 +479,32 @@ s_init (void* data_)
 	{
 		tes_if_close (data->ifd);
 		return -1;
+	}
+
+	/* Drop privileges. */
+	if (run_as (data->run_as_uid, data->run_as_gid) == -1)
+	{
+		logmsg (errno, LOG_ERR, "Cannot drop privileges");
+		tes_if_close (data->ifd);
+		return -1;
+	}
+
+	/* Create confdir and directory of pidfile if they don't exist. */
+	char tmpname[PATH_MAX] = {0};
+	strncpy (tmpname, data->confdir, PATH_MAX);
+	char* rs = canonicalize_path (NULL, tmpname, data->confdir,
+		false, 0700);
+	if (rs != NULL)
+	{
+		strncpy (tmpname, data->pidfile, PATH_MAX);
+		rs = canonicalize_path (NULL, tmpname, data->pidfile,
+			false, 0755);
+	}
+	if (rs == NULL)
+	{
+		logmsg (errno, LOG_ERR,
+			"Could not resolve directory names");
+		exit (EXIT_FAILURE);
 	}
 
 	return 0;
@@ -557,15 +588,11 @@ main (int argc, char **argv)
 	/* Process command-line options. */
 	bool be_daemon = true;
 	bool be_verbose = false;
-	gid_t run_as_gid = 0;
-	uid_t run_as_uid = 0;
 	int opt;
 	char* buf = NULL;
-	long int stat_period = -1;
-	char ifname_req[IFNAMSIZ] = {0};
-	char pidfile[PATH_MAX] = {0};
-	snprintf (pidfile, sizeof (pidfile), "%s", PIDFILE);
 	struct data_t data = {0};
+	data.stat_period = -1;
+	snprintf (data.pidfile, sizeof (data.pidfile), "%s", PIDFILE);
 	snprintf (data.confdir, sizeof (data.confdir), "%s", CONFDIR);
 	while ( (opt = getopt (argc, argv, "c:p:i:U:u:g:fvh")) != -1 )
 	{
@@ -577,25 +604,25 @@ main (int argc, char **argv)
 					(optarg[strlen (optarg) - 1] == '/' ? "" : "/"));
 				break;
 			case 'p':
-				snprintf (pidfile, sizeof (pidfile),
+				snprintf (data.pidfile, sizeof (data.pidfile),
 					"%s", optarg);
 				break;
 			case 'i':
-				snprintf (ifname_req, sizeof (ifname_req),
+				snprintf (data.ifname_req, sizeof (data.ifname_req),
 					"%s", optarg);
 				break;
 			case 'U':
-				stat_period = strtol (optarg, &buf, 10);
+				data.stat_period = strtol (optarg, &buf, 10);
 				if (strlen (buf))
 					s_usage (argv[0]);
 				break;
 			case 'u':
-				run_as_uid = strtoul (optarg, &buf, 10);
+				data.run_as_uid = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 					s_usage (argv[0]);
 				break;
 			case 'g':
-				run_as_gid = strtoul (optarg, &buf, 10);
+				data.run_as_gid = strtoul (optarg, &buf, 10);
 				if (strlen (buf))
 					s_usage (argv[0]);
 				break;
@@ -614,46 +641,35 @@ main (int argc, char **argv)
 				assert (false);
 		}
 	}
-	set_verbose (be_verbose);
 	
-	/* Create confdir and directory of pidfile if they don't exist. */
+	if (strlen (data.ifname_req) == 0)
+	{
+		sprintf (data.ifname_req, TES_IFNAME);
+	}
+	if (data.stat_period == -1 && ! be_daemon)
+	{
+		data.stat_period = UPDATE_INTERVAL;
+	}
+
 	assert (data.confdir[strlen (data.confdir) - 1] == '/');
-	char tmpname[PATH_MAX] = {0};
-	strncpy (tmpname, data.confdir, PATH_MAX);
-	char* rs = canonicalize_path (NULL, tmpname, data.confdir,
-		false, 0700);
-	if (rs != NULL)
-	{
-		strncpy (tmpname, pidfile, PATH_MAX);
-		rs = canonicalize_path (NULL, tmpname, pidfile, false, 0755);
-	}
-	if (rs == NULL)
-	{
-		logmsg (errno, LOG_ERR,
-			"Could not resolve directory names");
-		exit (EXIT_FAILURE);
-	}
-
-	if (strlen (ifname_req) == 0)
-	{
-		sprintf (ifname_req, TES_IFNAME);
-	}
-	if (stat_period == -1 && ! be_daemon)
-	{
-		stat_period = UPDATE_INTERVAL;
-	}
-
-	data.ifname_req = ifname_req;
+	set_verbose (be_verbose);
+	char log_id[32] = {0};
+	if (be_daemon)
+		snprintf (log_id, sizeof (log_id), "[Coordinator] ");
+	else
+		snprintf (log_id, sizeof (log_id),
+			ANSI_FG_RED "[Coordinator] " ANSI_RESET);
+	set_logid (log_id);
 
 	int rc;
 	if (be_daemon)
 	{
-		if (strlen (pidfile) > 0)
+		if (strlen (data.pidfile) > 0)
 			logmsg (0, LOG_INFO,
-				"Going to background, pidfile is '%s'", pidfile);
+				"Going to background, pidfile is '%s'", data.pidfile);
 
 		/* Go into background. */
-		rc = daemonize (strlen (pidfile) > 0 ? pidfile : NULL,
+		rc = daemonize (strlen (data.pidfile) > 0 ? data.pidfile : NULL,
 			s_init, &data, INIT_TOUT);
 		if (rc == -1)
 		{
@@ -677,22 +693,6 @@ main (int argc, char **argv)
 		}
 	}
 
-	char log_id[32] = {0};
-	if (be_daemon)
-		snprintf (log_id, sizeof (log_id), "[Coordinator] ");
-	else
-		snprintf (log_id, sizeof (log_id),
-			ANSI_FG_RED "[Coordinator] " ANSI_RESET);
-	set_logid (log_id);
-
-	/* Drop privileges. */
-	if (run_as (run_as_uid, run_as_gid) == -1)
-	{
-		logmsg (errno, LOG_ERR, "Cannot drop privileges");
-		tes_if_close (data.ifd);
-		exit (EXIT_FAILURE);
-	}
-
 	/* Set CPU affinity. */
 	if (pth_set_cpuaff (0) == -1)
 		logmsg (errno, LOG_WARNING, "Cannot set cpu affinity");
@@ -704,7 +704,6 @@ main (int argc, char **argv)
 	sigdelset (&sa.sa_mask, SIGTERM);
 	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
 
-	data.stat_period = stat_period;
 	rc = s_coordinator_body (&data);
 
 	logmsg (0, LOG_INFO, "Shutting down");
