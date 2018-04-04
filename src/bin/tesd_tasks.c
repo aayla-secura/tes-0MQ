@@ -3,6 +3,10 @@
  * --------------------------- DEV NOTES ---------------------------
  * -----------------------------------------------------------------
  * There is a separate thread for each "task". Threads are zactors.
+ * They are started by tasks_start (defined here, declared in
+ * tesd_tasks_coordinator.h), which should be called by the
+ * coordinator.
+ *
  * Tasks are defined in a static global array, see THE TASK LIST.
  *
  * Tasks are largely similar, so we pass the same handler,
@@ -35,7 +39,7 @@
  * initializer, if it is set. So it can allocate the pointer to its
  * data and do anything else it wishes (talk to clients, etc).
  *
- * Tasks defined with the autoactivate flag on are activated before
+ * Tasks which set their autoactivate flag are activated before
  * entering the loop. Otherwise the task should activate itself from
  * within its initializer or in its frontend handlers.
  *
@@ -53,8 +57,8 @@
  * Note that any additional handler set for the socket will also be
  * registered in which case it must not try to receive the message
  * from the socket. It may inspect the list of subscriptions since it
- * will be called after the default one. Subscriptions are appended to
- * list, so the last one is at the tail.
+ * will be called after the default handler. Subscriptions are
+ * appended to list, so the last one is at the tail.
  * For XPUB frontends (struct _task_endpoint_t*)->subscriptions is
  * initialized to a new zlistx_t regardless of the autosleep flag, so
  * the socket handler can use it straight away. Furthermore the
@@ -70,17 +74,17 @@
  * The actual task is done inside the frontend handlers and pkt_handler.
  *
  *   each frontend handler processes messages on the public socket. If
- *   if no frontend is set, the task has no public interface.
+ *   no frontend is set, the task has no public interface.
  *
- *   pkt_handler is called by the generic socket reader for each
- *   packet in each ring and does whatever.
+ *   pkt_handler is called (by s_sig_hn when receiving SIG_WAKEUP) for
+ *   each packet in each ring.
  *
- * All handlers have access to the zloop so they can enable or
- * disable readers (e.g. a frontend handler can disable itself after
+ * Tasks have access to their zloop so they can enable or disable
+ * readers (e.g. a frontend handler can disable itself after
  * receiving a job and the pkt_handler can re-enable it when done).
  *
- * If either handler encounters a fatal error, it returns with
- * TASK_ERROR.
+ * If either handler encounters a fatal error, it must return with
+ * TASK_ERROR. The server is stopped cleanly in such case.
  *
  * If the task wants to deactivate itself, it should call
  * task_deactivate. Alternatively it can return with TASK_SLEEP
@@ -95,7 +99,7 @@
  * TASK_SLEEP.
  *
  * The error, busy and active flags are handled by s_sig_hn and
- * s_task_shim. Tasks' handlers should only make use of
+ * s_task_shim. Tasks' handlers should generally only make use of
  * task_activate, task_deactivate and return codes (0,
  * TASK_SLEEP or TASK_ERROR).
  *
@@ -103,8 +107,8 @@
  * We start the task threads using zactor high-level class, which on
  * UNIX systems is a wrapper around pthread_create. zactor_new
  * creates two PAIR zmq sockets and creates a detached thread
- * caliing a wrapper (s_thread_shim) around the hanlder of our
- * choice. It starts the actual handler (which we pass to
+ * caliing a wrapper (zactor.c:s_thread_shim) around the hanlder of
+ * our choice. It starts the actual handler (which we pass to
  * zactor_new), passing it its end of the pipe (a PAIR socket) as
  * well as a void* argument of our choice (again, given to
  * zactor_new). The handler must signal down the pipe using
@@ -121,7 +125,7 @@
  * threads). The default destructor sends a single-frame message
  * from the string "$TERM". zactor_set_destructor, which can set
  * a custom destructor is a DRAFT method only available in latest
- * commits, so we stick to the default one for now. But since we
+ * versions, so we stick to the default one for now. But since we
  * want to deal with integer signals, and not string messages, we
  * define s_task_stop as a wrapper around zactor_destroy, which
  * sends SIG_STOP and then calls zactor_destroy to wait for the

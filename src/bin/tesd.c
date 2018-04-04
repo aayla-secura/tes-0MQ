@@ -25,34 +25,33 @@
  * --------------------------- DEV NOTES ---------------------------
  * -----------------------------------------------------------------
  * When debugging we use assert throughout to catch bugs. Normally
- * these statements should never be reached regardless of user
- * input. Other errors are handled gracefully with messages to
- * clients and/or syslog or stderr/out. dbg_assert is used in
- * functions which are called very often (e.g. handlers) and is
- * a no-op unless DEBUG_LEVEL > 0.
+ * these statements should never be reached regardless of user input.
+ * Other errors are handled gracefully with messages to clients and/or
+ * syslog or stderr/out. dbg_assert is used in functions which are
+ * called very often (e.g. handlers) and is a no-op unless
+ * DEBUG_LEVEL > NO_DEBUG.
  *
  * There is a separate thread for each "task" (see tesd_tasks.c).
- * Tasks are started with tasks_start. Each task has read-only
- * access to rings (they cannot modify the cursor or head) and each
- * task keeps its own head, which is visible by the coordinator
- * (tesd.c).
+ * Tasks are started with tasks_start. Each task has read-only access
+ * to rings (they cannot modify the cursor or head) and each task
+ * keeps its own head, which is visible by the coordinator (tesd.c).
  *
  * After receiving new packets, the coordinator sets the true cursor
  * and head to the per-task head which lags behind all others
- * (tasks_head). Then, to each task which is waiting for more
- * packets it sends a SIG_WAKEUP (tasks_wakeup). 
+ * (tasks_head). Then, to each task which is waiting for more packets
+ * it sends a SIG_WAKEUP (via tasks_wakeup). 
  *
  * Tasks receiving SIG_WAKEUP must process packets, advancing their
  * head until there are no more packets or until they are no longer
- * interested (in which case they set an 'active' boolean to false
- * and will no longer receive SIG_WAKEUP).
+ * interested (in which case they set an 'active' flag to false and
+ * will no longer receive SIG_WAKEUP).
  *
- * The coordinator must register a generic task reader with its
- * zloop, so that when tasks encounter an error the coordinator's
- * loop is terminated. The signal handler is generic, internal to
- * tesd_tasks. Coordinator simply passes the loop to tasks_start and
- * after exiting from its loop (for whatever reason) calls
- * tasks_stop to shutdown all tasks cleanly.
+ * The coordinator must register a generic task reader with its zloop,
+ * so that when tasks encounter an error the coordinator's loop is
+ * terminated. The signal handler is generic, internal to tesd_tasks.
+ * Coordinator simply passes the loop to tasks_start and after exiting
+ * from its loop (for whatever reason) calls tasks_stop to shutdown
+ * all tasks cleanly.
  *
  * -----------------------------------------------------------------
  * ----------------------------- TO DO -----------------------------

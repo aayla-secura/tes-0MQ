@@ -102,12 +102,14 @@ struct s_conf_t
 struct s_data_t
 {
 #if DEBUG_LEVEL >= VERBOSE
-	uint64_t published;    // number of published coincidences
+	uint64_t published; // number of published coincidences
 #endif
 	struct
 	{
 		struct
 		{
+			/* s_add_ticks moves ticks from cur_frame.cur_group to
+			 * cur_frame. */
 			int num_ongoing; // no. of vectors in the group
 			uint16_t ticks;  // since start of group
 			uint16_t ticks_since_last;  // since last event
