@@ -427,14 +427,14 @@ s_task_construct_filenames (struct s_data_t* sjob)
 	/* Statistics file. */
 	int rc = snprintf (tmpfname, PATH_MAX, "%s%s%s",
 		sjob->basefname,
-		strlen (sjob->measurement) == 0 ? "" : "-",
+		strlen (sjob->measurement) == 0 ? "" : "/",
 		sjob->measurement);
 	if (rc == -1 || (size_t)rc >= PATH_MAX)
 	{
 		logmsg (rc == -1 ? errno : 0, LOG_ERR,
 			"Cannot construct filename for dataset %s%s%s",
 			sjob->basefname,
-			strlen (sjob->measurement) == 0 ? "" : "-",
+			strlen (sjob->measurement) == 0 ? "" : "/",
 			sjob->measurement);
 		return TES_CAP_REQ_EFAIL;
 	}
