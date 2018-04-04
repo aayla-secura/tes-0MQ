@@ -67,9 +67,9 @@ struct _task_t
 	zactor_t*     shim;         // coordinator's end of the pipe,
 	                            // signals sent on behalf of
 	                            // coordinator go here
-/* No check is done for number of frontends, looping over them stops
- * when one of the required members, e.g. addresses, is NULL. (don't
- * use type, ZMQ_PAIR is 0). */
+/* Looping over frontends stops past MAX_FRONTENDS or when
+ * addresses is NULL. (addresses and type are the only required
+ * members, but don't judge by type since ZMQ_PAIR is 0). */
 #define MAX_FRONTENDS 16
 	task_endp_t frontends[MAX_FRONTENDS];
 	int         id;             // the task ID

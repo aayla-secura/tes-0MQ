@@ -420,7 +420,9 @@ task_activate (task_t* self)
 	}
 
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL; frontend++)
+			frontend->addresses != NULL &&
+			frontend <= &self->frontends[MAX_FRONTENDS - 1];
+			frontend++)
 	{
 		if (frontend->automute)
 			zloop_reader_end (self->loop, frontend->sock);
@@ -455,7 +457,9 @@ task_deactivate (task_t* self)
 	}
 
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL; frontend++)
+			frontend->addresses != NULL &&
+			frontend <= &self->frontends[MAX_FRONTENDS - 1];
+			frontend++)
 	{
 		if ( ! frontend->automute )
 			continue;
@@ -559,7 +563,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 
 	/* Open and bind the public interfaces */
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL; frontend++)
+			frontend->addresses != NULL &&
+			frontend <= &self->frontends[MAX_FRONTENDS - 1];
+			frontend++)
 	{
 		frontend->sock = zsock_new (frontend->type);
 		if (frontend->sock == NULL)
@@ -672,7 +678,9 @@ cleanup:
 	}
 	zloop_destroy (&loop);
 	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL; frontend++)
+			frontend->addresses != NULL &&
+			frontend <= &self->frontends[MAX_FRONTENDS - 1];
+			frontend++)
 		zsock_destroy (&frontend->sock);
 	logmsg (0, LOG_DEBUG, "Done");
 
