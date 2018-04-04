@@ -3,7 +3,7 @@
  *   - use BSD's closefrom () if available 
  *   - method for finding highest fd number is not portable, see
  *     https://stackoverflow.com/questions/899038/getting-the-highest-allocated-file-descriptor/918469#918469
- *   - implement optional dropping of privileges
+ *   - multiple verbose levels
  * 
  * NOTES:
  *   - valgrind temporarily increases the current soft limit and
@@ -40,7 +40,7 @@
 
 #define DAEMON_OK_MSG  "0"
 #define DAEMON_ERR_MSG "1"
-#define DAEMON_TIMEOUT 3000 /* deafault */
+#define DAEMON_TIMEOUT 3000 /* default */
 
 static bool is_daemon;
 static bool is_verbose;
