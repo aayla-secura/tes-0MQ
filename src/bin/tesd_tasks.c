@@ -41,12 +41,27 @@
  *
  * Each frontend defined with the automute flag will have its handler
  * deregistered from the loop upon task activation, and registered
- * again upon deactivation. Useful for tasks which deal with one client
- * at a time, such as REQ/REP tasks.
+ * again upon deactivation. Useful for tasks which deal with one
+ * client at a time, such as REQ/REP tasks.
  *
  * If any of the frontends is an XPUB and is defined with the
- * autosleep flag, the task will be deactivated when the socket has no
- * subscribers and reactivated at the first subscription.
+ * autosleep flag, a generic handler is registered for it. It inspects
+ * messages received, updates the list of active subscription patterns
+ * ((struct _task_endpoint_t*)->subscriptions), deactivates the task
+ * when the socket has no subscribers and reactivates it at the first
+ * subscription.
+ * Note that any additional handler set for the socket will also be
+ * registered in which case it must not try to receive the message
+ * from the socket. It may inspect the list of subscriptions since it
+ * will be called after the default one. Subscriptions are appended to
+ * list, so the last one is at the tail.
+ * For XPUB frontends (struct _task_endpoint_t*)->subscriptions is
+ * initialized to a new zlistx_t regardless of the autosleep flag, so
+ * the socket handler can use it straight away. Furthermore the
+ * comparator function is set to (a wrapper around) strcmp, the
+ * duplicator function to (a wrapper around) strdup and the
+ * destructor to (a wrapper) around free. Tasks may change the
+ * comparator/duplicator/destructor in their data_init method.
  *
  * Right after the loop terminates, s_task_shim will call the task
  * finalizer, so it can cleanup its data and possibly send final
@@ -136,6 +151,9 @@ static zactor_fn       s_task_shim;
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
 static zloop_reader_fn s_sub_hn;
+static zlistx_comparator_fn s_item_cmp;
+static zlistx_duplicator_fn s_item_dup;
+static zlistx_destructor_fn s_item_free;
 
 static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
@@ -558,17 +576,25 @@ s_task_shim (zsock_t* pipe, void* self_)
 		logmsg (0, LOG_INFO,
 			"Listening on port(s) %s", frontend->addresses);
 
-		rc = 0;
-		if (frontend->handler != NULL)
-			rc = zloop_reader (loop, frontend->sock,
-				frontend->handler, self);
-		
-		if (rc == 0 && frontend->autosleep)
+		if (frontend->type == ZMQ_XPUB)
 		{
+			frontend->subscriptions = zlistx_new ();
+			zlistx_set_comparator (frontend->subscriptions, s_item_cmp);
+			zlistx_set_duplicator (frontend->subscriptions, s_item_dup);
+			zlistx_set_destructor (frontend->subscriptions, s_item_free);
+		}
+
+		rc = 0;
+		if (frontend->autosleep)
+		{ /* default XPUB handler */
 			assert (frontend->type == ZMQ_XPUB);
 			rc = zloop_reader (loop, frontend->sock, s_sub_hn, self);
 		}
-		
+		if (rc == 0 && frontend->handler != NULL)
+		{ /* task's own handler */
+			rc = zloop_reader (loop, frontend->sock,
+				frontend->handler, self);
+		}
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
@@ -819,8 +845,7 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 #if DEBUG_LEVEL >= VERBOSE
 	zframe_t* f = zmsg_first (msg);
 	char* hexstr = zframe_strhex (f);
-	logmsg (0, LOG_DEBUG,
-		"Got message %s", hexstr);
+	logmsg (0, LOG_DEBUG, "Got message %s", hexstr);
 	zstr_free (&hexstr);
 #endif
 
@@ -835,22 +860,47 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	char* msgstr = zmsg_popstr (msg);
 	zmsg_destroy (&msg);
 	char req_rc = msgstr[0];
-	zstr_free (&msgstr);
 	if (req_rc == 0)
 	{
 		dbg_assert (frontend->nsubs > 0);
 		frontend->nsubs--;
+		logmsg (0, LOG_DEBUG,
+			"Unsubscription for '%s'", msgstr + 1);
+
+		void* item = zlistx_find (
+			frontend->subscriptions, msgstr + 1);
+		if (item == NULL)
+			logmsg (0, LOG_WARNING,
+				"Unsubscription for message not in list");
+		else if (zlistx_delete (frontend->subscriptions, item) == -1)
+			logmsg (0, LOG_WARNING,
+				"Could not delete unsubscription from list");
 	}
 	else if (req_rc == 1)
 	{
 		frontend->nsubs++;
+		logmsg (0, LOG_DEBUG,
+			"Subscription for '%s'", msgstr + 1);
+
+		void* item = zlistx_add_end (
+			frontend->subscriptions, msgstr + 1);
+		if (item == NULL)
+			logmsg (0, LOG_WARNING,
+				"Could not insert subscription into list");
+#if DEBUG_LEVEL >= TESTING
+		char* itemstr = zlistx_handle_item (item);
+		/* Should have been duplicated */
+		dbg_assert (itemstr != NULL && itemstr != msgstr + 1);
+#endif
 	}
 	else
 	{
 		logmsg (0, LOG_DEBUG,
 			"Got a spurious message");
+		zstr_free (&msgstr);
 		return 0;
 	}
+	zstr_free (&msgstr);
 
 	if (frontend->nsubs == 1)
 	{
@@ -868,6 +918,27 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 
 	return 0;
+}
+
+static int
+s_item_cmp (const void* itemA, const void* itemB)
+{
+	return strcmp ((const char*)itemA, (const char*)itemB);
+}
+
+static void*
+s_item_dup (const void* item)
+{
+	return (void*)strdup ((const char*)item);
+}
+
+static void
+s_item_free (void** item_p)
+{
+	assert (item_p != NULL);
+	if (*item_p != NULL)
+		free (*item_p);
+	*item_p = NULL;
 }
 
 /*

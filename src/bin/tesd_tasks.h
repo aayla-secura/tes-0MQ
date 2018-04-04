@@ -47,6 +47,7 @@ struct _task_endpoint_t
 	const char* addresses;      // comma-separated
 	zsock_t*    sock;
 	uint32_t    nsubs;          // used for XPUB sockets only
+	zlistx_t*   subscriptions;  // used for XPUB sockets only
 	const int   type;           // one of ZMQ_*
 	bool        automute;       // s_task_(de)activate will
 	                            // enable/disable handler
