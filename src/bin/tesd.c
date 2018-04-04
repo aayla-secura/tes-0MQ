@@ -57,8 +57,6 @@
  * -----------------------------------------------------------------
  * ----------------------------- TO DO -----------------------------
  * -----------------------------------------------------------------
- * - drop privileges before daemonizing, so pidfile is owned by new user
- * - remove pidfile
  */
 
 #include "tesd.h"
@@ -704,13 +702,19 @@ main (int argc, char **argv)
 	sigdelset (&sa.sa_mask, SIGTERM);
 	pthread_sigmask (SIG_BLOCK, &sa.sa_mask, NULL);
 
-	rc = s_coordinator_body (&data);
+	int rc_coord = s_coordinator_body (&data);
 
+	if (be_daemon && strlen (data.pidfile) > 0)
+	{
+		rc = unlink (data.pidfile);
+		if (rc == -1)
+			logmsg (0, LOG_WARNING, "Cannot delete pidfile");
+	}
 	logmsg (0, LOG_INFO, "Shutting down");
 	assert (data.ifd != NULL);
 	rc = tes_if_close (data.ifd);
-	if (rc != 0)
+	if (rc == -1)
 		logmsg (0, LOG_WARNING, "Cannot close interface");
 
-	exit ( rc ? EXIT_FAILURE : EXIT_SUCCESS );
+	exit ( rc_coord == 0 ? EXIT_SUCCESS : EXIT_FAILURE );
 }
