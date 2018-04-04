@@ -476,18 +476,6 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	assert (pid == 0);
 	close (pipe_fds[0]); /* we don't use the read end */
 
-	/* Clear umask. */
-	umask (0);
-
-	/* Change working directory. */
-	rc = chdir ("/");
-	if (rc == -1)
-	{
-		logmsg (errno, LOG_DEBUG, "chdir (\"/\")");
-		s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
-		_exit (EXIT_FAILURE);
-	}
-
 	/* Call initializer. */
 	if (initializer != NULL)
 	{
@@ -499,6 +487,18 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
 			_exit (EXIT_FAILURE);
 		}
+	}
+
+	/* Clear umask. */
+	umask (0);
+
+	/* Change working directory. */
+	rc = chdir ("/");
+	if (rc == -1)
+	{
+		logmsg (errno, LOG_DEBUG, "chdir (\"/\")");
+		s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
+		_exit (EXIT_FAILURE);
 	}
 
 	/* Reopen STDIN, STDOUT and STDERR to /dev/null. */
@@ -520,15 +520,14 @@ daemonize (const char* pidfile, daemon_fn* initializer,
 	}
 
 	/* Write pid to a file. */
-	if (pidfile)
+	if (pidfile != NULL)
 	{
 		int fd = open (pidfile, O_CREAT | O_TRUNC | O_WRONLY,
 			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 		if (fd == -1)
 		{
 			logmsg (errno, LOG_ERR,
-				"Failed to open pidfile %s",
-				pidfile);
+				"Failed to open pidfile %s", pidfile);
 			s_send_sig (pipe_fds[1], DAEMON_ERR_MSG);
 			_exit (EXIT_FAILURE);
 		}
