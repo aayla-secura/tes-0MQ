@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
 #include <signal.h>
 #include <sys/types.h>
 /* #include <sys/time.h> */

@@ -1,7 +1,7 @@
+/* pthread_[sg]etaffinity_np, CPU_SET and friends */
 #ifdef linux
 /* _GNU_SOURCE needed for pthread_[sg]etaffinity_np and strchrnul */
 #  define _GNU_SOURCE
-#  include <pthread.h>
 #  include <sched.h>
 #  define cpuset_t cpu_set_t
 #else
@@ -14,6 +14,7 @@
 #include "daemon_ng.h"
 
 #include <unistd.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
