@@ -96,6 +96,9 @@ mkdirr (const char* path, mode_t mode, bool create_basename)
 	if (path == NULL || strlen (path) == 0)
 		return -1;
 	
+#if DEBUG_LEVEL >= VERBOSE
+	logmsg (0, LOG_DEBUG, "Recursively create '%s'", path);
+#endif
 	/* Start from the root and create directories as needed. */
 	char buf[PATH_MAX] = {0};
 	const char* cur_seg = path;
@@ -126,10 +129,13 @@ mkdirr (const char* path, mode_t mode, bool create_basename)
 
 		/* If link is a dangling link, it will result in EEXIST.
 		 * On the next invocation it will be ENOENT. */
+#if DEBUG_LEVEL >= VERBOSE
+		logmsg (0, LOG_DEBUG, "Checking directory '%s'", buf);
+#endif
 		int rc = mkdir (buf, mode);
 		if (rc == 0)
-			logmsg (0, LOG_DEBUG, "Created dir '%s'", buf);
-		else if (errno != EEXIST)
+			logmsg (0, LOG_DEBUG, "Created directory '%s'", buf);
+		else if (errno != EEXIST && errno != EISDIR)
 			return -1; /* don't handle other errors */
 
 		cur_seg = next_seg;
@@ -152,9 +158,15 @@ canonicalize_path (const char* root, const char* path,
 	 * It must end with a slash for memcmp to determine if inside
 	 * realroot.
 	 */
+#if DEBUG_LEVEL >= VERBOSE
+	logmsg (0, LOG_DEBUG, "Canonicalize path '%s' under '%s'",
+		path, (root == NULL ? "" : root));
+#endif
 	char buf[PATH_MAX] = {0};
-	if (root == NULL || strlen (root) == 0 || root[0] != '/')
-	{ /* prepend cwd if needed */
+	bool root_given = (root != NULL && strlen (root) > 0);
+	if ( (root_given && root[0] != '/') ||
+		(path[0] != '/' && ! root_given) )
+	{ /* prepend cwd */
 		char* rs = getcwd (buf, PATH_MAX);
 		if (rs == NULL)
 		{
@@ -168,11 +180,10 @@ canonicalize_path (const char* root, const char* path,
 			"Prepending current working directory '%s'", buf);
 #endif
 	}
-	if (root != NULL && strlen (root) > 0)
-	{ /* add given root */
-		snprintf (buf + strlen (buf),
-			PATH_MAX - strlen (buf), "/%s", root);
-	}
+
+	/* add given root */
+	snprintf (buf + strlen (buf), PATH_MAX - strlen (buf), "/%s",
+		root_given ? root : ""); /* root may be NULL */
 
 	/* Canonicalize the root, since we need to know the realpath for
 	 * later comparison (to determine if outside of root). */
@@ -199,8 +210,9 @@ canonicalize_path (const char* root, const char* path,
 		}
 		strcpy (realroot + rlen, "/");
 		rlen++;
-		assert (rlen == strlen (realroot));
 	}
+	assert (rlen == strlen (realroot) && rlen > 0 &&
+		realroot[0] == '/' && realroot[rlen - 1] == '/');
 
 	/* Add the given path, rlen must remain the length of the root
 	 * (including trailing slash) for later comparison. */

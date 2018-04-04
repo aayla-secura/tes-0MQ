@@ -34,8 +34,11 @@ int run_as (uid_t uid, gid_t gid);
 
 /*
  * Prepends root to path and canonicalizes the path via realpath.
- * If root is NULL it defaults to the current directory.
- * If root doesn't start with a slash, the current directory is
+ * If root is not given (NULL or empty) and path is relative, root
+ * defaults to the current directory.
+ * If root is not given (NULL or empty) and path is absolute, root
+ * defaults to /.
+ * If root is given and is relative, the current directory is
  * prepended.
  *
  * If mustexist is true, path must exist and resolve to a path under
