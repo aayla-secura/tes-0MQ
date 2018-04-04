@@ -212,7 +212,7 @@ static int
 s_map_file (struct hdf5_dset_desc_t* ddesc, hid_t gid)
 {
 #if DEBUG_LEVEL >= TESTING
-	sleep (1);
+	// sleep (1);
 #endif
 	assert (ddesc != NULL);
 	assert (ddesc->filename != NULL);
@@ -288,7 +288,7 @@ static int
 s_create_dset (const struct hdf5_dset_desc_t* ddesc, hid_t gid)
 {
 #if DEBUG_LEVEL >= TESTING
-	sleep (1);
+	// sleep (1);
 #endif
 	assert (ddesc != NULL);
 	assert (ddesc->dsetname != NULL);
