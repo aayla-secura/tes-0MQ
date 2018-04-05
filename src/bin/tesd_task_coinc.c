@@ -21,8 +21,8 @@
 /*
  * Flags in the first byte of a vector.
  * A tick vector is a vector with all elements (masked for flags) ==
- * TOK_TICK; all other vectors are coincidence vectors, see definitions
- * of TOK_*.
+ * TES_COINC_TOK_TICK; all other vectors are coincidence vectors, see
+ * definitions of TES_COINC_TOK_*.
  *
  * UNRESOLVED (coincidence vector):
  *  - consecutive (relevant for the measurement) events each within
@@ -37,10 +37,10 @@
 #if TICK_WITH_COINC > 0
  *    the UNRESOLVED flag will not be applied to the coincidence vector
  *    with the tick flag set, even if that tick occured during the
- *    coincidence; it will only be set for the extra, all TOK_TICK,
- *    vectors before that coincidence, if any of them also occured
- *    during the coincidence (before the last non-tick event in the
- *    window)
+ *    coincidence; it will only be set for the extra, all
+ *    TES_COINC_TOK_TICK, vectors before that coincidence, if any of
+ *    them also occured during the coincidence (before the last
+ *    non-tick event in the window)
 #endif
  * BAD (coincidence vector):
  *  - measurement is not peak and there are multiple peaks within
@@ -50,7 +50,7 @@
  *  - coincidence is first after a tick
  * TICK (tick vector):
  *  - if n > 1 ticks occured between coincidences, there'd be n-1 all
- *    TOK_TICK vectors with this flag
+ *    TES_COINC_TOK_TICK vectors with this flag
 #endif
  */
 #define FLAG_MASK    0xE0
@@ -65,27 +65,27 @@
 
 /*
  * Maximum number of thresholds is 16, meaning that maximum photon
- * number is 17 (meaning 17 or more photons). No event in the channel is
+ * number is 16 (meaning 16 or more photons). No event in the channel is
  * distinguished from event with photon number 0 (below lowest
  * threshold). Also distinguished is a channel in which an event came
  * but didn't contain a measurement (e.g. an average trace).
  *
- * A vector of all TOK_TICK is a tick vector, otherwise it's
+ * A vector of all TES_COINC_TOK_TICK is a tick vector, otherwise it's
  * a coincidence vector.
- * TOK_TICK cannot be between 1 and 17, and it cannot be TOK_NOISE or
- * TOK_UNKNOWN, since it would cause an ambiguity. But it can be
- * TOK_NONE, since a vector of all TOK_NONE would never be published
- * as a coincidence.
+ * TES_COINC_TOK_TICK cannot be between 1 and 16, and it cannot be
+ * TES_COINC_TOK_NOISE or TES_COINC_TOK_UNKNOWN, since it would cause
+ * an ambiguity. But it can be TES_COINC_TOK_NONE, since a vector of
+ * all TES_COINC_TOK_NONE would never be published as a coincidence.
  */
-#define TOK_TICK      0 /* tick vector */
-#define TOK_NONE      0 /* no event in this channel */
-#define TOK_NOISE   (TES_COINC_MAX_PHOTONS+1) /* measurement below threshold */
-#define TOK_UNKNOWN (TES_COINC_MAX_PHOTONS+2) /* an event with no measurement */
+
+typedef uint8_t coinc_vec_t[TES_NCHANNELS];
+typedef uint32_t thresh_t[TES_NCHANNELS][TES_COINC_MAX_PHOTONS];
+typedef uint32_t ch_thresh_t[TES_COINC_MAX_PHOTONS];
 
 typedef bool (s_frame_check_fn)(tespkt* pkt);
 typedef bool (s_event_check_fn)(tespkt* pkt, uint16_t event);
 typedef int  (s_count_fn)(tespkt* pkt, uint16_t event,
-	uint32_t (*threshold)[TES_COINC_MAX_PHOTONS]);
+	ch_thresh_t* threshold);
 
 #define NUM_MEAS 3
 struct s_conf_t
@@ -118,12 +118,12 @@ struct s_data_t
 			uint8_t channels;
 		} cur_group;
 		int idx; // index into coinc of current vector
-		int ticks; // no. of TOK_TICK vectors at start of frame
+		int ticks; // no. of TES_COINC_TOK_TICK vectors at start of frame
 	} cur_frame;
 	
 	struct s_conf_t conf; // to be read only in s_apply_conf or req_*_hn
 	/* following is assigned when changing conf */
-	uint32_t (*thresholds)[TES_NCHANNELS][TES_COINC_MAX_PHOTONS];
+	thresh_t* thresholds;
 	uint16_t window;
 	struct
 	{
@@ -139,7 +139,7 @@ static int s_check_conf (struct s_conf_t* conf);
 static int s_save_conf (task_t* self, struct s_conf_t* conf);
 static void s_apply_conf (struct s_data_t* data);
 static inline uint16_t s_count_from_thres (uint32_t val,
-	uint32_t (*thres)[TES_COINC_MAX_PHOTONS]);
+	ch_thresh_t* thres);
 static inline s_frame_check_fn s_has_area;
 static inline s_frame_check_fn s_has_peak;
 static inline s_frame_check_fn s_has_dp;
@@ -240,8 +240,7 @@ s_apply_conf (struct s_data_t* data)
 }
 
 static inline uint16_t
-s_count_from_thres (uint32_t val,
-	uint32_t (*thres)[TES_COINC_MAX_PHOTONS])
+s_count_from_thres (uint32_t val, ch_thresh_t* thres)
 {
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, "Measurement value is %u", val);
@@ -254,7 +253,7 @@ s_count_from_thres (uint32_t val,
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, " -> %hhu photons", p);
 #endif
-		return (p == 0 ? TOK_NOISE : p);
+		return (p == 0 ? TES_COINC_TOK_NOISE : p);
 }
 
 static inline bool
@@ -295,20 +294,18 @@ s_is_bad_dp (tespkt* pkt, uint16_t e)
 }
 
 static int
-s_from_area (tespkt* pkt, uint16_t e,
-	uint32_t (*thres)[TES_COINC_MAX_PHOTONS])
+s_from_area (tespkt* pkt, uint16_t e, ch_thresh_t* thres)
 {
 	if ( ! s_has_area (pkt) )
-		return TOK_UNKNOWN;
+		return TES_COINC_TOK_UNKNOWN;
 	return s_count_from_thres (tespkt_event_area (pkt, e), thres);
 }
 
 static int
-s_from_peak (tespkt* pkt, uint16_t e,
-	uint32_t (*thres)[TES_COINC_MAX_PHOTONS])
+s_from_peak (tespkt* pkt, uint16_t e, ch_thresh_t* thres)
 {
 	if ( ! s_has_peak (pkt) )
-		return TOK_UNKNOWN;
+		return TES_COINC_TOK_UNKNOWN;
 	if (tespkt_is_multipeak (pkt))
 		return s_count_from_thres (
 			tespkt_multipeak_height (pkt, e, 0), thres);
@@ -317,11 +314,10 @@ s_from_peak (tespkt* pkt, uint16_t e,
 }
 
 static int
-s_from_dp (tespkt* pkt, uint16_t e,
-	uint32_t (*thres)[TES_COINC_MAX_PHOTONS])
+s_from_dp (tespkt* pkt, uint16_t e, ch_thresh_t* thres)
 {
 	if ( ! s_has_dp (pkt) )
-		return TOK_UNKNOWN;
+		return TES_COINC_TOK_UNKNOWN;
 	return tespkt_trace_dp (pkt, e);
 }
 
@@ -335,7 +331,7 @@ s_get_vec_flags (task_t* self, int id)
 		id = self->data->cur_frame.idx;
 	dbg_assert (id >= 0);
 	
-	uint8_t (*cvec)[TES_NCHANNELS] = &self->data->coinc[id];
+	coinc_vec_t* cvec = &self->data->coinc[id];
 	return ((*cvec)[0] & FLAG_MASK);
 }
 
@@ -348,7 +344,7 @@ s_set_vec_flags (task_t* self, uint8_t flags, int id)
 		id = self->data->cur_frame.idx;
 	dbg_assert (id >= 0);
 	
-	uint8_t (*cvec)[TES_NCHANNELS] = &self->data->coinc[id];
+	coinc_vec_t* cvec = &self->data->coinc[id];
 	(*cvec)[0] |= flags;
 }
 #endif
@@ -399,8 +395,7 @@ s_add_to_group (task_t* self)
 	data->cur_frame.idx++;
 	data->cur_frame.cur_group.num_ongoing++;
 	
-	uint8_t (*cvec)[TES_NCHANNELS] =
-		&data->coinc[data->cur_frame.idx];
+	coinc_vec_t* cvec = &data->coinc[data->cur_frame.idx];
 	(*cvec)[0] |= flags;
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 	logmsg (0, LOG_DEBUG, "Added a vector with flags = 0x%02x", flags);
@@ -454,9 +449,8 @@ s_add_ticks (task_t* self)
 	dbg_assert (data->cur_frame.idx + num < MAX_COINC_VECS);
 	dbg_assert (data->cur_frame.idx + 1 >= 0);
 	
-	uint8_t (*tick)[TES_NCHANNELS] =
-		&data->coinc[data->cur_frame.idx + 1];
-	memset (tick, TOK_TICK, num*TES_NCHANNELS);
+	coinc_vec_t* tick = &data->coinc[data->cur_frame.idx + 1];
+	memset (tick, TES_COINC_TOK_TICK, num*TES_NCHANNELS);
 	for (int t = 0; t < num; t++, tick++)
 	{
 		(*tick)[0] |= ( t < num_unres ? UNRESOLVED : 0 | TICK );
@@ -554,7 +548,7 @@ s_publish (task_t* self, uint16_t reserve)
 	assert (data->cur_frame.idx ==
 		data->cur_frame.cur_group.num_ongoing - 1);
 	int idx_next = data->cur_frame.idx + 1;
-	memset (&data->coinc[idx_next], TOK_NONE,
+	memset (&data->coinc[idx_next], TES_COINC_TOK_NONE,
 		CVEC_SIZE * (MAX_COINC_VECS - idx_next));
 	
 	return 0;
@@ -661,7 +655,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	{
 		zsock_send (frontend, TES_COINC_REP_TH_PIC,
 			TES_COINC_REQ_TH_EINV, "", 0);
-		zstr_free (&buf);
+		freen (buf); /* from czmq_prelude */
 		return 0;
 	}
 	
@@ -672,8 +666,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	{ /* update config */
 		struct s_conf_t conf = {0};
 		memcpy (&conf, &data->conf, sizeof (struct s_conf_t));
-		uint32_t (*thres)[TES_COINC_MAX_PHOTONS] =
-			&conf.thresholds[meas][channel];
+		ch_thresh_t* thres = &conf.thresholds[meas][channel];
 		memset (thres, 0, sizeof (*thres));
 		memcpy (thres, buf, len);
 
@@ -701,10 +694,9 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		logmsg (0, LOG_DEBUG,
 			"Not changing configuration");
 	}
-	zstr_free (&buf);
+	freen (buf); /* from czmq_prelude */
 	
-	uint32_t (*thres)[TES_COINC_MAX_PHOTONS] =
-		&data->conf.thresholds[meas][channel];
+	ch_thresh_t* thres = &data->conf.thresholds[meas][channel];
 	zsock_send (frontend, TES_COINC_REP_TH_PIC,
 		req_rc, thres, sizeof (*thres));
 	
@@ -721,7 +713,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
  * the same coincidence group, set the UNRESOLVED flag.
  *
  * If the event type does not contain the relevant measurement set the
- * channel count to TOK_UNKNOWN.
+ * channel count to TES_COINC_TOK_UNKNOWN.
  *
  * Either way, if it's a tick, and if DEFER_EMPTY is not set or there
  * have been completed coincidences since the last publishing, publish
@@ -835,8 +827,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				if (data->cur_frame.cur_group.num_ongoing == 1)
 					logmsg (0, LOG_DEBUG, "Group becomes unresolved");
 #endif
-				uint8_t (*cvec)[TES_NCHANNELS] =
-					&data->coinc[data->cur_frame.idx];
+				coinc_vec_t* cvec = &data->coinc[data->cur_frame.idx];
 				(*cvec)[0] |= UNRESOLVED;
 			}
 			
@@ -854,10 +845,8 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		dbg_assert (s_ongoing (data));
 		
 		data->cur_frame.cur_group.channels |= (1 << ef->CH);
-		uint8_t (*cvec)[TES_NCHANNELS] =
-			&data->coinc[data->cur_frame.idx];
-		uint32_t (*thres)[TES_COINC_MAX_PHOTONS] =
-			&(*data->thresholds)[ef->CH];
+		coinc_vec_t* cvec = &data->coinc[data->cur_frame.idx];
+		ch_thresh_t* thres = &(*data->thresholds)[ef->CH];
 		
 		if (data->util.is_bad (pkt, e))
 		{
@@ -887,10 +876,10 @@ task_coinc_init (task_t* self)
 	assert ((UNRESOLVED & FLAG_MASK) == UNRESOLVED);
 	assert ((BAD & FLAG_MASK) == BAD);
 	assert ((TICK & FLAG_MASK) == TICK);
-	assert ((TOK_TICK & FLAG_MASK) == 0);
-	assert ((TOK_NONE & FLAG_MASK) == 0);
-	assert ((TOK_NOISE & FLAG_MASK) == 0);
-	assert ((TOK_UNKNOWN & FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_TICK & FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_NONE & FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_NOISE & FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_UNKNOWN & FLAG_MASK) == 0);
 	assert ((TES_COINC_MAX_PHOTONS & FLAG_MASK) == 0);
 
 	static struct s_data_t data;
@@ -952,7 +941,7 @@ task_coinc_wakeup (task_t* self)
 	assert (self != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 
-	memset (&data->coinc, TOK_NONE, MAX_COINC_VECS*CVEC_SIZE);
+	memset (&data->coinc, TES_COINC_TOK_NONE, MAX_COINC_VECS*CVEC_SIZE);
 	memset (&data->cur_frame, 0, sizeof (data->cur_frame));
 	data->publishing = false;
 	data->cur_frame.idx = -1;

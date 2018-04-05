@@ -84,11 +84,17 @@
 #define TES_COINC_REP_LPORT    "55558"
 #define TES_COINC_REP_TH_LPORT "55559"
 #define TES_COINC_PUB_LPORT    "55568"
-#define TES_COINC_MAX_PHOTONS 17
+#define TES_COINC_MAX_PHOTONS 16
 #define TES_COINC_MEAS_AREA 0
 #define TES_COINC_MEAS_PEAK 1
 #define TES_COINC_MEAS_DOTP 2
 #define TES_COINC_MAX_WINDOW UINT16_MAX
 #define TES_COINC_MAX_SIZE  (TES_NCHANNELS*256)
+#define TES_COINC_TOK_TICK  0 // tick vector
+#define TES_COINC_TOK_NONE  0 // no event in this channel
+#define TES_COINC_TOK_NOISE   \
+	(TES_COINC_MAX_PHOTONS+1) // measurement below threshold
+#define TES_COINC_TOK_UNKNOWN \
+	(TES_COINC_MAX_PHOTONS+2) // an event with no measurement
 
 #endif
