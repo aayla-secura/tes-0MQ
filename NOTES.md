@@ -62,6 +62,12 @@ Line width should be no more than 69 characters! Some people like to vsplit thei
  * Each task has its own file where it defines its packet and client handlers
  * used by `tesd_tasks.c`
 
+To add a new task:
+ * Copy `src/bin/tesd_task_skeleton.c` to `src/bin/tesd_task_<task_name>.c`
+ * Declare the handlers in `src/bin/tesd_tasks.h`
+ * Define constants useful to the clients in `include/api.h`
+ * Add an entry in THE TASK LIST in `src/bin/tesd_tasks.c`
+
 # Comment style
 
 ```
