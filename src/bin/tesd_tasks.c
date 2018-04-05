@@ -163,7 +163,7 @@
 #include "tesd_tasks.h"
 #include "tesd_tasks_coordinator.h"
 
-static const char* s_config_dir; // stored and given by coordinator
+static char s_config_dir[PATH_MAX]; // given by coordinator
 
 static zactor_fn       s_task_shim;
 static zloop_reader_fn s_sig_hn;
@@ -296,7 +296,7 @@ tasks_start (tes_ifdesc* ifd, zloop_t* c_loop, const char* confdir)
 	assert (ifd != NULL);
 	assert (sizeof (s_tasks) == NUM_TASKS * sizeof (task_t));
 	
-	s_config_dir = confdir;
+	snprintf (s_config_dir, PATH_MAX, "%s", confdir);
 	
 	int rc;
 	for (int t = 0; t < NUM_TASKS; t++)
