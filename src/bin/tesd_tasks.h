@@ -44,14 +44,27 @@ typedef int (task_pkt_fn)(zloop_t*, tespkt*,
 struct _task_endpoint_t
 {
 	zloop_reader_fn* handler;
-	const char* addresses;      // comma-separated
+	const char* addresses;      // comma-separated, by default it binds,
+	                            // prefix with '>' those that need to
+	                            // connect instead
 	zsock_t*    sock;
-	uint32_t    nsubs;          // used for XPUB sockets only
-	zlistx_t*   subscriptions;  // used for XPUB sockets only
+	union
+	{ // socket-type specific
+		struct
+		{
+			/*
+			 * For XPUB sockets it is updated if automanaged is true. For
+			 * *SUB sockets it is updated by endp_subscribe and endp_unsubscribe.
+			 */
+			uint32_t  nsubs;
+			zlistx_t* subscriptions;
+			bool      autosleep;
+			bool      automanage; // used for XPUB only
+		} pub; // used for XPUB, XSUB and SUB sockets
+	};
 	const int   type;           // one of ZMQ_*
 	bool        automute;       // s_task_(de)activate will
 	                            // enable/disable handler
-	bool        autosleep;      // valid for XPUB sockets only
 };
 
 struct _task_t
@@ -67,11 +80,11 @@ struct _task_t
 	zactor_t*     shim;         // coordinator's end of the pipe,
 	                            // signals sent on behalf of
 	                            // coordinator go here
-/* Looping over frontends stops past MAX_FRONTENDS or when
+/* Looping over endpoints stops past MAX_FRONTENDS or when
  * addresses is NULL. (addresses and type are the only required
  * members, but don't judge by type since ZMQ_PAIR is 0). */
 #define MAX_FRONTENDS 16
-	task_endp_t frontends[MAX_FRONTENDS];
+	task_endp_t endpoints[MAX_FRONTENDS];
 	int         id;             // the task ID
 	tes_ifdesc* ifd;            // netmap interface
 	uint32_t    heads[NUM_RINGS]; // per-ring task's head
@@ -113,7 +126,7 @@ int task_activate (task_t* self);
  * a time, enables reading the client_handler.
  * Returns 0 on success, TASK_ERROR on error.
  */
-int  task_deactivate (task_t* self);
+int task_deactivate (task_t* self);
 
 /*
  * Read/write configuration to tasks' config file. The file name is constructed
@@ -126,6 +139,14 @@ int  task_deactivate (task_t* self);
 #define TES_TASK_SAVE_CONF 0
 #define TES_TASK_READ_CONF 1
 ssize_t task_conf (task_t* self, void* conf, size_t len, int cmd);
+
+/*
+ * Subscribe or unsubscribe from pattern. Updates the subscription
+ * list and counter.
+ * Returns 0 on success, TASK_ERROR on error.
+ */
+int endp_subscribe (task_endp_t* endpoint, char* pattern);
+int endp_unsubscribe (task_endp_t* endpoint, char* pattern);
 
 /* ------------------------ TASK HANDLERS ----------------------- */
 

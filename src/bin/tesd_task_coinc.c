@@ -517,7 +517,7 @@ s_publish (task_t* self, uint16_t reserve)
 	data->cur_frame.ticks = 0;
 
 	int rc = zmq_send (
-		zsock_resolve (self->frontends[ENDP_PUB].sock),
+		zsock_resolve (self->endpoints[ENDP_PUB].sock),
 		(void*)&data->coinc[0], CVEC_SIZE * num_ready, 0);
 	if (rc == -1)
 	{
@@ -572,7 +572,7 @@ s_num_completed (struct s_data_t* data)
 /* -------------------------------------------------------------- */
 
 int
-task_coinc_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
+task_coinc_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -581,7 +581,7 @@ task_coinc_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	struct s_conf_t conf = {0};
 	memcpy (&conf, &data->conf, sizeof (struct s_conf_t));
 	
-	int rc = zsock_recv (frontend, TES_COINC_REQ_PIC,
+	int rc = zsock_recv (endpoint, TES_COINC_REQ_PIC,
 		&conf.window, &conf.measurement);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
@@ -604,14 +604,14 @@ task_coinc_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 			"Could not save configuration");
 		// return TASK_ERROR;
 	}
-	zsock_send (frontend, TES_COINC_REP_PIC,
+	zsock_send (endpoint, TES_COINC_REP_PIC,
 		data->conf.window, data->conf.measurement);
 	
 	return 0;
 }
 
 int
-task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
+task_coinc_req_th_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -621,7 +621,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	uint8_t meas, channel;
 	char* buf;
 	size_t len;
-	int rc = zsock_recv (frontend, TES_COINC_REQ_TH_PIC,
+	int rc = zsock_recv (endpoint, TES_COINC_REQ_TH_PIC,
 		&meas, &channel, &buf, &len);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
@@ -653,7 +653,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	
 	if (invalid)
 	{
-		zsock_send (frontend, TES_COINC_REP_TH_PIC,
+		zsock_send (endpoint, TES_COINC_REP_TH_PIC,
 			TES_COINC_REQ_TH_EINV, "", 0);
 		freen (buf); /* from czmq_prelude */
 		return 0;
@@ -697,7 +697,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	freen (buf); /* from czmq_prelude */
 	
 	ch_thresh_t* thres = &data->conf.thresholds[meas][channel];
-	zsock_send (frontend, TES_COINC_REP_TH_PIC,
+	zsock_send (endpoint, TES_COINC_REP_TH_PIC,
 		req_rc, thres, sizeof (*thres));
 	
 	return 0;
@@ -870,9 +870,9 @@ task_coinc_init (task_t* self)
 	assert (TES_NCHANNELS == 2 || TES_NCHANNELS == 4 ||
 		TES_NCHANNELS == 8); // has to be a power of 2
 	assert (TICK_WITH_COINC == 0 || TICK_WITH_COINC == 1);
-	assert (self->frontends[ENDP_REP].type == ZMQ_REP);
-	assert (self->frontends[ENDP_REP_TH].type == ZMQ_REP);
-	assert (self->frontends[ENDP_PUB].type == ZMQ_XPUB);
+	assert (self->endpoints[ENDP_REP].type == ZMQ_REP);
+	assert (self->endpoints[ENDP_REP_TH].type == ZMQ_REP);
+	assert (self->endpoints[ENDP_PUB].type == ZMQ_XPUB);
 	assert ((UNRESOLVED & FLAG_MASK) == UNRESOLVED);
 	assert ((BAD & FLAG_MASK) == BAD);
 	assert ((TICK & FLAG_MASK) == TICK);

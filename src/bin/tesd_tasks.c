@@ -30,8 +30,8 @@
  * current frame sequences mod 2^16) is passed to the pkt_handler.
  * s_sig_hn also takes care of updating the task's head.
  *
- * If the task defines public frontend addresses, s_task_shim will
- * open the socket, and if the frontend defines a handler, it will
+ * If the task defines public endpoint addresses, s_task_shim will
+ * open the socket, and if the endpoint defines a handler, it will
  * register it with the task's loop. Each task has a pointer for its
  * own data.
  *
@@ -41,46 +41,60 @@
  *
  * Tasks which set their autoactivate flag are activated before
  * entering the loop. Otherwise the task should activate itself from
- * within its initializer or in its frontend handlers.
+ * within its initializer or in its endpoint handlers.
  *
- * Each frontend defined with the automute flag will have its handler
+ * Each endpoint defined with the automute flag will have its handler
  * deregistered from the loop upon task activation, and registered
  * again upon deactivation. Useful for tasks which deal with one
  * client at a time, such as REQ/REP tasks.
  *
- * If any of the frontends is an XPUB and is defined with the
- * autosleep flag, a generic handler is registered for it. It inspects
- * messages received, updates the list of active subscription patterns
- * ((struct _task_endpoint_t*)->subscriptions), deactivates the task
- * when the socket has no subscribers and reactivates it at the first
- * subscription.
- * Note that any additional handler set for the socket will also be
- * registered in which case it must not try to receive the message
- * from the socket. It may inspect the list of subscriptions since it
- * will be called after the default handler. Subscriptions are
- * appended to list, so the last one is at the tail.
- * For XPUB frontends (struct _task_endpoint_t*)->subscriptions is
- * initialized to a new zlistx_t regardless of the autosleep flag, so
- * the socket handler can use it straight away. Furthermore the
- * comparator function is set to (a wrapper around) strcmp, the
- * duplicator function to (a wrapper around) strdup and the
- * destructor to (a wrapper) around free. Tasks may change the
- * comparator/duplicator/destructor in their data_init method.
+ * FRONTEND-TYPE SPECIFICS:
+ *   If any of the endpoints is an XPUB and is defined with the
+ *   automanage flag, a generic handler is registered for it. It
+ *   inspects messages received, updates the list of active
+ *   subscription patterns ((struct _task_endpoint_t*)->pub.subscriptions).
+ *   If the endpoint also has the autosleep flag it will be
+ *   deactivated when the socket has no subscribers and reactivated at
+ *   the first subscription.
+ *   Note that any additional handler set for the socket will also be
+ *   registered in which case it must not try to receive the message
+ *   from the socket. It may inspect the list of subscriptions since
+ *   it will be called after the default handler. Subscriptions are
+ *   appended to list, so the last one is at the tail.
+ *   For XPUB endpoints (struct _task_endpoint_t*)->pub.subscriptions
+ *   is initialized to a new zlistx_t regardless of the automanaged
+ *   flag, so the socket handler can use it straight away. Furthermore
+ *   the comparator function is set to (a wrapper around) strcmp, the
+ *   duplicator function to (a wrapper around) strdup and the
+ *   destructor to (a wrapper) around free. Tasks may change the
+ *   comparator/duplicator/destructor in their data_init method.
+ *
+ *   If any of the endpoints is an XSUB or SUB it can make use of
+ *   endp_subscribe and endp_unsubscribe to subscribe and unsubscribe (the
+ *   type XSUB vs SUB is checked and the appropriate action is taken.
+ *   The no. of subscriptions (struct _task_endpoint_t*)->pub.nsubs
+ *   and the list of (struct _task_endpoint_t*)->pub.subscriptions is
+ *   updated. The same default comparator/duplicator/destructor is set
+ *   as for XPUB.
+ *   If the endpoint also has the autosleep flag it will be
+ *   deactivated when the socket has no subscriptions and reactivated
+ *   when it requests a new subscription.
+ *   The automanaged flag is not used.
  *
  * Right after the loop terminates, s_task_shim will call the task
  * finalizer, so it can cleanup its data and possibly send final
  * messages to clients.
  *
- * The actual task is done inside the frontend handlers and pkt_handler.
+ * The actual task is done inside the endpoint handlers and pkt_handler.
  *
- *   each frontend handler processes messages on the public socket. If
- *   no frontend is set, the task has no public interface.
+ *   each endpoint handler processes messages on the public socket. If
+ *   no endpoint is set, the task has no public interface.
  *
  *   pkt_handler is called (by s_sig_hn when receiving SIG_WAKEUP) for
  *   each packet in each ring.
  *
  * Tasks have access to their zloop so they can enable or disable
- * readers (e.g. a frontend handler can disable itself after
+ * readers (e.g. a endpoint handler can disable itself after
  * receiving a job and the pkt_handler can re-enable it when done).
  *
  * If either handler encounters a fatal error, it must return with
@@ -163,7 +177,11 @@ static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
 static int  s_task_next_ring (task_t* self, uint16_t* missed_p);
 static int  s_task_dispatch (task_t* self, zloop_t* loop,
-		uint16_t ring_id, uint16_t missed);
+	uint16_t ring_id, uint16_t missed);
+static int s_endp_sub_send (task_endp_t* endpoint, char cmd,
+	char* pattern);
+static void s_endp_sub_add (task_endp_t* endpoint, char* pattern);
+static void s_endp_sub_del (task_endp_t* endpoint, char* pattern);
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
@@ -172,7 +190,7 @@ static task_t s_tasks[] = {
 	{ /* PACKET INFO */
 		.pkt_handler = task_info_pkt_hn,
 		.data_init   = task_info_init,
-		.frontends   = {
+		.endpoints   = {
 			{
 				.handler   = task_info_req_hn,
 				.addresses = "tcp://*:" TES_INFO_LPORT,
@@ -186,7 +204,7 @@ static task_t s_tasks[] = {
 		.pkt_handler = task_cap_pkt_hn,
 		.data_init   = task_cap_init,
 		.data_fin    = task_cap_fin,
-		.frontends   = {
+		.endpoints   = {
 			{
 				.handler   = task_cap_req_hn,
 				.addresses = "tcp://*:" TES_CAP_LPORT,
@@ -199,7 +217,7 @@ static task_t s_tasks[] = {
 	{ /* GET AVG TRACE */
 		.pkt_handler = task_avgtr_pkt_hn,
 		.data_init   = task_avgtr_init,
-		.frontends   = {
+		.endpoints   = {
 			{
 				.handler   = task_avgtr_req_hn,
 				.addresses = "tcp://*:" TES_AVGTR_LPORT,
@@ -213,11 +231,12 @@ static task_t s_tasks[] = {
 		.pkt_handler = task_hist_pkt_hn,
 		.data_init   = task_hist_init,
 		.data_wakeup = task_hist_wakeup,
-		.frontends   = {
+		.endpoints   = {
 			{
 				.addresses = "tcp://*:" TES_HIST_LPORT,
 				.type      = ZMQ_XPUB,
-				.autosleep = true,
+				.pub.autosleep  = true,
+				.pub.automanage = true,
 			},
 		},
 		.color       = ANSI_FG_CYAN,
@@ -226,7 +245,7 @@ static task_t s_tasks[] = {
 		.pkt_handler = task_jitter_pkt_hn,
 		.data_init   = task_jitter_init,
 		.data_wakeup = task_jitter_wakeup,
-		.frontends   = {
+		.endpoints   = {
 			{
 				.handler   = task_jitter_req_hn,
 				.addresses = "tcp://*:" TES_JITTER_REP_LPORT,
@@ -235,7 +254,8 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_JITTER_PUB_LPORT,
 				.type      = ZMQ_XPUB,
-				.autosleep = true,
+				.pub.autosleep  = true,
+				.pub.automanage = true,
 			},
 		},
 		.color       = ANSI_FG_MAGENTA,
@@ -244,7 +264,7 @@ static task_t s_tasks[] = {
 		.pkt_handler = task_coinc_pkt_hn,
 		.data_init   = task_coinc_init,
 		.data_wakeup = task_coinc_wakeup,
-		.frontends   = {
+		.endpoints   = {
 			{
 				.handler   = task_coinc_req_hn,
 				.addresses = "tcp://*:" TES_COINC_REP_LPORT,
@@ -258,7 +278,8 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_COINC_PUB_LPORT,
 				.type      = ZMQ_XPUB,
-				.autosleep = true,
+				.pub.autosleep  = true,
+				.pub.automanage = true,
 			},
 		},
 		.color       = ANSI_FG_YELLOW,
@@ -419,13 +440,13 @@ task_activate (task_t* self)
 		}
 	}
 
-	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL &&
-			frontend <= &self->frontends[MAX_FRONTENDS - 1];
-			frontend++)
+	for (task_endp_t* endpoint = &self->endpoints[0];
+			endpoint->addresses != NULL &&
+			endpoint <= &self->endpoints[MAX_FRONTENDS - 1];
+			endpoint++)
 	{
-		if (frontend->automute)
-			zloop_reader_end (self->loop, frontend->sock);
+		if (endpoint->automute)
+			zloop_reader_end (self->loop, endpoint->sock);
 	}
 
 	for (int r = 0; r < NUM_RINGS; r++)
@@ -456,17 +477,17 @@ task_deactivate (task_t* self)
 		}
 	}
 
-	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL &&
-			frontend <= &self->frontends[MAX_FRONTENDS - 1];
-			frontend++)
+	for (task_endp_t* endpoint = &self->endpoints[0];
+			endpoint->addresses != NULL &&
+			endpoint <= &self->endpoints[MAX_FRONTENDS - 1];
+			endpoint++)
 	{
-		if ( ! frontend->automute )
+		if ( ! endpoint->automute )
 			continue;
 		
-		dbg_assert (frontend->handler != NULL);
-		int rc = zloop_reader (self->loop, frontend->sock,
-				frontend->handler, self);
+		dbg_assert (endpoint->handler != NULL);
+		int rc = zloop_reader (self->loop, endpoint->sock,
+				endpoint->handler, self);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
@@ -509,6 +530,32 @@ task_conf (task_t* self, void* conf, size_t len, int cmd)
 	if (cmd == TES_TASK_SAVE_CONF)
 		return write (fd, conf, len);
 	return read (fd, conf, len);
+}
+
+int
+endp_subscribe (task_endp_t* endpoint, char* pattern)
+{
+	assert (pattern != NULL);
+	assert (endpoint != NULL);
+	
+	if (s_endp_sub_send (endpoint, 1, pattern) == TASK_ERROR)
+		return TASK_ERROR;
+
+	s_endp_sub_add (endpoint, pattern);
+	return 0;
+}
+
+int
+endp_unsubscribe (task_endp_t* endpoint, char* pattern)
+{
+	assert (pattern != NULL);
+	assert (endpoint != NULL);
+	
+	if (s_endp_sub_send (endpoint, 0, pattern) == TASK_ERROR)
+		return TASK_ERROR;
+	
+	s_endp_sub_del (endpoint, pattern);
+	return 0;
 }
 
 /* -------------------------------------------------------------- */
@@ -562,20 +609,20 @@ s_task_shim (zsock_t* pipe, void* self_)
 	// goto cleanup;
 
 	/* Open and bind the public interfaces */
-	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL &&
-			frontend <= &self->frontends[MAX_FRONTENDS - 1];
-			frontend++)
+	for (task_endp_t* endpoint = &self->endpoints[0];
+			endpoint->addresses != NULL &&
+			endpoint <= &self->endpoints[MAX_FRONTENDS - 1];
+			endpoint++)
 	{
-		frontend->sock = zsock_new (frontend->type);
-		if (frontend->sock == NULL)
+		endpoint->sock = zsock_new (endpoint->type);
+		if (endpoint->sock == NULL)
 		{
 			logmsg (errno, LOG_ERR,
 				"Could not open the public interfaces");
 			self->error = true;
 			goto cleanup;
 		}
-		rc = zsock_attach (frontend->sock, frontend->addresses, 1);
+		rc = zsock_attach (endpoint->sock, endpoint->addresses, 1);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
@@ -584,31 +631,35 @@ s_task_shim (zsock_t* pipe, void* self_)
 			goto cleanup;
 		}
 		logmsg (0, LOG_INFO,
-			"Listening on port(s) %s", frontend->addresses);
+			"Listening on port(s) %s", endpoint->addresses);
 
-		if (frontend->type == ZMQ_XPUB)
+		if (endpoint->type == ZMQ_XPUB ||
+			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB)
 		{
-			frontend->subscriptions = zlistx_new ();
-			zlistx_set_comparator (frontend->subscriptions, s_item_cmp);
-			zlistx_set_duplicator (frontend->subscriptions, s_item_dup);
-			zlistx_set_destructor (frontend->subscriptions, s_item_free);
+			endpoint->pub.subscriptions = zlistx_new ();
+			zlistx_set_comparator (endpoint->pub.subscriptions,
+				s_item_cmp);
+			zlistx_set_duplicator (endpoint->pub.subscriptions,
+				s_item_dup);
+			zlistx_set_destructor (endpoint->pub.subscriptions,
+				s_item_free);
 		}
 
 		rc = 0;
-		if (frontend->autosleep)
+		if (endpoint->pub.automanage)
 		{ /* default XPUB handler */
-			assert (frontend->type == ZMQ_XPUB);
-			rc = zloop_reader (loop, frontend->sock, s_sub_hn, self);
+			assert (endpoint->type == ZMQ_XPUB);
+			rc = zloop_reader (loop, endpoint->sock, s_sub_hn, self);
 		}
-		if (rc == 0 && frontend->handler != NULL)
+		if (rc == 0 && endpoint->handler != NULL)
 		{ /* task's own handler */
-			rc = zloop_reader (loop, frontend->sock,
-				frontend->handler, self);
+			rc = zloop_reader (loop, endpoint->sock,
+				endpoint->handler, self);
 		}
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
-				"Could not register the zloop frontend readers");
+				"Could not register the zloop endpoint readers");
 			self->error = true;
 			goto cleanup;
 		}
@@ -677,11 +728,11 @@ cleanup:
 		dbg_assert (self->data == NULL);
 	}
 	zloop_destroy (&loop);
-	for (task_endp_t* frontend = &self->frontends[0];
-			frontend->addresses != NULL &&
-			frontend <= &self->frontends[MAX_FRONTENDS - 1];
-			frontend++)
-		zsock_destroy (&frontend->sock);
+	for (task_endp_t* endpoint = &self->endpoints[0];
+			endpoint->addresses != NULL &&
+			endpoint <= &self->endpoints[MAX_FRONTENDS - 1];
+			endpoint++)
+		zsock_destroy (&endpoint->sock);
 	logmsg (0, LOG_DEBUG, "Done");
 
 	if (self->pkt_handler == NULL)
@@ -823,9 +874,9 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 }
 
 /*
- * Registered with a task's XPUB frontend (if autosleep is set).
- * Will deactivate task on last unsubscription and activate it on
- * first subscription.
+ * Registered with a task's XPUB endpoint (if automanage is set).
+ * If autosleep is true, will deactivate task on last unsubscription
+ * and activate it on first subscription.
  *
  * XPUB will receive a message of the form "\x01<prefix>" the first
  * time a client subscribes to the port with a prefix <prefix>, and
@@ -861,67 +912,40 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	zstr_free (&hexstr);
 #endif
 
-	/* Find the frontend for which to update subscriber numbers. */
-	task_endp_t* frontend = NULL;
-	for (frontend = &self->frontends[0];
-			frontend->sock != NULL && frontend->sock != reader;
-			frontend++)
+	/* Find the endpoint for which to update subscriber numbers. */
+	task_endp_t* endpoint = NULL;
+	for (endpoint = &self->endpoints[0];
+			endpoint->sock != NULL && endpoint->sock != reader;
+			endpoint++)
 		;
-	dbg_assert (frontend->sock == reader); /* couldn't find reader? */
+	dbg_assert (endpoint->sock == reader); /* couldn't find reader? */
 
 	char* msgstr = zmsg_popstr (msg);
 	zmsg_destroy (&msg);
 	char req_rc = msgstr[0];
 	if (req_rc == 0)
-	{
-		dbg_assert (frontend->nsubs > 0);
-		frontend->nsubs--;
-		logmsg (0, LOG_DEBUG,
-			"Unsubscription for '%s'", msgstr + 1);
-
-		void* item = zlistx_find (
-			frontend->subscriptions, msgstr + 1);
-		if (item == NULL)
-			logmsg (0, LOG_WARNING,
-				"Unsubscription for message not in list");
-		else if (zlistx_delete (frontend->subscriptions, item) == -1)
-			logmsg (0, LOG_WARNING,
-				"Could not delete unsubscription from list");
-	}
+		s_endp_sub_del (endpoint, msgstr + 1);
 	else if (req_rc == 1)
-	{
-		frontend->nsubs++;
-		logmsg (0, LOG_DEBUG,
-			"Subscription for '%s'", msgstr + 1);
-
-		void* item = zlistx_add_end (
-			frontend->subscriptions, msgstr + 1);
-		if (item == NULL)
-			logmsg (0, LOG_WARNING,
-				"Could not insert subscription into list");
-#if DEBUG_LEVEL >= TESTING
-		char* itemstr = zlistx_handle_item (item);
-		/* Should have been duplicated */
-		dbg_assert (itemstr != NULL && itemstr != msgstr + 1);
-#endif
-	}
+		s_endp_sub_add (endpoint, msgstr + 1);
 	else
 	{
-		logmsg (0, LOG_DEBUG,
-			"Got a spurious message");
+		logmsg (0, LOG_DEBUG, "Got a spurious message");
 		zstr_free (&msgstr);
 		return 0;
 	}
 	zstr_free (&msgstr);
 
-	if (frontend->nsubs == 1)
+	if ( ! endpoint->pub.autosleep )
+		return 0;
+
+	if (endpoint->pub.nsubs == 1)
 	{
 		logmsg (0, LOG_DEBUG,
 			"First subscription, activating");
 		/* Wakeup packet handler. */
 		task_activate (self);
 	}
-	else if (frontend->nsubs == 0)
+	else if (endpoint->pub.nsubs == 0)
 	{
 		logmsg (0, LOG_DEBUG,
 			"Last unsubscription, deactivating");
@@ -1185,4 +1209,60 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 	}
 
 	return 0;
+}
+
+static int
+s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
+{
+	if (endpoint->type == ZMQ_SUB)
+	{
+		if (cmd == 1)
+			zsock_set_subscribe (endpoint->sock, pattern);
+		if (cmd == 0)
+			zsock_set_unsubscribe (endpoint->sock, pattern);
+		else
+			assert (false);
+	}
+	else if (endpoint->type == ZMQ_XSUB)
+	{
+		size_t len = strlen (pattern);
+		char* msg = malloc (len + 2);
+		if (msg == NULL)
+			return TASK_ERROR;
+		int rc = snprintf (msg, len + 2, "%c%s", cmd, pattern);
+		if (rc < 0)
+			return TASK_ERROR;
+		assert ((size_t)rc == len + 1);
+		rc = zstr_send (endpoint->sock, msg);
+		if (rc == -1)
+			return TASK_ERROR;
+	}
+	else
+		assert (false);
+	return 0;
+}
+
+static void
+s_endp_sub_add (task_endp_t* endpoint, char* pattern)
+{
+	endpoint->pub.nsubs++;
+	logmsg (0, LOG_DEBUG, "Subscription for '%s'", pattern);
+
+	void* item = zlistx_add_end (endpoint->pub.subscriptions, pattern);
+	if (item == NULL)
+		logmsg (0, LOG_WARNING, "Could not insert pattern into list");
+}
+
+static void
+s_endp_sub_del (task_endp_t* endpoint, char* pattern)
+{
+	dbg_assert (endpoint->pub.nsubs > 0);
+	endpoint->pub.nsubs--;
+	logmsg (0, LOG_DEBUG, "Unsubscription for '%s'", pattern);
+
+	void* item = zlistx_find (endpoint->pub.subscriptions, pattern);
+	if (item == NULL)
+		logmsg (0, LOG_WARNING, "Pattern not in list");
+	else if (zlistx_delete (endpoint->pub.subscriptions, item) == -1)
+		logmsg (0, LOG_WARNING, "Could not delete pattern from list");
 }

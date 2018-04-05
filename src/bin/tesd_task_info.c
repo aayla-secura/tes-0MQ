@@ -1,6 +1,6 @@
 /*
  * TO DO:
- *  - Make frontend a ROUTER and send average statistics. If a new
+ *  - Make endpoint a ROUTER and send average statistics. If a new
  *    request comes with a timeout less than already elapsed, send reply
  *    immediately.
  *    Set a separate timer for each client.
@@ -37,7 +37,7 @@ static zloop_timer_fn  s_timeout_hn;
 /* -------------------------------------------------------------- */
 
 /*
- * Deactivates the task, enables polling on the client frontend, sends
+ * Deactivates the task, enables polling on the client endpoint, sends
  * stats to client.
  */
 static int
@@ -48,7 +48,7 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 	task_t* self = (task_t*) self_;
 	struct s_data_t* info = (struct s_data_t*) self->data;
 
-	/* Enable polling on the frontend and deactivate packet
+	/* Enable polling on the endpoint and deactivate packet
 	 * handler. */
 	task_deactivate (self);
 	
@@ -68,7 +68,7 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 		info->mcas,
 		info->traces,
 		info->events);
-	zsock_send (self->frontends[0].sock, TES_INFO_REP_PIC,
+	zsock_send (self->endpoints[0].sock, TES_INFO_REP_PIC,
 		TES_INFO_REQ_OK,
 		info->received,
 		info->missed,
@@ -89,7 +89,7 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 /* -------------------------------------------------------------- */
 
 int
-task_info_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
+task_info_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -97,7 +97,7 @@ task_info_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 
 	uint32_t timeout;
 
-	int rc = zsock_recv (frontend, TES_INFO_REQ_PIC, &timeout);
+	int rc = zsock_recv (endpoint, TES_INFO_REQ_PIC, &timeout);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
 	 * is irrelevant in this case; we don't get interrupted, this should
@@ -109,7 +109,7 @@ task_info_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
-		zsock_send (frontend, TES_INFO_REP_PIC,
+		zsock_send (endpoint, TES_INFO_REP_PIC,
 			TES_INFO_REQ_EINV, 0, 0, 0, 0, 0, 0, 0, 0);
 		return 0;
 	}
@@ -127,7 +127,7 @@ task_info_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		return TASK_ERROR;
 	}
 
-	/* Disable polling on the frontend until the job is done. Wakeup
+	/* Disable polling on the endpoint until the job is done. Wakeup
 	 * packet handler. */
 	task_activate (self);
 

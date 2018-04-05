@@ -138,7 +138,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 		/* Send the histogram */
 		int rc = zmq_send (
-			zsock_resolve (self->frontends[0].sock),
+			zsock_resolve (self->endpoints[0].sock),
 			hist->buf, hist->cur_size, 0);
 		if (rc == -1)
 		{

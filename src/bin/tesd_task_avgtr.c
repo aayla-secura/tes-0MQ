@@ -19,7 +19,7 @@ static zloop_timer_fn  s_timeout_hn;
 /* -------------------------------------------------------------- */
 
 /*
- * Deactivates the task, enables polling on the client frontend, sends
+ * Deactivates the task, enables polling on the client endpoint, sends
  * timeout error to the client.
  */
 static int
@@ -29,14 +29,14 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 
 	task_t* self = (task_t*) self_;
 
-	/* Enable polling on the frontend and deactivate packet
+	/* Enable polling on the endpoint and deactivate packet
 	 * handler. */
 	task_deactivate (self);
 	
 	/* Send a timeout error to the client. */
 	logmsg (0, LOG_INFO,
 		"Average trace timed out");
-	zsock_send (self->frontends[0].sock, TES_AVGTR_REP_PIC,
+	zsock_send (self->endpoints[0].sock, TES_AVGTR_REP_PIC,
 		TES_AVGTR_REQ_ETOUT, "", 0);
 
 	return 0;
@@ -47,7 +47,7 @@ s_timeout_hn (zloop_t* loop, int timer_id, void* self_)
 /* -------------------------------------------------------------- */
 
 int
-task_avgtr_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
+task_avgtr_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -55,7 +55,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 
 	uint32_t timeout;    
 
-	int rc = zsock_recv (frontend, TES_AVGTR_REQ_PIC, &timeout);
+	int rc = zsock_recv (endpoint, TES_AVGTR_REQ_PIC, &timeout);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
 	 * is irrelevant in this case; we don't get interrupted, this should
@@ -67,7 +67,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	{
 		logmsg (0, LOG_INFO,
 			"Received a malformed request");
-		zsock_send (frontend, TES_AVGTR_REP_PIC,
+		zsock_send (endpoint, TES_AVGTR_REP_PIC,
 			TES_AVGTR_REQ_EINV, "", 0);
 		return 0;
 	}
@@ -88,7 +88,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 	dbg_assert ( ! trace->recording );
 	trace->timer = tid;
 
-	/* Disable polling on the frontend until the job is done. Wakeup
+	/* Disable polling on the endpoint until the job is done. Wakeup
 	 * packet handler. */
 	task_activate (self);
 
@@ -97,7 +97,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 
 /*
  * Accumulates average trace frames. As soon as a complete trace is
- * recorded, it is sent to the client, polling on the client frontend
+ * recorded, it is sent to the client, polling on the client endpoint
  * is re-enabled and the timer is canceled. It aborts the whole
  * trace if a relevant frame is lost, and waits for the next one.
  */
@@ -174,13 +174,13 @@ done:
 		case TES_AVGTR_REQ_EERR:
 			logmsg (0, LOG_INFO,
 				"Discarded average trace");
-			zsock_send (self->frontends[0].sock, TES_AVGTR_REP_PIC,
+			zsock_send (self->endpoints[0].sock, TES_AVGTR_REP_PIC,
 				TES_AVGTR_REQ_EERR, "", 0);
 			break;
 		case TES_AVGTR_REQ_OK:
 			logmsg (0, LOG_INFO,
 				"Average trace complete");
-			zsock_send (self->frontends[0].sock, TES_AVGTR_REP_PIC,
+			zsock_send (self->endpoints[0].sock, TES_AVGTR_REP_PIC,
 				TES_AVGTR_REQ_OK, &trace->buf, trace->size);
 			break;
 		default:
@@ -192,7 +192,7 @@ done:
 	trace->cur_size = 0;
 	trace->size = 0;
 
-	/* Enable polling on the frontend and deactivate packet
+	/* Enable polling on the endpoint and deactivate packet
 	 * handler. */
 	return TASK_SLEEP;
 }

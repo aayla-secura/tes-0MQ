@@ -182,7 +182,7 @@ s_prep_next (struct s_data_t* data)
 /* -------------------------------------------------------------- */
 
 int
-task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
+task_jitter_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 {
 	dbg_assert (self_ != NULL);
 
@@ -190,7 +190,7 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 
 	uint8_t ref_ch;
 	uint64_t ticks;
-	int rc = zsock_recv (frontend, TES_JITTER_REQ_PIC,
+	int rc = zsock_recv (endpoint, TES_JITTER_REQ_PIC,
 		&ref_ch, &ticks);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
@@ -214,7 +214,7 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* frontend, void* self_)
 		data->conf.ticks = ticks;
 	}
 
-	zsock_send (frontend, TES_JITTER_REP_PIC,
+	zsock_send (endpoint, TES_JITTER_REP_PIC,
 		data->conf.ref_ch, data->conf.ticks);
 
 	return 0;
@@ -330,7 +330,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if (data->ticks == data->cur_conf.ticks + 1)
 	{ /* publish histogram */
 		int rc = zmq_send (
-			zsock_resolve (self->frontends[ENDP_PUB].sock),
+			zsock_resolve (self->endpoints[ENDP_PUB].sock),
 			(void*)&data->hist, TES_JITTER_SIZE, 0);
 		if (rc == -1)
 		{
@@ -368,8 +368,8 @@ task_jitter_init (task_t* self)
 	assert (sizeof (struct s_subhist_t) == TES_JITTER_SUBSIZE);
 	assert (sizeof (struct s_conf_t) == CONF_LEN);
 	assert (BIN_OFFSET == (int)((TES_JITTER_NBINS) / 2));
-	assert (self->frontends[ENDP_REP].type == ZMQ_REP);
-	assert (self->frontends[ENDP_PUB].type == ZMQ_XPUB);
+	assert (self->endpoints[ENDP_REP].type == ZMQ_REP);
+	assert (self->endpoints[ENDP_PUB].type == ZMQ_XPUB);
 
 	static struct s_data_t data;
 
