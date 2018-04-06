@@ -1,7 +1,8 @@
 /*
  * TO DO:
- *  - add a flag when configuration has changed (either replacing TICK
- *    or set to another entry in the first vector of the frame)
+ *  - add a flag when configuration has changed (either replacing
+ *    TES_COINC_FLAG_TICK or set to another entry in the first vector
+ *    of the frame)
  */
 
 #include "tesd_tasks.h"
@@ -19,51 +20,46 @@
 // #define DEFER_EMPTY
 
 /*
+ * :::::::::: FLAGS (see api.h) ::::::::::
+ *
  * Flags in the first byte of a vector.
  * A tick vector is a vector with all elements (masked for flags) ==
  * TES_COINC_TOK_TICK; all other vectors are coincidence vectors, see
  * definitions of TES_COINC_TOK_*.
  *
- * UNRESOLVED (coincidence vector):
+ * TES_COINC_FLAG_UNRESOLVED (coincidence vector):
  *  - consecutive (relevant for the measurement) events each within
  *    less than window, w, delay from the previous, but last one is
  *    delayed more than w since first
  *  - two events in the same channel within a coincidence group
- * UNRESOLVED (tick vector):
+ * TES_COINC_FLAG_UNRESOLVED (tick vector):
  *  - tick occured during the previous coincidence (there may be
  *    multiple consecutive tick vectors with this flag, but never an
  *    unresolved tick following a resolved one with no coincidences in
  *    between
 #if TICK_WITH_COINC > 0
- *    the UNRESOLVED flag will not be applied to the coincidence vector
- *    with the tick flag set, even if that tick occured during the
- *    coincidence; it will only be set for the extra, all
- *    TES_COINC_TOK_TICK, vectors before that coincidence, if any of
- *    them also occured during the coincidence (before the last
- *    non-tick event in the window)
+ *    the TES_COINC_FLAG_UNRESOLVED flag will not be applied to the
+ *    coincidence vector with the tick flag set, even if that tick
+ *    occured during the coincidence; it will only be set for the
+ *    extra, all TES_COINC_TOK_TICK, vectors before that coincidence,
+ *    if any of them also occured during the coincidence (before the
+ *    last non-tick event in the window)
 #endif
- * BAD (coincidence vector):
+ * TES_COINC_FLAG_BAD (coincidence vector):
  *  - measurement is not peak and there are multiple peaks within
  *    one of the events in the coincidence group
 #if TICK_WITH_COINC > 0
- * TICK (coincidence vector):
+ * TES_COINC_FLAG_TICK (coincidence vector):
  *  - coincidence is first after a tick
- * TICK (tick vector):
+ * TES_COINC_FLAG_TICK (tick vector):
  *  - if n > 1 ticks occured between coincidences, there'd be n-1 all
  *    TES_COINC_TOK_TICK vectors with this flag
 #endif
  */
-#define FLAG_MASK    0xE0
-#define UNRESOLVED   (1 << 7)
-#define BAD          (1 << 6)
-#define TICK_WITH_COINC     0 // 0 or 1
-#if TICK_WITH_COINC > 0
-#  define TICK       (1 << 5)
-#else
-#  define TICK              0
-#endif
 
 /*
+ * :::::::::: TOKENS (see api.h) ::::::::::
+ *
  * Maximum number of thresholds is 16, meaning that maximum photon
  * number is 16 (meaning 16 or more photons). No event in the channel is
  * distinguished from event with photon number 0 (below lowest
@@ -332,7 +328,7 @@ s_get_vec_flags (task_t* self, int id)
 	dbg_assert (id >= 0);
 	
 	coinc_vec_t* cvec = &self->data->coinc[id];
-	return ((*cvec)[0] & FLAG_MASK);
+	return ((*cvec)[0] & TES_COINC_FLAG_MASK);
 }
 
 static inline void
@@ -351,8 +347,8 @@ s_set_vec_flags (task_t* self, uint8_t flags, int id)
 
 /*
  * Increment idx and num_ongoing. Publish if no more space. Add the
- * UNRESOLVED or TICK flags according to cur_group.num_ongoing and
- * cur_group.ticks, respectively.
+ * TES_COINC_FLAG_UNRESOLVED or TES_COINC_FLAG_TICK flags according to
+ * cur_group.num_ongoing and cur_group.ticks, respectively.
  * Returns 0 on success, TASK_ERROR on error.
  */
 static int
@@ -363,15 +359,16 @@ s_add_to_group (task_t* self)
 	
 	uint8_t flags = 0;
 	if (data->cur_frame.cur_group.num_ongoing > 0)
-	{ /* must be UNRESOLVED */
-		dbg_assert (data->coinc[data->cur_frame.idx][0] & UNRESOLVED);
-		flags |= UNRESOLVED;
+	{ /* must be TES_COINC_FLAG_UNRESOLVED */
+		dbg_assert (data->coinc[data->cur_frame.idx][0] &
+			TES_COINC_FLAG_UNRESOLVED);
+		flags |= TES_COINC_FLAG_UNRESOLVED;
 	}
 #if TICK_WITH_COINC > 0
 	else if (data->cur_frame.cur_group.ticks > 0)
-	{ /* add TICK flag if new group follows a tick */
+	{ /* add TES_COINC_FLAG_TICK flag if new group follows a tick */
 		dbg_assert (data->cur_frame.cur_group.ticks == 1);
-		flags |= TICK;
+		flags |= TES_COINC_FLAG_TICK;
 	}
 	data->cur_frame.cur_group.ticks = 0;
 #else
@@ -453,10 +450,11 @@ s_add_ticks (task_t* self)
 	memset (tick, TES_COINC_TOK_TICK, num*TES_NCHANNELS);
 	for (int t = 0; t < num; t++, tick++)
 	{
-		(*tick)[0] |= ( t < num_unres ? UNRESOLVED : 0 | TICK );
+		(*tick)[0] |= ( t < num_unres ?
+			TES_COINC_FLAG_UNRESOLVED : 0 | TES_COINC_FLAG_TICK );
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, "Added a   tick with flags = 0x%02x",
-			((*tick)[0] & FLAG_MASK));
+			((*tick)[0] & TES_COINC_FLAG_MASK));
 #endif
 	}
 	
@@ -493,7 +491,7 @@ s_publish (task_t* self, uint16_t reserve)
 		logmsg (0, LOG_DEBUG,
 			"Too many vectors in current group");
 		/* Keep at least one, since s_add_to_group needs to know whether
-		 * to set UNRESOLVED. */
+		 * to set TES_COINC_FLAG_UNRESOLVED. */
 		num_ready = MAX_COINC_VECS - 1;
 		data->cur_frame.cur_group.num_ongoing = 1;
 	}
@@ -710,7 +708,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
  *
  * If the event type contains the relevant measurement, save the
  * counts. If the channel has been seen before, start a new vector in
- * the same coincidence group, set the UNRESOLVED flag.
+ * the same coincidence group, set the TES_COINC_FLAG_UNRESOLVED flag.
  *
  * If the event type does not contain the relevant measurement set the
  * channel count to TES_COINC_TOK_UNKNOWN.
@@ -828,7 +826,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 					logmsg (0, LOG_DEBUG, "Group becomes unresolved");
 #endif
 				coinc_vec_t* cvec = &data->coinc[data->cur_frame.idx];
-				(*cvec)[0] |= UNRESOLVED;
+				(*cvec)[0] |= TES_COINC_FLAG_UNRESOLVED;
 			}
 			
 			if (ch_seen)
@@ -853,9 +851,9 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 			logmsg (0, LOG_DEBUG, "Measurement is bad");
 #endif
-			(*cvec)[0] |= BAD;
+			(*cvec)[0] |= TES_COINC_FLAG_BAD;
 		}
-		dbg_assert (((*cvec)[ef->CH] & (~FLAG_MASK)) == 0);
+		dbg_assert (((*cvec)[ef->CH] & (~TES_COINC_FLAG_MASK)) == 0);
 		(*cvec)[ef->CH] |= data->util.get_counts (pkt, e, thres);
 	}
 
@@ -873,14 +871,17 @@ task_coinc_init (task_t* self)
 	assert (self->endpoints[ENDP_REP].type == ZMQ_REP);
 	assert (self->endpoints[ENDP_REP_TH].type == ZMQ_REP);
 	assert (self->endpoints[ENDP_PUB].type == ZMQ_XPUB);
-	assert ((UNRESOLVED & FLAG_MASK) == UNRESOLVED);
-	assert ((BAD & FLAG_MASK) == BAD);
-	assert ((TICK & FLAG_MASK) == TICK);
-	assert ((TES_COINC_TOK_TICK & FLAG_MASK) == 0);
-	assert ((TES_COINC_TOK_NONE & FLAG_MASK) == 0);
-	assert ((TES_COINC_TOK_NOISE & FLAG_MASK) == 0);
-	assert ((TES_COINC_TOK_UNKNOWN & FLAG_MASK) == 0);
-	assert ((TES_COINC_MAX_PHOTONS & FLAG_MASK) == 0);
+	assert ((TES_COINC_FLAG_UNRESOLVED & TES_COINC_FLAG_MASK) ==
+		TES_COINC_FLAG_UNRESOLVED);
+	assert ((TES_COINC_FLAG_BAD & TES_COINC_FLAG_MASK) ==
+		TES_COINC_FLAG_BAD);
+	assert ((TES_COINC_FLAG_TICK & TES_COINC_FLAG_MASK) ==
+		TES_COINC_FLAG_TICK);
+	assert ((TES_COINC_TOK_TICK & TES_COINC_FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_NONE & TES_COINC_FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_NOISE & TES_COINC_FLAG_MASK) == 0);
+	assert ((TES_COINC_TOK_UNKNOWN & TES_COINC_FLAG_MASK) == 0);
+	assert ((TES_COINC_MAX_PHOTONS & TES_COINC_FLAG_MASK) == 0);
 
 	static struct s_data_t data;
 	assert (sizeof (data.coinc[0]) == CVEC_SIZE);

@@ -90,11 +90,22 @@
 #define TES_COINC_MEAS_DOTP 2
 #define TES_COINC_MAX_WINDOW UINT16_MAX
 #define TES_COINC_MAX_SIZE  (TES_NCHANNELS*256)
+
 #define TES_COINC_TOK_TICK  0 // tick vector
 #define TES_COINC_TOK_NONE  0 // no event in this channel
 #define TES_COINC_TOK_NOISE   \
 	(TES_COINC_MAX_PHOTONS+1) // measurement below threshold
 #define TES_COINC_TOK_UNKNOWN \
 	(TES_COINC_MAX_PHOTONS+2) // an event with no measurement
+
+#define TES_COINC_FLAG_MASK  0xE0
+#define TES_COINC_FLAG_UNRESOLVED  (1 << 7)
+#define TES_COINC_FLAG_BAD         (1 << 6)
+#define TICK_WITH_COINC  0 // 0 or 1
+#if TICK_WITH_COINC > 0
+#  define TES_COINC_FLAG_TICK      (1 << 5)
+#else
+#  define TES_COINC_FLAG_TICK            0
+#endif
 
 #endif
