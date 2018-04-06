@@ -61,8 +61,11 @@
  *   from the socket. It may inspect the list of subscriptions since
  *   it will be called after the default handler. Subscriptions are
  *   appended to list, so the last one is at the tail.
+ *   If the endpoint sets max_nsubs > 0, once this number is reached
+ *   new subscribers will receive a two-part message of the form
+ *   <pattern>|<NULL> to know they have not been added.
  *   For XPUB endpoints (struct _task_endpoint_t*)->pub.subscriptions
- *   is initialized to a new zlistx_t regardless of the automanaged
+ *   is initialized to a new zlistx_t regardless of the automanage
  *   flag, so the socket handler can use it straight away. Furthermore
  *   the comparator function is set to (a wrapper around) strcmp, the
  *   duplicator function to (a wrapper around) strdup and the
@@ -70,16 +73,19 @@
  *   comparator/duplicator/destructor in their data_init method.
  *
  *   If any of the endpoints is an XSUB or SUB it can make use of
- *   endp_subscribe and endp_unsubscribe to subscribe and unsubscribe (the
- *   type XSUB vs SUB is checked and the appropriate action is taken.
+ *   endp_subscribe and endp_unsubscribe to subscribe and unsubscribe
+ *   (the type XSUB vs SUB is checked and the appropriate action is
+ *   taken.
  *   The no. of subscriptions (struct _task_endpoint_t*)->pub.nsubs
  *   and the list of (struct _task_endpoint_t*)->pub.subscriptions is
  *   updated. The same default comparator/duplicator/destructor is set
  *   as for XPUB.
+ *   If the endpoint sets max_nsubs > 0 endp_subscribe will return
+ *   with an error if more subscriptions are requested.
  *   If the endpoint also has the autosleep flag it will be
  *   deactivated when the socket has no subscriptions and reactivated
  *   when it requests a new subscription.
- *   The automanaged flag is not used.
+ *   The automanage flag is not used.
  *
  * Right after the loop terminates, s_task_shim will call the task
  * finalizer, so it can cleanup its data and possibly send final
@@ -156,8 +162,6 @@
  *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Print debugging stats every UPDATE_INTERVAL via the
  *   coordinator.
- * - Config file shared between tasks, i.e. global config that can be
- *   changed or queried by either the coordinator or a dedicated task.
  */
 
 #include "tesd_tasks.h"
@@ -178,10 +182,10 @@ static void s_task_stop (task_t* self);
 static int  s_task_next_ring (task_t* self, uint16_t* missed_p);
 static int  s_task_dispatch (task_t* self, zloop_t* loop,
 	uint16_t ring_id, uint16_t missed);
-static int s_endp_sub_send (task_endp_t* endpoint, char cmd,
+static int  s_endp_sub_send (task_endp_t* endpoint, char cmd,
 	char* pattern);
-static void s_endp_sub_add (task_endp_t* endpoint, char* pattern);
-static void s_endp_sub_del (task_endp_t* endpoint, char* pattern);
+static int  s_endp_sub_add (task_endp_t* endpoint, char* pattern);
+static int  s_endp_sub_del (task_endp_t* endpoint, char* pattern);
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
@@ -541,8 +545,7 @@ endp_subscribe (task_endp_t* endpoint, char* pattern)
 	if (s_endp_sub_send (endpoint, 1, pattern) == TASK_ERROR)
 		return TASK_ERROR;
 
-	s_endp_sub_add (endpoint, pattern);
-	return 0;
+	return s_endp_sub_add (endpoint, pattern);
 }
 
 int
@@ -554,8 +557,7 @@ endp_unsubscribe (task_endp_t* endpoint, char* pattern)
 	if (s_endp_sub_send (endpoint, 0, pattern) == TASK_ERROR)
 		return TASK_ERROR;
 	
-	s_endp_sub_del (endpoint, pattern);
-	return 0;
+	return s_endp_sub_del (endpoint, pattern);
 }
 
 /* -------------------------------------------------------------- */
@@ -923,19 +925,31 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	char* msgstr = zmsg_popstr (msg);
 	zmsg_destroy (&msg);
 	char req_rc = msgstr[0];
+	bool deadbeef = false;
 	if (req_rc == 0)
-		s_endp_sub_del (endpoint, msgstr + 1);
+	{
+		if (s_endp_sub_del (endpoint, msgstr + 1) == (int)0xDeadBeef)
+			deadbeef = true;
+	}
 	else if (req_rc == 1)
-		s_endp_sub_add (endpoint, msgstr + 1);
+	{
+		int rc = s_endp_sub_add (endpoint, msgstr + 1);
+		if (rc == TASK_ERROR)
+			return TASK_ERROR;
+		if (rc == (int)0xDeadBeef)
+		{
+			zsock_send (endpoint->sock, "sz", msgstr + 1);
+			deadbeef = true;
+		}
+	}
 	else
 	{
 		logmsg (0, LOG_DEBUG, "Got a spurious message");
-		zstr_free (&msgstr);
-		return 0;
+		deadbeef = true;
 	}
 	zstr_free (&msgstr);
 
-	if ( ! endpoint->pub.autosleep )
+	if ( deadbeef || ! endpoint->pub.autosleep )
 		return 0;
 
 	if (endpoint->pub.nsubs == 1)
@@ -1242,27 +1256,49 @@ s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 	return 0;
 }
 
-static void
+
+/*
+ * Returns 0 on success, TASK_ERROR if the pattern cannot be saved or
+ * if the maximum number of subscription is reached.
+*/
+static int
 s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 {
+	if (endpoint->pub.max_nsubs > 0 &&
+		endpoint->pub.nsubs == endpoint->pub.max_nsubs)
+	{
+		logmsg (0, LOG_INFO,
+				"Maximum number of subscribers reached");
+		return 0xDeadBeef;
+	}
+
 	endpoint->pub.nsubs++;
 	logmsg (0, LOG_DEBUG, "Subscription for '%s'", pattern);
 
 	void* item = zlistx_add_end (endpoint->pub.subscriptions, pattern);
 	if (item == NULL)
+	{
 		logmsg (0, LOG_WARNING, "Could not insert pattern into list");
+		return TASK_ERROR;
+	}
+	return 0;
 }
 
-static void
+static int
 s_endp_sub_del (task_endp_t* endpoint, char* pattern)
 {
-	dbg_assert (endpoint->pub.nsubs > 0);
-	endpoint->pub.nsubs--;
 	logmsg (0, LOG_DEBUG, "Unsubscription for '%s'", pattern);
 
 	void* item = zlistx_find (endpoint->pub.subscriptions, pattern);
 	if (item == NULL)
+	{
 		logmsg (0, LOG_WARNING, "Pattern not in list");
-	else if (zlistx_delete (endpoint->pub.subscriptions, item) == -1)
-		logmsg (0, LOG_WARNING, "Could not delete pattern from list");
+		return 0xDeadBeef;
+	}
+
+	dbg_assert (endpoint->pub.nsubs > 0);
+	endpoint->pub.nsubs--;
+	int rc = zlistx_delete (endpoint->pub.subscriptions, item);
+	dbg_assert (rc != -1);
+	return 0;
 }

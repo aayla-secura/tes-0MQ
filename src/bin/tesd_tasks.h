@@ -53,10 +53,12 @@ struct _task_endpoint_t
 		struct
 		{
 			/*
-			 * For XPUB sockets it is updated if automanaged is true. For
-			 * *SUB sockets it is updated by endp_subscribe and endp_unsubscribe.
+			 * For XPUB sockets it is updated if automanaged is true.
+			 * For *SUB sockets it is updated by endp_subscribe and
+			 * endp_unsubscribe.
 			 */
 			uint32_t  nsubs;
+			uint32_t  max_nsubs;
 			zlistx_t* subscriptions;
 			bool      autosleep;
 			bool      automanage; // used for XPUB only
@@ -141,11 +143,24 @@ int task_deactivate (task_t* self);
 ssize_t task_conf (task_t* self, void* conf, size_t len, int cmd);
 
 /*
- * Subscribe or unsubscribe from pattern. Updates the subscription
- * list and counter.
- * Returns 0 on success, TASK_ERROR on error.
+ * Subscribe to pattern. Updates the subscription list and counter.
+ * Returns 0 on success.
+ * Returns TASK_ERROR if the message cannot be sent (for XSUB
+ * sockets) or if the pattern cannot be saved.
+ * Returns 0xDeadBeef if the maximum number of subscription is
+ * reached.
  */
 int endp_subscribe (task_endp_t* endpoint, char* pattern);
+
+/*
+ * Unsubscribe from pattern. Updates the subscription list and
+ * counter.
+ * Returns 0 on success.
+ * Returns TASK_ERROR if the message cannot be sent (for XSUB
+ * sockets).
+ * Returns 0xDeadBeef if the pattern wasn't in the list of
+ * subscriptions.
+ */
 int endp_unsubscribe (task_endp_t* endpoint, char* pattern);
 
 /* ------------------------ TASK HANDLERS ----------------------- */
