@@ -450,8 +450,8 @@ s_add_ticks (task_t* self)
 	memset (tick, TES_COINC_TOK_TICK, num*TES_NCHANNELS);
 	for (int t = 0; t < num; t++, tick++)
 	{
-		(*tick)[0] |= ( t < num_unres ?
-			TES_COINC_FLAG_UNRESOLVED : 0 | TES_COINC_FLAG_TICK );
+		(*tick)[0] |= ( TES_COINC_FLAG_TICK | (t < num_unres ?
+			TES_COINC_FLAG_UNRESOLVED : 0) );
 #if DEBUG_LEVEL >= LETS_GET_NUTS
 		logmsg (0, LOG_DEBUG, "Added a   tick with flags = 0x%02x",
 			((*tick)[0] & TES_COINC_FLAG_MASK));
@@ -853,7 +853,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 #endif
 			(*cvec)[0] |= TES_COINC_FLAG_BAD;
 		}
-		dbg_assert (((*cvec)[ef->CH] & (~TES_COINC_FLAG_MASK)) == 0);
+		dbg_assert (((*cvec)[ef->CH] & ~TES_COINC_FLAG_MASK) == 0);
 		(*cvec)[ef->CH] |= data->util.get_counts (pkt, e, thres);
 	}
 
