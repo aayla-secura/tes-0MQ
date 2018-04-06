@@ -288,14 +288,19 @@ effect at the next histogram.
 This interface publishes single-frame messages, each message contains
 all coincidences which occured between two ticks as one or more
 vectors. The vectors are `<number of channels>` bytes long. Each byte
-gives the number of photons in the given channel within the
-coincidence window. The maximum number is 16. 0 means no events
-occured in this channel. Two special tokens can also appear (values
-subject to change, but they will be > 16 and < 32:
+is a token that gives the number of photons in the given channel
+within the coincidence window. The maximum number of photons for each
+channel is the number of set thresholds for this channel. The maximum
+number of thresholds that can be set is 16.
 
- * 17: There was an event, but the measurement was below the
-   threshold, i.e. it was noise.
- * 18: There was an event but it did not contain the configured
+The tokens are as follows:
+(values subject to change, but they will be > 16 and < 32)
+
+ * 0:    No events occurred in this channel
+ * 1-16: That many photons (according to the thresholds) were measured
+ * 17:   There was an event, but the measurement was below the
+	       lowest threshold, i.e. it was noise.
+ * 18:   There was an event but it did not contain the configured
    measurement, i.e. no. of photons is unknown.
 
 A coincidence ends when an event arrives with a delay > `<window>`
@@ -335,7 +340,8 @@ flags as follows:
  * `bit[7]` **UNRESOLVED** (coincidence vector):
    * consecutive events each within less than `<window>` delay from
      the previous, but last one is delayed more than `<window>` since
-     first two events in the same channel within the same coincidence
+     first
+   * two events in the same channel within the same coincidence
  * `bit[7]` **UNRESOLVED** (tick vector):
    tick occured during the previous coincidence (there may be
    multiple consecutive tick vectors with this flag, but never an
@@ -404,7 +410,7 @@ the next tick.
 
 3. **Threshold array**
 
-   The value is read as a byte buffer.
+   The value is read as a byte buffer. Maximum size is 16.
 
 #### Message frames in a reply
 
@@ -423,6 +429,65 @@ missing, the threshold is unchanged). In a valid threshold array every
 element is greater than the previous, but there may be trailing zeroes
 indicating unset thresholds (the highest photon number in the stream
 for this channel will be the number of set threshold elements).
+
+## COINCIDENCE COUNTER REP+PUB INTERFACE
+
+This interface accepts subscriptions that are of the form...
+It counts number of coincidences over a globally configurable number
+of ticks. For each subscription it publishes multi-frame messages with
+a picture "s2888888" as follows:
+
+1. **Pattern**
+
+   This is a string of coma separated tokens, as follows:
+
+   * 0:    No photons (either no events or noise)
+   * -:    Noise
+   * 1-16: Exactly that many photons were measured
+   * N:    Any non-zero number of photons
+   * X:    Any (including a missing measurement)
+
+   X can be omitted, i.e. consequtive separators assume X, as do
+   missing tokens at the end (fewer tokens than the number of channels
+   was given).
+
+2. **Coincidence window**
+
+3. **No. of ticks**
+
+4. **No. of resolved coincidences matching the pattern**
+
+5. **No. of resolved coincidences matching the pattern (single peak)**
+
+6. **No. of resolved coincidences**
+
+7. **No. of resolved coincidences (single peak)**
+
+8. **No. of unresolved coincidences**
+
+where "single peak" means the **BAD** flag is not set.
+
+Pattern counts are synchronized in that they start counting at the
+same tick and over the same number of ticks. New subscriptions will
+start receiving counts at the next batch of `n = <no. of ticks>`
+(potentially waiting for `2*n - 1` tick periods).
+
+### Tick number configuration
+
+#### Message frames in a valid request
+
+1. **No. of ticks**
+
+   The value is read as an **unsigned** int64.
+
+#### Message frames in a reply
+
+1. **No. of ticks**
+
+The reply indicates the value after it is set. A request with tick
+= 0 is not valid and will return the current setting without change.
+Any other request should change the setting and be echoed back. The
+new setting will take effect at the start of the next counters.
 
 # INSTALLATION
 

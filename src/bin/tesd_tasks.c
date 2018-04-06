@@ -162,6 +162,9 @@
  *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Print debugging stats every UPDATE_INTERVAL via the
  *   coordinator.
+ * - Write a wrapper around zlistx_add_end (or whichever one we use
+ *   that calls the item duplicator) to handle errors gracefully;
+ *   zlistx asserts duplicator returns non-NULL.
  */
 
 #include "tesd_tasks.h"
@@ -189,7 +192,7 @@ static int  s_endp_sub_del (task_endp_t* endpoint, char* pattern);
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
-#define NUM_TASKS 6
+#define NUM_TASKS 7
 static task_t s_tasks[] = {
 	{ /* PACKET INFO */
 		.pkt_handler = task_info_pkt_hn,
@@ -284,6 +287,26 @@ static task_t s_tasks[] = {
 				.type      = ZMQ_XPUB,
 				.pub.autosleep  = true,
 				.pub.automanage = true,
+			},
+		},
+		.color       = ANSI_FG_YELLOW,
+	},
+	{ /* COINCIDENCE COUNTERS */
+		.data_init   = task_coinccount_init,
+		.endpoints   = {
+			{
+				.handler   = task_coinc_req_hn,
+				.addresses = "tcp://*:" TES_COINCCOUNT_REP_LPORT,
+				.type      = ZMQ_REP,
+			},
+			{
+				.addresses = "tcp://*:" TES_COINCCOUNT_PUB_LPORT,
+				.type      = ZMQ_XPUB,
+				.pub.automanage = true,
+			},
+			{
+				.addresses = ">tcp://localhost:" TES_COINC_PUB_LPORT,
+				.type      = ZMQ_SUB,
 			},
 		},
 		.color       = ANSI_FG_YELLOW,
@@ -987,8 +1010,7 @@ s_item_free (void** item_p)
 {
 	assert (item_p != NULL);
 	if (*item_p != NULL)
-		free (*item_p);
-	*item_p = NULL;
+		freen (*item_p); /* from czmq_prelude */
 }
 
 /*

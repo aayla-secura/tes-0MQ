@@ -108,4 +108,15 @@
 #  define TES_COINC_FLAG_TICK            0
 #endif
 
+/* Publish coincidence counters */
+#define TES_COINCCOUNT_PUB_PIC "s2888888"
+#define TES_COINCCOUNT_REQ_PIC        "8"
+#define TES_COINCCOUNT_REP_PIC  TES_COINCCOUNT_REQ_PIC
+#define TES_COINCCOUNT_REP_LPORT "55560"
+#define TES_COINCCOUNT_PUB_LPORT "55570"
+#define TES_COINCCOUNT_SEPARATOR ','
+#define TES_COINCCOUNT_SYM_NUM   'N' // -> TOK_NUM
+#define TES_COINCCOUNT_SYM_NOISE '-' // -> TES_COINC_TOK_NOISE
+#define TES_COINCCOUNT_SYM_ANY   'X' // -> TOK_ANY
+
 #endif

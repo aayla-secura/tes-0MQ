@@ -199,4 +199,12 @@ task_pkt_fn     task_coinc_pkt_hn;
 task_data_fn    task_coinc_init;
 task_data_fn    task_coinc_wakeup;
 
+/* Publish coincidence counters */
+zloop_reader_fn task_coinccount_req_hn;
+zloop_reader_fn task_coinccount_pub_hn;
+task_data_fn    task_coinccount_init;
+zlistx_comparator_fn task_coinccount_sub_cmp;
+zlistx_duplicator_fn task_coinccount_sub_dup;
+// zlistx_destructor_fn task_coinccount_sub_free;
+
 #endif
