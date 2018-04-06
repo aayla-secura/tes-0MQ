@@ -1,9 +1,9 @@
 **A UNIX daemon for reading and saving data from the transition edge sensor
 (TES) signal processor.**
 
-The daemon is tested on Linux 4.13.0 and FreeBSD 11.0, and above. It requires
-[netmap](https://github.com/luigirizzo/netmap) patched drivers for the NIC
-connected to the FPGA.
+The daemon is tested on Linux 4.13.0 and FreeBSD 11.0, and above. It
+requires [netmap](https://github.com/luigirizzo/netmap) patched
+drivers for the NIC connected to the FPGA.
 
 # API
 
@@ -14,7 +14,8 @@ The server talks to clients over [ØMQ](http://zeromq.org/) sockets.
 This interface accepts requests to reply with and log statistics, such
 as bandwidth, missed packets etc.
 
-Valid requests have a picture of "4", replies have a picture of "188888881".
+Valid requests have a picture of "4", replies have a picture of
+"188888881".
 
 #### Message frames in a valid request
 
@@ -71,43 +72,46 @@ Valid requests have a picture of "4", replies have a picture of "188888881".
 
 ## CAPTURE REP INTERFACE
 
-This interface accepts requests to save all received frames, until a given
-minimum number of tick frames and a given minimum number of events are seen, to
-a file (on the server). It can also return the status of a previous successful
-request.
+This interface accepts requests to save all received frames, until
+a given minimum number of tick frames and a given minimum number of
+events are seen, to a file (on the server). It can also return the
+status of a previous successful request.
 
-Messages are sent and read via `zsock_send` and `zsock_recv` respectively.
-These are simply multi-frame ØMQ messages, with each frame being a string
-representation of the value.
+Messages are sent and read via `zsock_send` and `zsock_recv`
+respectively. These are simply multi-frame ØMQ messages, with each
+frame being a string representation of the value.
 
-Valid requests have a picture of "ss88111", replies have a picture of "18888888".
+Valid requests have a picture of "ss88111", replies have a picture of
+"18888888".
 
-At the moment we only handle one request at a time. Will block until done.
+At the moment we only handle one request at a time. Will block until
+done.
 
 #### Message frames in a valid request
 
 1. **Filename**
 
-   Basename for the hdf5 file (no extension). It is relative to a hardcoded
-   root, leading slashes are ignored. Trailing slashes are not allowed. Missing
-   directories are created.
+   Basename for the hdf5 file (no extension). It is relative to
+   a hardcoded root, leading slashes are ignored. Trailing slashes are
+   not allowed. Missing directories are created.
 
 2. **Measurement**
 
-   Name of hdf5 group relative to a hardcoded topmost group. It must be non-empty
-   if conversion is to be done (now or at a later request).
+   Name of hdf5 group relative to a hardcoded topmost group. It must
+   be non-empty if conversion is to be done (now or at a later
+   request).
    
 3. **No. of ticks**
 
-   The server will record all packets (including ethernet header) until at
-   least that many ticks are seen.
+   The server will record all packets (including ethernet header)
+   until at least that many ticks are seen.
 
    The value is read as an **unsigned** int64.
 
 4. **No. of events**
 
-   The server will record all packets (including ethernet header) until at
-   least that many non-tick events are seen.
+   The server will record all packets (including ethernet header)
+   until at least that many non-tick events are seen.
 
    The value is read as an **unsigned** int64.
 
@@ -135,15 +139,16 @@ At the moment we only handle one request at a time. Will block until done.
 
 If neither ticks nor events is given **and** capture mode is auto, the
 request is interpreted as a status request and the reply that was sent
-previously for this filename is re-sent.
+previously for this filename is resent.
 
-A job will only terminate at receiving a tick, and only if both the minimum
-number of ticks and the minimum number of non-tick events has been recorded.
+A job will only terminate at receiving a tick, and only if both the
+minimum number of ticks and the minimum number of non-tick events has
+been recorded.
 
-As a consequence of how `zsock_recv` parses arguments, the client may omit
-frames corresponding to ignored arguments or arguments which are "0".
-Therefore to get a status of a file, only the filename and possibly
-measurement is required.
+As a consequence of how `zsock_recv` parses arguments, the client may
+omit frames corresponding to ignored arguments or arguments which are
+"0". Therefore to get a status of a file, only the filename and
+possibly measurement is required.
 
 #### Message frames in a reply
 
@@ -154,7 +159,8 @@ receive the reply.
 1. **Error status**
 
  * "0": writing finished successfully (in case of write request) or
-        status of a valid previous job was read (in case of status request)
+        status of a valid previous job was read (in case of status
+        request)
 
  * "1": capture request was not understood or
         conversion request was not understood (capture was successful)
@@ -230,33 +236,30 @@ Valid requests have a picture of "4", replies have a picture of "1b".
 
 ## MCA HISTOGRAM PUB INTERFACE
 
-This interface publishes ZMQ single-frame messages, each message
-contains one full histogram (MCA stream). You can receive these with
-`zmq_recv` for example.
+This interface publishes single-frame messages, each message contains
+one full histogram (MCA stream).
 
 ## JITTER HISTOGRAM REP+PUB INTERFACE
 
-This interface publishes ZMQ single-frame messages, each message
-contains one full histogram, representing the jitter between two
-channels and constructed over a configurable number of ticks. The
-histogram has a fixed number of bins, each of width 1. The reference
-channel is also configurable. Each point in the histogram corresponds to
-a frame of the non-reference channel. If it falls in the positive bin
-range, it gives the delay (in units of 4ns) since the last reference
-channel frame. If it falls in the negative bin range, it gives the delay
-(in units of 4ns) until the next reference channel frame. There is only
+This interface publishes single-frame messages, each message contains
+one full histogram, representing the jitter between two channels and
+constructed over a configurable number of ticks. The histogram has
+a fixed number of bins, each of width 1. The reference channel is also
+configurable. Each point in the histogram corresponds to a frame of
+the non-reference channel. If it falls in the positive bin range, it
+gives the delay (in units of 4ns) since the last reference channel
+frame. If it falls in the negative bin range, it gives the delay (in
+units of 4ns) until the next reference channel frame. There is only
 one entry for each non-reference frame: the smallest absolute value of
 the two possibilities being taken. (i.e. if the delay since the last
 reference is smaller than the delay before the next reference, the
 positive entry is taken, and vice versa).
 
-You can receive these histograms with `zmq_recv` for example.
-
 ### Configuration
 
 Reference channel and number of ticks to accumulate over is configured
-by sending a message to the REP socket. Valid requests have a picture of
-"18", replies have a picture of "1".
+by sending a message to the REP socket. Valid requests have a picture
+of "18", replies have a picture of "1".
 
 #### Message frames in a valid request
 
@@ -274,13 +277,86 @@ by sending a message to the REP socket. Valid requests have a picture of
 
 2. **Set ticks**
 
-The reply indicates the values after they are set. Request with ticks =
-0 OR reference channel > no. of channels is not valid and will return
-the current setting without change. Any other request should change the
-settings and be echoed back. The new settings will take effect at the
-next histogram.
+The reply indicates the values after they are set. A request with
+ticks = 0 OR reference channel > no. of channels is not valid and will
+return the current setting without change. Any other request should
+change the settings and be echoed back. The new settings will take
+effect at the next histogram.
 
 ## RAW COINCIDENCE REP+REP+PUB INTERFACE
+
+This interface publishes single-frame messages, each message contains
+all coincidences which occured between two ticks as one or more
+vectors. The vectors are `<number of channels>` bytes long. Each byte
+gives the number of photons in the given channel within the
+coincidence window. The maximum number is 16. 0 means no events
+occured in this channel. Two special tokens can also appear (values
+subject to change, but they will be > 16 and < 32:
+
+ * 17: There was an event, but the measurement was below the
+   threshold, i.e. it was noise.
+ * 18: There was an event but it did not contain the configured
+   measurement, i.e. no. of photons is unknown.
+
+A coincidence ends when an event arrives with a delay > `<window>`
+since the last event.
+
+If more than one event occurs in the same channel during the
+coincidence the coincidence will contain more than one vector and is
+flagged as **UNRESOLVED** (see flags below).
+
+If the total delay since the start of the coincidence exceeds
+`<window>` all vectors in the coincidence are also flagged as
+**UNRESOLVED**. For example:
+
+```
+no. of channels = 2; window > 10
+channel  delay  photons
+  0        10      1
+  1        10      2       ==>  UNRESOLVED [1, 2]
+  1        10      1       ==>  UNRESOLVED [0, 1]
+
+no. of channels = 4; window > 10 && window < 40
+channel  delay  photons
+  0        10      1
+  1        10      2
+  2        10      1
+  3        10      3       ==>  UNRESOLVED [1, 2, 1, 3]
+```
+
+A vector of all zeroes (after flags are masked out) indicates a tick.
+The last tick before the start of a coincidence may be joined with the
+coincidence vector (as a flag). This is enabled/disabled at compile
+time.
+
+The highest two (or three) bits of the first element are reserved for
+flags as follows:
+
+ * `bit[7]` **UNRESOLVED** (coincidence vector):
+   * consecutive events each within less than `<window>` delay from
+     the previous, but last one is delayed more than `<window>` since
+     first two events in the same channel within the same coincidence
+ * `bit[7]` **UNRESOLVED** (tick vector):
+   tick occured during the previous coincidence (there may be
+   multiple consecutive tick vectors with this flag, but never an
+   unresolved tick following a resolved one with no coincidences in
+   between
+ * `bit[6]` **BAD** (coincidence vector):
+   measurement is not peak and there are multiple peaks within one of
+   the events in the coincidence group
+
+If ticks are joined with the coincidence the UNRESOLVED flag will not
+be applied to the coincidence vector with the tick flag set, even if
+that tick occured during the coincidence. It will only be set for the
+extra tick vectors before that coincidence, if any of them also
+occured during the coincidence. Furthermore, if ticks are joined with
+coincidences, an additional flag is used:
+
+ * `bit[5]` **TICK** (coincidence vector):
+   coincidence is first after a tick
+ * `bit[5]` **TICK** (tick vector):
+   if n > 1 ticks occured between coincidences, there'd be n - 1
+   tick vectors with this flag
 
 ### Window/measurement type configuration
 
@@ -306,11 +382,11 @@ next histogram.
 
 2. **Measurement type**
 
-The reply indicates the values after they are set. Request with window
-= 0 OR channel > no. of channels is not valid and will return the
-current setting without change. Any other request should change the
-settings and be echoed back. The new settings will take effect at the
-next tick.
+The reply indicates the values after they are set. A request with
+window = 0 OR channel > no. of channels is not valid and will return
+the current setting without change. Any other request should change
+the settings and be echoed back. The new settings will take effect at
+the next tick.
 
 ### Threshold configuration
 
@@ -341,13 +417,12 @@ next tick.
 2. **Threshold array**
 
 If measurement or channel is invalid, threshold array will be empty.
-Otherwise it will indicate the full array (length =
-maximum no. of photons x 4 bytes) after setting. If the given array was
-invalid (or missing, the threshold is unchanged). In a valid threshold
-array every element is greater than the previous, but there may be
-trailing zeroes indicating unset thresholds (the highest photon number
-in the stream for this channel will be the number of set threshold
-elements).
+Otherwise it will indicate the full array (length = maximum no. of
+photons x 4 bytes) after setting. If the given array was invalid (or
+missing, the threshold is unchanged). In a valid threshold array every
+element is greater than the previous, but there may be trailing zeroes
+indicating unset thresholds (the highest photon number in the stream
+for this channel will be the number of set threshold elements).
 
 # INSTALLATION
 
@@ -365,18 +440,18 @@ The default install prefix is `/usr/local`, to change it:
 make PREFIX=<path> install
 ```
 
-Note: it is a GNU makefile, so on some systems (e.g. FreeBSD) you need to use
-`gmake`.
+Note: it is a GNU makefile, so on some systems (e.g. FreeBSD) you need
+to use `gmake`.
 
 Both client and server will print usage when given the '-h' option.
 
 #### TEST APPLICATIONS
 
-To compile the test apps do `make tests` or alternatively `make all` to compile
-everything. Test apps are not installed in the `PREFIX` location.
+To compile the test apps do `make tests` or alternatively `make all`
+to compile everything. Test apps are not installed in the `PREFIX`
+location.
 
 # TO DO
 
-* Write REQ job statistics to a global database such that it can be looked up
-  by filename, client IP or time frame.
-* Web UI
+ * Write REQ job statistics to a global database such that it can be
+   looked up by filename, client IP or time frame.

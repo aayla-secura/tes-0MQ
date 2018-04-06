@@ -1,5 +1,6 @@
 /*
  * TO DO:
+ *  - duplicator/comparator
  */
 
 #include "tesd_tasks.h"
@@ -26,6 +27,7 @@ task__req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	struct s_data_t* data = (struct s_data_t*) self->data;
 	
 	// int rc = zsock_recv (endpoint, TES__REQ_PIC, );
 	/* Would also return -1 if picture contained a pointer (p) or a null

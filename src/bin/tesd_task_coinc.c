@@ -3,6 +3,8 @@
  *  - add a flag when configuration has changed (either replacing
  *    TES_COINC_FLAG_TICK or set to another entry in the first vector
  *    of the frame)
+ *  - when sending set thresholds, prefix with no. of set ones (and
+ *    omit empty elements from buffer?)
  */
 
 #include "tesd_tasks.h"

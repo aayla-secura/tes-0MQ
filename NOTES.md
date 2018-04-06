@@ -67,6 +67,7 @@ To add a new task:
  * Declare the handlers in `src/bin/tesd_tasks.h`
  * Define constants useful to the clients in `include/api.h`
  * Add an entry in THE TASK LIST in `src/bin/tesd_tasks.c`
+ * Update README
 
 # Comment style
 
