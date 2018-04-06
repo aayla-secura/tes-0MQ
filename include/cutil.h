@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 #include <stdbool.h>
+#include <time.h>
 
 #ifndef PATH_MAX
 #  ifdef MAXPATHLEN
@@ -15,6 +16,13 @@
 #    define PATH_MAX 4096
 #  endif
 #endif
+#define NSEC_IN_SEC 1000000000
+
+/*
+ * Start/stop a timer. toc returns nanosecond difference.
+ */
+void tic (struct timespec* ts);
+long long toc (struct timespec* ts);
 
 /*
  * Set the CPU affinity of the calling thread to cpu % <num_cpus - 1>.

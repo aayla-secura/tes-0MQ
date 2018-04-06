@@ -10,8 +10,7 @@
 #include <assert.h>
 #include <poll.h>
 #include <sys/types.h>
-
-#define NSEC_IN_SEC 1000000000LU
+#include "cutil.h"
 
 /*
  * On FreeBSD 11.1, Intel Xeon E3-1275 @ 3.8GHz, CZMQ 4.1.1, gcc-6:
@@ -70,28 +69,6 @@ struct pdata_t
 	uint64_t signals;
 	struct zmq_pollitem_t* pitem;
 };
-
-static long long
-toc (struct timespec* ts)
-{
-	struct timespec te;
-	int rc = clock_gettime (CLOCK_REALTIME, &te);
-	if (rc == -1)
-	{
-		perror ("gettime");
-		return -1;
-	}
-	te.tv_sec -= ts->tv_sec;
-	te.tv_nsec -= ts->tv_nsec;
-
-	return (long long)te.tv_sec * NSEC_IN_SEC + te.tv_nsec;
-}
-
-static void
-tic (struct timespec* ts)
-{
-	clock_gettime (CLOCK_REALTIME, ts);
-}
 
 static int
 s_wakeup (zmq_pollitem_t* pitem)
