@@ -1232,7 +1232,7 @@ s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 	{
 		if (cmd == 1)
 			zsock_set_subscribe (endpoint->sock, pattern);
-		if (cmd == 0)
+		else if (cmd == 0)
 			zsock_set_unsubscribe (endpoint->sock, pattern);
 		else
 			assert (false);
