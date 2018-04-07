@@ -30,6 +30,18 @@
  * current frame sequences mod 2^16) is passed to the pkt_handler.
  * s_sig_hn also takes care of updating the task's head.
  *
+ * Tasks can be in an active or inactive state. Active tasks can be
+ * busy or idle. Only active idle tasks receive SIG_WAKEUP. s_sig_hn
+ * flags the task as busy while processing packets. Tasks can
+ * activate/deactivate themselves or can be setup to be
+ * activated/deactivated automatically under some circumstances (e.g.
+ * when their PUB endpoint has no subscriptions, see FRONTEND-TYPE
+ * SPECIFICS below). Furthermore they can define actions (data_wakeup,
+ * data_sleep) to be run upon activation/deactivation. Tasks which do
+ * not process packets (don't define a packet handler) can still use
+ * this autosleep feature to run those actions. Their 'active' flag
+ * won't be set though and their won't be receiving SIG_WAKEUPS.
+ *
  * If the task defines public endpoint addresses, s_task_shim will
  * open the socket, and if the endpoint defines a handler, it will
  * register it with the task's loop. Each task has a pointer for its
@@ -49,6 +61,10 @@
  * client at a time, such as REQ/REP tasks.
  *
  * FRONTEND-TYPE SPECIFICS:
+ *   struct _task_endpoint_t contains an anonymous union with
+ *   socket-type specific data.
+ *
+ *   ===== XPUB =====
  *   If any of the endpoints is an XPUB and is defined with the
  *   automanage flag, a generic handler is registered for it. It
  *   inspects messages received, updates the list of active
@@ -72,6 +88,7 @@
  *   destructor to (a wrapper) around free. Tasks may change the
  *   comparator/duplicator/destructor in their data_init method.
  *
+ *   ===== *SUB =====
  *   If any of the endpoints is an XSUB or SUB it can make use of
  *   endp_subscribe and endp_unsubscribe to subscribe and unsubscribe
  *   (the type XSUB vs SUB is checked and the appropriate action is
@@ -293,6 +310,8 @@ static task_t s_tasks[] = {
 	},
 	{ /* COINCIDENCE COUNTERS */
 		.data_init   = task_coinccount_init,
+		.data_wakeup = task_coinccount_wakeup,
+		.data_sleep  = task_coinccount_sleep,
 		.endpoints   = {
 			{
 				.handler   = task_coinc_req_hn,
@@ -302,6 +321,7 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_COINCCOUNT_PUB_LPORT,
 				.type      = ZMQ_XPUB,
+				.pub.autosleep  = true,
 				.pub.automanage = true,
 			},
 			{
@@ -454,7 +474,6 @@ int
 task_activate (task_t* self)
 {
 	assert (self != NULL);
-	assert (self->pkt_handler != NULL);
 
 	if (self->data_wakeup != NULL)
 	{
@@ -475,6 +494,9 @@ task_activate (task_t* self)
 		if (endpoint->automute)
 			zloop_reader_end (self->loop, endpoint->sock);
 	}
+
+	if (self->pkt_handler == NULL)
+		return 0;
 
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
@@ -1294,15 +1316,17 @@ s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 		return 0xDeadBeef;
 	}
 
-	endpoint->pub.nsubs++;
 	logmsg (0, LOG_DEBUG, "Subscription for '%s'", pattern);
 
-	void* item = zlistx_add_end (endpoint->pub.subscriptions, pattern);
+	/* FIX */
+	void* item = s_zlistx_add_end (
+		endpoint->pub.subscriptions, pattern);
 	if (item == NULL)
 	{
-		logmsg (0, LOG_WARNING, "Could not insert pattern into list");
+		logmsg (0, LOG_WARNING, "Invalid pattern");
 		return TASK_ERROR;
 	}
+	endpoint->pub.nsubs++;
 	return 0;
 }
 

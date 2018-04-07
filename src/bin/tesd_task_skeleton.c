@@ -73,7 +73,6 @@ task__wakeup (task_t* self)
 {
 	assert (self != NULL);
 
-	self->data = NULL;
 	return 0;
 }
 
@@ -82,7 +81,6 @@ task__sleep (task_t* self)
 {
 	assert (self != NULL);
 
-	self->data = NULL;
 	return 0;
 }
 

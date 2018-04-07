@@ -285,10 +285,27 @@ task_coinccount_init (task_t* self)
 		task_coinccount_sub_dup);
 	// zlistx_set_destructor (subendp->pub.subscriptions,
 	//   task_coinccount_sub_free);
-	endp_subscribe (subendp, "");
 
 	static struct s_data_t data;
 	self->data = &data;
+	return 0;
+}
+
+int
+task_coinccount_wakeup (task_t* self)
+{
+	assert (self != NULL);
+
+	endp_subscribe (&self->endpoints[ENDP_SUB], "");
+	return 0;
+}
+
+int
+task_coinccount_sleep (task_t* self)
+{
+	assert (self != NULL);
+
+	endp_unsubscribe (&self->endpoints[ENDP_SUB], "");
 	return 0;
 }
 
