@@ -14,8 +14,9 @@ TEST_PROGS := $(patsubst %.c,%,$(notdir $(wildcard $(TEST_SRC)/*.c)))
 TASKS_OBJ  := $(patsubst %.c,%.o,$(wildcard $(BIN_SRC)/tesd_task_*.c))
 
 CC      := gcc
-CFLAGS  += -I$(CPATH) -O1 -fPIC -Wall -Wextra \
-	   -Wno-unused-parameter -Wno-unused-function
+CFLAGS  += -I$(CPATH) -O1 -Wl,--gc-sections \
+           -fdata-sections -ffunction-sections -fPIC \
+           -Wall -Wextra -Wno-unused-parameter -Wno-unused-function
 LDLIBS  := -lzmq -lczmq -lrt -lpthread
 UNAME := $(shell uname -o)
 
@@ -43,18 +44,17 @@ libs: $(LIBS:%=$(LIB_DEST)/lib%.a) \
 
 $(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c $(HEADERS) \
 	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
-		$(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
 
 $(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
 	$(TASKS_OBJ) $(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
 	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter %.o %.a,$^) \
 		$(HDF5LIB) $(LDLIBS) -o $@
 
 $(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o $(HEADERS) \
 	| $(LIB_DEST)
-	ar rcs $@ $(filter-out %.h,$^)
+	ar rcs $@ $<
 
 $(LIB_DEST) $(BIN_DEST):
 	install -d $@
