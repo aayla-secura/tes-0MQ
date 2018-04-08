@@ -983,7 +983,7 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	if ( deadbeef || ! endpoint->pub.autosleep )
 		return 0;
 
-	if (endpoint->pub.nsubs == 1)
+	if (req_rc == 1 && endpoint->pub.nsubs == 1)
 	{
 		logmsg (0, LOG_DEBUG,
 			"First subscription, activating");
@@ -992,6 +992,7 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 	else if (endpoint->pub.nsubs == 0)
 	{
+		dbg_assert (req_rc == 0);
 		logmsg (0, LOG_DEBUG,
 			"Last unsubscription, deactivating");
 		/* Deactivate packet handler. */
@@ -1297,7 +1298,13 @@ s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 static int
 s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 {
-	logmsg (0, LOG_DEBUG, "Subscription for '%s'", pattern);
+	assert (endpoint != NULL);
+	dbg_assert (endpoint->type == ZMQ_XPUB ||
+		endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB);
+
+	logmsg (0, LOG_DEBUG, "%sstream subscription for '%s'",
+		(endpoint->type == ZMQ_XPUB ? "Down" : "Up"),
+		pattern);
 
 	if (endpoint->pub.max_nsubs > 0 &&
 		endpoint->pub.nsubs == endpoint->pub.max_nsubs)
@@ -1332,7 +1339,13 @@ s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 static int
 s_endp_sub_del (task_endp_t* endpoint, char* pattern)
 {
-	logmsg (0, LOG_DEBUG, "Unsubscription for '%s'", pattern);
+	assert (endpoint != NULL);
+	dbg_assert (endpoint->type == ZMQ_XPUB ||
+		endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB);
+
+	logmsg (0, LOG_DEBUG, "%sstream unsubscription for '%s'",
+		(endpoint->type == ZMQ_XPUB ? "Down" : "Up"),
+		pattern);
 
 	if (endpoint->pub.sub_processor != NULL)
 	{
