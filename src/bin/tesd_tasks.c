@@ -282,6 +282,7 @@ static task_t s_tasks[] = {
 		.pkt_handler = task_coinc_pkt_hn,
 		.data_init   = task_coinc_init,
 		.data_wakeup = task_coinc_wakeup,
+		.data_sleep  = task_coinc_sleep,
 		.endpoints   = {
 			{
 				.handler   = task_coinc_req_hn,

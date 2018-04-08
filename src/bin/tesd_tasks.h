@@ -215,6 +215,7 @@ zloop_reader_fn task_coinc_req_th_hn;
 task_pkt_fn     task_coinc_pkt_hn;
 task_data_fn    task_coinc_init;
 task_data_fn    task_coinc_wakeup;
+task_data_fn    task_coinc_sleep;
 
 /* Publish coincidence counters */
 zloop_reader_fn task_coinccount_req_hn;

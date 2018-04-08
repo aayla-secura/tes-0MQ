@@ -1,8 +1,9 @@
 /*
  * TODO:
  *  - add a config header
- *  - when sending set thresholds, prefix with no. of set ones (and
- *    omit empty elements from buffer?)
+ *  - when sending set thresholds omit empty elements from buffer?
+ *    (and maybe prefix with number of sent ones)
+ *  - apply conf at activation rather than at next tick
  */
 
 #include "tesd_tasks.h"
@@ -117,8 +118,8 @@ struct s_data_t
 	} cur_frame;
 	
 	struct s_conf_t conf; // to be read only in s_apply_conf or req_*_hn
-	/* following is assigned when changing conf */
-	thresh_t* thresholds;
+	/* following is set from ^conf by s_apply_conf at activation */
+	thresh_t thresholds;
 	uint16_t window;
 	struct
 	{
@@ -183,6 +184,7 @@ s_check_conf (struct s_conf_t* conf)
 /*
  * Check if conf is valid and if so, copy conf to data.conf, set
  * changed flag and save to file.
+ * If inactive, apply immediately.
  * Returns 0 on success, ECONFINVAL if conf was invalid, ECONFWR if
  * failed to write expected bytes.
  */
@@ -197,10 +199,15 @@ s_save_conf (task_t* self, struct s_conf_t* conf)
 	
 	memcpy (&data->conf, conf, sizeof (struct s_conf_t));
 	data->conf.changed = 1;
+
 	ssize_t rc = task_conf (self, conf, sizeof (struct s_conf_t),
 		TES_TASK_SAVE_CONF);
 	if (rc == -1 || (size_t)rc != sizeof (struct s_conf_t))
 		return ECONFWR;
+
+	if ( ! self->active )
+		s_apply_conf (data);
+	
 	return 0;
 }
 
@@ -214,7 +221,9 @@ s_apply_conf (struct s_data_t* data)
 {
 	dbg_assert (data != NULL);
 	data->window = data->conf.window;
-	data->thresholds = &data->conf.thresholds[data->conf.measurement];
+	memcpy (&data->thresholds,
+		&data->conf.thresholds[data->conf.measurement],
+		sizeof (thresh_t));
 	switch (data->conf.measurement)
 	{
 		case TES_COINC_MEAS_AREA:
@@ -472,9 +481,6 @@ s_add_ticks (task_t* self)
 	data->cur_frame.cur_group.ticks -= num;
 	data->cur_frame.cur_group.ticks_since_last = 0;
 	
-	if (data->conf.changed)
-		s_apply_conf (data);
-	
 	return 0;
 }
 
@@ -668,6 +674,7 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	
 	dbg_assert (len % 4 == 0 && buf != NULL && meas < NUM_MEAS
 		&& channel < TES_NCHANNELS);
+
 	uint8_t req_rc = TES_COINC_REQ_TH_OK;
 	if (len > 0)
 	{ /* update config */
@@ -685,9 +692,11 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 			req_rc = TES_COINC_REQ_TH_EINV;
 		}
 		else
+		{
 			logmsg (0, LOG_INFO,
 				"Setting new thresholds for measurement %hhu on channel %hhu",
 				meas, channel);
+		}
 
 		if (rc == ECONFWR)
 		{
@@ -703,9 +712,8 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	}
 	freen (buf); /* from czmq_prelude */
 	
-	ch_thresh_t* thres = &data->conf.thresholds[meas][channel];
 	zsock_send (endpoint, TES_COINC_REP_TH_PIC,
-		req_rc, thres, sizeof (*thres));
+		req_rc, &data->thresholds[channel], sizeof (ch_thresh_t));
 	
 	return 0;
 }
@@ -853,7 +861,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		
 		data->cur_frame.cur_group.channels |= (1 << ef->CH);
 		coinc_vec_t* cvec = &data->coinc[data->cur_frame.idx];
-		ch_thresh_t* thres = &(*data->thresholds)[ef->CH];
+		ch_thresh_t* thres = &data->thresholds[ef->CH];
 		
 		if (data->util.is_bad (pkt, e))
 		{
@@ -941,7 +949,6 @@ task_coinc_init (task_t* self)
 	}
 
 	s_apply_conf (&data);
-
 	return 0;
 }
 
@@ -955,5 +962,17 @@ task_coinc_wakeup (task_t* self)
 	memset (&data->cur_frame, 0, sizeof (data->cur_frame));
 	data->publishing = false;
 	data->cur_frame.idx = -1;
+	
+	return 0;
+}
+
+int
+task_coinc_sleep (task_t* self)
+{
+	assert (self != NULL);
+	struct s_data_t* data = (struct s_data_t*) self->data;
+
+	s_apply_conf (data);
+	
 	return 0;
 }
