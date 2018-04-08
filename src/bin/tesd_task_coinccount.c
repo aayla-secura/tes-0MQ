@@ -1,8 +1,7 @@
 /*
  * TODO:
- *  - per subscriber tick counter
  *  - set window from config
- *  - check pattern agains no. set thresholds
+ *  - check pattern against no. set thresholds
  */
 
 #include "tesd_tasks.h"
@@ -335,8 +334,8 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		if (s_process_vec (self, cvec) == TASK_ERROR)
 			return TASK_ERROR;
 	}
-	return 0;
 	freen (buf); /* from czmq_prelude */
+	return 0;
 }
 
 int
@@ -383,14 +382,17 @@ task_coinccount_sleep (task_t* self)
 	return 0;
 }
 
-void*
-task_coinccount_sub_process (const char* pattern_str)
+int
+task_coinccount_sub_process (const char* pattern_str, void** subsc_p)
 {
 	assert (pattern_str != NULL);
+	assert (subsc_p != NULL);
+	*subsc_p = NULL;
+
 	if (strlen (pattern_str) >= MAX_SUBSC_LEN)
 	{
 		logmsg (0, LOG_DEBUG, "Subscription pattern too long");
-		return NULL;
+		return 0;
 	}
 
 	struct s_subscription_t subsc = {0};
@@ -404,7 +406,7 @@ task_coinccount_sub_process (const char* pattern_str)
 		if (ntoks == TES_NCHANNELS)
 		{
 			logmsg (0, LOG_DEBUG, "Too many tokens");
-			return NULL;
+			return 0;
 		}
 
 		if (*p == TES_COINCCOUNT_SEP_SYM)
@@ -423,7 +425,7 @@ task_coinccount_sub_process (const char* pattern_str)
 			if (symbolic && tok != 0)
 			{
 				logmsg (0, LOG_DEBUG, "Extra digits after symbols");
-				return NULL;
+				return 0;
 			}
 			symbolic = false;
 
@@ -433,7 +435,7 @@ task_coinccount_sub_process (const char* pattern_str)
 			if (tok > TES_COINC_MAX_PHOTONS)
 			{
 				logmsg (0, LOG_DEBUG, "Invalid number");
-				return NULL;
+				return 0;
 			}
 			continue;
 		}
@@ -441,13 +443,13 @@ task_coinccount_sub_process (const char* pattern_str)
 		if ( ! symbolic )
 		{
 			logmsg (0, LOG_DEBUG, "Extra symbols after digits");
-			return NULL;
+			return 0;
 		}
 		if (tok != 0)
 		{
 			logmsg (0, LOG_DEBUG,
 				"Symbolic tokens must be a single character");
-			return NULL;
+			return 0;
 		}
 
 		switch (*p)
@@ -463,7 +465,7 @@ task_coinccount_sub_process (const char* pattern_str)
 				break;
 			default:
 				logmsg (0, LOG_DEBUG, "Invalid token");
-				return NULL;
+				return 0;
 		}
 	}
 	/* Add the token following the last separator (or the start of the
@@ -471,7 +473,7 @@ task_coinccount_sub_process (const char* pattern_str)
 	if (ntoks == TES_NCHANNELS)
 	{
 		logmsg (0, LOG_DEBUG, "Too many tokens");
-		return NULL;
+		return 0;
 	}
 	if (symbolic && tok == 0)
 		tok = TES_COINCCOUNT_SYM_ANY; /* nothing after last separator */
@@ -491,7 +493,7 @@ task_coinccount_sub_process (const char* pattern_str)
 		if (strlen (buf) > 0 || ticks < 0)
 		{
 			logmsg (0, LOG_DEBUG, "Invalid tick number");
-			return NULL;
+			return 0;
 		}
 		logmsg (0, LOG_DEBUG, "Using own tick counter: %lld", ticks);
 		subsc.is_private = true; /* start at next tick */
@@ -503,17 +505,15 @@ task_coinccount_sub_process (const char* pattern_str)
 		pattern_str);
 	assert (rc < MAX_SUBSC_LEN);
 
-	struct s_subscription_t* subsc_p = (struct s_subscription_t*)
-		malloc (sizeof (struct s_subscription_t));
-	if (subsc_p == NULL)
+	*subsc_p = malloc (sizeof (struct s_subscription_t));
+	if (*subsc_p == NULL)
 	{
 		logmsg (0, LOG_ERR, "Out of memory");
-		/* FIXME: How to propagate error here... */
-		return NULL;
+		return TASK_ERROR;
 	}
-	memcpy (subsc_p, &subsc, sizeof (struct s_subscription_t));
+	memcpy (*subsc_p, &subsc, sizeof (struct s_subscription_t));
 
 	logmsg (0, LOG_DEBUG, "Added subscription '%s'",
 		pattern_str);
-	return (void*)subsc_p;
+	return 0;
 }

@@ -40,7 +40,11 @@ typedef struct _task_endpoint_t task_endp_t;
 typedef int (task_data_fn)(task_t*);
 typedef int (task_pkt_fn)(zloop_t*, tespkt*,
 		uint16_t, uint16_t, int, task_t*);
-typedef void* (hkey_processor_fn)(const char*);
+/*
+ * Returns 0 on success.
+ * Returns TASK_ERROR on error.
+ */
+typedef int (hkey_processor_fn)(const char*, void**);
 
 struct _task_endpoint_t
 {
@@ -158,7 +162,7 @@ ssize_t task_conf (task_t* self, void* conf, size_t len, int cmd);
  * pub.sub_processor is set, updates the subscription table.
  * Returns 0 on success.
  * Returns TASK_ERROR if the message cannot be sent (for XSUB
- * sockets).
+ * sockets) or if the hash key processor returns with TASK_ERROR.
  * Returns 0xDeadBeef if the maximum number of subscription is
  * reached or if the subscription is to be discarded
  * (pub.sub_processor returns NULL).

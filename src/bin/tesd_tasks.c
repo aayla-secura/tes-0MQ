@@ -82,12 +82,15 @@
  *   If the endpoint defines a sub_processor, new subscriptions (to
  *   XPUB or enabled for *SUB via endp_subscribe) will be added to a
  *   hash table (pub.subscriptions). The processor receives the hash
- *   key (subscription string) and must return the value to be added.
- *   If it returns NULL, the subscription is to be discarded
+ *   key (subscription string) and a pointer to void* (void**) which
+ *   it must set to point the value to be added with that hash key.
+ *   If it sets the value to NULL the subscription is to be discarded
  *   (for *SUB endpoints endp_subscribe won't update the counter and
  *   the socket state; for automanaged XPUB endpoints, clients will
  *   receive a two-part message of the form <pattern>|<NULL> to know
  *   they have not been added).
+ *   If the processor returns with TASK_ERROR the error is propagated
+ *   (for XPUBs s_sub_hn will terminate the task).
  *   The item destructor is set to (a wrapper) around free. The
  *   default key comparator/duplicator/destructor is unchanged (see
  *   zhashx(3) ). Tasks may change any config for the zhashx_t object
@@ -582,7 +585,10 @@ endp_subscribe (task_endp_t* endpoint, char* pattern)
 	assert (pattern != NULL);
 	assert (endpoint != NULL);
 	
-	if (s_endp_sub_add (endpoint, pattern) == (int)0xDeadBeef)
+	int rc = s_endp_sub_add (endpoint, pattern);
+	if (rc == TASK_ERROR)
+		return TASK_ERROR;
+	else if (rc == (int)0xDeadBeef)
 		return 0xDeadBeef;
 
 	return s_endp_sub_send (endpoint, 1, pattern);
@@ -678,7 +684,7 @@ s_task_shim (zsock_t* pipe, void* self_)
 		logmsg (0, LOG_INFO,
 			"%s port(s) %s",
 			serverish ? "Listening on" : "Connected to",
-			endpoint->addresses + (serverish ? 0 : 1));
+			endpoint->addresses);
 
 		if ( (endpoint->type == ZMQ_XPUB ||
 			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB) &&
@@ -981,7 +987,13 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 	else if (req_rc == 1)
 	{
-		if (s_endp_sub_add (endpoint, msgstr + 1) == (int)0xDeadBeef)
+		int rc = s_endp_sub_add (endpoint, msgstr + 1);
+		if (rc == TASK_ERROR)
+		{
+			self->error = true;
+			return -1;
+		}
+		else if (rc == (int)0xDeadBeef)
 		{
 			zsock_send (endpoint->sock, "sz", msgstr + 1);
 			deadbeef = true;
@@ -1307,6 +1319,7 @@ s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 
 /*
  * Returns 0 on success.
+ * Returns TASK_ERROR on error.
  * Returns 0xDeadBeef if the pattern is invalid or if the maximum
  * number of subscriptions is reached.
 */
@@ -1332,13 +1345,18 @@ s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 	if (endpoint->pub.sub_processor != NULL)
 	{
 		dbg_assert (endpoint->pub.subscriptions != NULL);
-		void* item = endpoint->pub.sub_processor (pattern);
+		void* item = NULL;
+		int rc = endpoint->pub.sub_processor (pattern, &item);
+		if (rc == TASK_ERROR)
+			return TASK_ERROR;
+
 		if (item == NULL)
 		{
-			logmsg (0, LOG_WARNING, "Invalid pattern");
+			logmsg (0, LOG_WARNING, "Discarding subscription");
 			return 0xDeadBeef;
 		}
-		int rc = zhashx_insert (endpoint->pub.subscriptions, pattern, item);
+		rc = zhashx_insert (endpoint->pub.subscriptions,
+			pattern, item);
 		assert (rc != -1); /* key should not have been present */
 		dbg_assert (zhashx_size (endpoint->pub.subscriptions) ==
 			endpoint->pub.nsubs + 1);
