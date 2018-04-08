@@ -90,6 +90,7 @@
 #define TES_COINC_MEAS_DOTP 2
 #define TES_COINC_MAX_WINDOW UINT16_MAX
 #define TES_COINC_MAX_SIZE  (TES_NCHANNELS*256)
+#define TES_COINC_HDR_LEN   0 // TODO
 
 #define TES_COINC_TOK_TICK  0 // tick vector
 #define TES_COINC_TOK_NONE  0 // no event in this channel

@@ -23,12 +23,13 @@
 #include <czmq.h>
 
 /* Debug levels. */
-#define NO_DEBUG       0
-#define CAUTIOUS       1
-#define TESTING        5
-#define VERBOSE       10
-#define LETS_GET_NUTS 50 // Have you ever debugged with the devil
-                         // by the pale moon light?
+#define NO_DEBUG        0
+#define CAUTIOUS        1
+#define TESTING         5
+#define VERBOSE        10
+#define FEELING_LUCKY  30
+#define LETS_GET_NUTS  50 // Have you ever debugged with the devil
+                          // by the pale moon light?
 #ifndef DEBUG_LEVEL
 #  define DEBUG_LEVEL TESTING
 #endif

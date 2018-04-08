@@ -45,9 +45,9 @@ typedef void* (hkey_processor_fn)(const char*);
 struct _task_endpoint_t
 {
 	zloop_reader_fn* handler;
-	const char* addresses;      // comma-separated, by default it binds,
-	                            // prefix with '>' those that need to
-	                            // connect instead
+	const char* addresses;      // comma-separated, each may be prefixed
+	                            // by '>' to connect or '@' to bind
+	bool        clientish;      // connect rather than bind by default
 	zsock_t*    sock;
 	union
 	{ // socket-type specific

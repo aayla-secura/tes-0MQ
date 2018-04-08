@@ -305,7 +305,7 @@ static task_t s_tasks[] = {
 		.data_sleep  = task_coinccount_sleep,
 		.endpoints   = {
 			{
-				.handler   = task_coinc_req_hn,
+				.handler   = task_coinccount_req_hn,
 				.addresses = "tcp://*:" TES_COINCCOUNT_REP_LPORT,
 				.type      = ZMQ_REP,
 			},
@@ -317,7 +317,9 @@ static task_t s_tasks[] = {
 				.pub.automanage = true,
 			},
 			{
-				.addresses = ">tcp://localhost:" TES_COINC_PUB_LPORT,
+				.handler   = task_coinccount_pub_hn,
+				.addresses = "tcp://localhost:" TES_COINC_PUB_LPORT,
+				.clientish = true,
 				.type      = ZMQ_SUB,
 			},
 		},
@@ -662,16 +664,21 @@ s_task_shim (zsock_t* pipe, void* self_)
 			self->error = true;
 			goto cleanup;
 		}
-		rc = zsock_attach (endpoint->sock, endpoint->addresses, 1);
+		bool serverish = ( ! endpoint->clientish );
+		rc = zsock_attach (endpoint->sock, endpoint->addresses,
+			serverish);
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR,
-				"Could not bind the public interfaces");
+				"Could not %s the public interfaces",
+				serverish ? "bind" : "connect");
 			self->error = true;
 			goto cleanup;
 		}
 		logmsg (0, LOG_INFO,
-			"Listening on port(s) %s", endpoint->addresses);
+			"%s port(s) %s",
+			serverish ? "Listening on" : "Connected to",
+			endpoint->addresses + (serverish ? 0 : 1));
 
 		if ( (endpoint->type == ZMQ_XPUB ||
 			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB) &&
