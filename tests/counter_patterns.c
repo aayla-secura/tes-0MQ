@@ -10,7 +10,7 @@
 #define SYM_NOISE '-'
 #define SYM_NUM 'N'
 #define SYM_ANY 'X'
-// #define STOP_ON_ERR
+#define NO_AUTO_EXTEND
 
 int main (void)
 {
@@ -111,21 +111,28 @@ int main (void)
 			continue;
 invalid:
 			seek = true;
-#ifdef STOP_ON_ERR
-      break;
+#ifdef NO_AUTO_EXTEND
+			break;
 #endif
 		}
-		if ( ! seek && ( ! symbolic || tok != 0 ) )
-    {
-      printf ("\t--> Token: %d\n", tok);
-      ntoks++;
-    }
-#ifndef STOP_ON_ERR
-    for (; ntoks < NITEMS; ntoks++)
-      printf ("\t--> Token: %d\n", SYM_ANY);
+		if ( ! seek )
+		{
+			if (ntoks == NITEMS)
+				printf ("Too many tokens\n");
+			else
+			{
+				if (symbolic && tok == 0)
+					tok = SYM_ANY;
+				printf ("\t--> Token: %d\n", tok);
+				ntoks++;
+			}
+		}
+#ifndef NO_AUTO_EXTEND
+		for (; ntoks < NITEMS; ntoks++)
+			printf ("\t--> Token: %d\n", SYM_ANY);
 #endif
 
-    printf ("Num tokens: %d\n", ntoks);
+		printf ("Num tokens: %d\n", ntoks);
 	}
 	return 0;
 }

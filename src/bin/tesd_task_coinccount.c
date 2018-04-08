@@ -1,10 +1,8 @@
 /*
  * TO DO:
- *  - subscription list handlers
  *  - per subscriber tick counter
- *  - unsubscribe from raw when no subscribers
  *  - query window config
- *  - check pattern agains max. photons
+ *  - check pattern agains no. set thresholds
  */
 
 #include "tesd_tasks.h"
@@ -382,16 +380,16 @@ task_coinccount_sub_process (const char* pattern_str)
 				return NULL;
 		}
 	}
-	if ( ! symbolic || tok != 0 )
+	if (ntoks == TES_NCHANNELS)
 	{
-		if (ntoks == TES_NCHANNELS)
-		{
-			logmsg (0, LOG_DEBUG, "Too many tokens");
-			return NULL;
-		}
-		subsc.pattern[ntoks] = tok;
-		ntoks++;
+		logmsg (0, LOG_DEBUG, "Too many tokens");
+		return NULL;
 	}
+	if (symbolic && tok == 0)
+		tok = TES_COINCCOUNT_SYM_ANY;
+	subsc.pattern[ntoks] = tok;
+	ntoks++;
+
 	for (; ntoks < TES_NCHANNELS; ntoks++)
 		subsc.pattern[ntoks] = TES_COINCCOUNT_SYM_ANY;
 
