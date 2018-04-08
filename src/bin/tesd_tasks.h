@@ -40,6 +40,7 @@ typedef struct _task_endpoint_t task_endp_t;
 typedef int (task_data_fn)(task_t*);
 typedef int (task_pkt_fn)(zloop_t*, tespkt*,
 		uint16_t, uint16_t, int, task_t*);
+typedef void* (hkey_processor_fn)(const char*);
 
 struct _task_endpoint_t
 {
@@ -59,7 +60,17 @@ struct _task_endpoint_t
 			 */
 			uint32_t  nsubs;
 			uint32_t  max_nsubs;
-			zlistx_t* subscriptions;
+			zhashx_t* subscriptions;
+			/*
+			 * To use the subscriptions hash table the task needs to set a
+			 * sub_processor, which accepts the subscription string and
+			 * returns the value that is to be associated with it.
+			 * If the processor returns NULL (or the task has not setup a
+			 * processor) the subscription table is not touched.
+			 * Used for automanaged XPUBs and for *SUBs when end_subscribe
+			 * is called.
+			 */
+			hkey_processor_fn* sub_processor;
 			bool      autosleep;
 			bool      automanage; // used for XPUB only
 		} pub; // used for XPUB, XSUB and SUB sockets
@@ -143,22 +154,24 @@ int task_deactivate (task_t* self);
 ssize_t task_conf (task_t* self, void* conf, size_t len, int cmd);
 
 /*
- * Subscribe to pattern. Updates the subscription list and counter.
+ * Subscribe to pattern. Updates the subscription counter. If
+ * pub.sub_processor is set, updates the subscription table.
  * Returns 0 on success.
  * Returns TASK_ERROR if the message cannot be sent (for XSUB
- * sockets) or if the pattern cannot be saved.
+ * sockets).
  * Returns 0xDeadBeef if the maximum number of subscription is
- * reached.
+ * reached or if the subscription is to be discarded
+ * (pub.sub_processor returns NULL).
  */
 int endp_subscribe (task_endp_t* endpoint, char* pattern);
 
 /*
- * Unsubscribe from pattern. Updates the subscription list and
- * counter.
+ * Unsubscribe to pattern. Updates the subscription counter. If
+ * pub.sub_processor is set, updates the subscription table.
  * Returns 0 on success.
  * Returns TASK_ERROR if the message cannot be sent (for XSUB
  * sockets).
- * Returns 0xDeadBeef if the pattern wasn't in the list of
+ * Returns 0xDeadBeef if the pattern wasn't in the table of
  * subscriptions.
  */
 int endp_unsubscribe (task_endp_t* endpoint, char* pattern);
@@ -205,8 +218,6 @@ zloop_reader_fn task_coinccount_pub_hn;
 task_data_fn    task_coinccount_init;
 task_data_fn    task_coinccount_wakeup;
 task_data_fn    task_coinccount_sleep;
-zlistx_comparator_fn task_coinccount_sub_cmp;
-zlistx_duplicator_fn task_coinccount_sub_dup;
-// zlistx_destructor_fn task_coinccount_sub_free;
+hkey_processor_fn task_coinccount_sub_process;
 
 #endif

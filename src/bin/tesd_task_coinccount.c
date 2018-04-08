@@ -12,6 +12,7 @@
 #define ENDP_REP    0
 #define ENDP_PUB    1
 #define ENDP_SUB    2
+#define MAX_SUBSC_LEN (3*TES_NCHANNELS)
 
 /*
  * Pattern vectors are sent as characters. Allowed tokens are:
@@ -30,15 +31,16 @@
 #define TOK_ANY 0x1F
 
 #define FIRST_SUB(self) (struct s_subscription_t*) \
-		zlistx_first (self->endpoints[ENDP_PUB].pub.subscriptions)
+		zhashx_first (self->endpoints[ENDP_PUB].pub.subscriptions)
 #define NEXT_SUB(self)  (struct s_subscription_t*) \
-		zlistx_next (self->endpoints[ENDP_PUB].pub.subscriptions)
+		zhashx_next (self->endpoints[ENDP_PUB].pub.subscriptions)
 
 typedef uint8_t coinc_vec_t[TES_NCHANNELS];
 
 struct s_subscription_t
 {
 	coinc_vec_t pattern;
+	char pattern_str[MAX_SUBSC_LEN];
 	struct
 	{
 		uint64_t num_res_match;
@@ -53,9 +55,6 @@ struct s_subscription_t
 	                 // to synchronize displays
 };
 
-/*
- * 
- */
 struct s_data_t
 {
 	uint64_t ticks;
@@ -115,7 +114,7 @@ s_publish (task_t* self)
 		}
 		int rc = zsock_send (self->endpoints[ENDP_PUB].sock,
 			TES_COINCCOUNT_PUB_PIC,
-			subsc->pattern,
+			subsc->pattern_str,
 			data->window,
 			data->ticks,
 			subsc->counts.num_res_match,
@@ -278,14 +277,6 @@ task_coinccount_init (task_t* self)
 	assert ((TOK_NUM & ~TES_COINC_FLAG_MASK) != TES_COINC_TOK_NOISE);
 	assert ((TOK_NUM & ~TES_COINC_FLAG_MASK) != TES_COINC_TOK_UNKNOWN);
 
-	task_endp_t* subendp = &self->endpoints[ENDP_SUB];
-	zlistx_set_comparator (subendp->pub.subscriptions,
-		task_coinccount_sub_cmp);
-	zlistx_set_duplicator (subendp->pub.subscriptions,
-		task_coinccount_sub_dup);
-	// zlistx_set_destructor (subendp->pub.subscriptions,
-	//   task_coinccount_sub_free);
-
 	static struct s_data_t data;
 	self->data = &data;
 	return 0;
@@ -309,38 +300,116 @@ task_coinccount_sleep (task_t* self)
 	return 0;
 }
 
-int
-task_coinccount_sub_cmp (const void* itemA, const void* itemB)
-{
-	assert (itemA != NULL && itemB != NULL);
-	struct s_subscription_t* subscA = (struct s_subscription_t*)itemA;
-	struct s_subscription_t* subscB = (struct s_subscription_t*)itemB;
-	for (int i = 0; i < TES_NCHANNELS; i++)
-	{
-		if (subscA->pattern[i] < subscB->pattern[i])
-			return -1;
-		if (subscA->pattern[i] > subscB->pattern[i])
-			return 1;
-	}
-	return 0;
-}
-
 void*
-task_coinccount_sub_dup (const void* item)
+task_coinccount_sub_process (const char* pattern_str)
 {
-	assert (item != NULL);
-	struct s_subscription_t* subsc = (struct s_subscription_t*)
-		malloc (sizeof (struct s_subscription_t));
-	if (subsc == NULL)
+	assert (pattern_str != NULL);
+	if (strlen (pattern_str) >= MAX_SUBSC_LEN)
+	{
+		logmsg (0, LOG_DEBUG, "Subscription pattern too long");
 		return NULL;
-	memset (subsc, 0, sizeof (struct s_subscription_t));
+	}
+
+	struct s_subscription_t subsc = {0};
 	
-	/* TO DO */
+	unsigned int tok = 0;
+	bool symbolic = true;
+	int ntoks = 0;
+	for (const char* p = pattern_str; *p != '\0'; p++)
+	{
+		if (ntoks == TES_NCHANNELS)
+		{
+			logmsg (0, LOG_DEBUG, "Too many tokens");
+			return NULL;
+		}
 
-	return (void*)subsc;
+		if (*p == TES_COINCCOUNT_SEPARATOR)
+		{
+			if (symbolic && tok == 0)
+				tok = TES_COINCCOUNT_SYM_ANY;
+			subsc.pattern[ntoks] = tok;
+			ntoks++;
+			tok = 0;
+			symbolic = true;
+			continue;
+		}
+
+		if (*p > 47 && *p < 58)
+		{ /* ASCII 0 to 9 */
+			if (symbolic && tok != 0)
+			{
+				logmsg (0, LOG_DEBUG, "Extra digits after symbols");
+				return NULL;
+			}
+			symbolic = false;
+
+			if (tok != 0)
+				tok *= 10;
+			tok += (*p) - 48;
+			if (tok > TES_COINC_MAX_PHOTONS)
+			{
+				logmsg (0, LOG_DEBUG, "Invalid number");
+				return NULL;
+			}
+			continue;
+		}
+
+		if ( ! symbolic )
+		{
+			logmsg (0, LOG_DEBUG, "Extra symbols after digits");
+			return NULL;
+		}
+		if (tok != 0)
+		{
+			logmsg (0, LOG_DEBUG,
+				"Symbolic tokens must be a single character");
+			return NULL;
+		}
+
+		switch (*p)
+		{
+			case TES_COINCCOUNT_SYM_NOISE:
+				tok = TES_COINC_TOK_NOISE;
+				break;
+			case TES_COINCCOUNT_SYM_NUM:
+				tok = TOK_NUM;
+				break;
+			case TES_COINCCOUNT_SYM_ANY:
+				tok = TOK_ANY;
+				break;
+			default:
+				logmsg (0, LOG_DEBUG, "Invalid token");
+				return NULL;
+		}
+	}
+	if ( ! symbolic || tok != 0 )
+	{
+		if (ntoks == TES_NCHANNELS)
+		{
+			logmsg (0, LOG_DEBUG, "Too many tokens");
+			return NULL;
+		}
+		subsc.pattern[ntoks] = tok;
+		ntoks++;
+	}
+	for (; ntoks < TES_NCHANNELS; ntoks++)
+		subsc.pattern[ntoks] = TES_COINCCOUNT_SYM_ANY;
+
+	int rc = snprintf (subsc.pattern_str, MAX_SUBSC_LEN, "%s",
+		pattern_str);
+	assert (rc < MAX_SUBSC_LEN);
+
+	struct s_subscription_t* subsc_p = (struct s_subscription_t*)
+		malloc (sizeof (struct s_subscription_t));
+	if (subsc_p == NULL)
+	{
+		logmsg (0, LOG_ERR, "Out of memory");
+		/* FIX: How to propagate error here... */
+		return NULL;
+	}
+	memcpy (subsc_p, &subsc, sizeof (struct s_subscription_t));
+
+	logmsg (0, LOG_DEBUG, "Added subscription '%s'",
+		pattern_str);
+	return (void*)subsc_p;
 }
-
-// void
-// task_coinccount_sub_free (void** item_p)
-// {
-// }

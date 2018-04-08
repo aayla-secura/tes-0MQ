@@ -34,13 +34,13 @@
  * busy or idle. Only active idle tasks receive SIG_WAKEUP. s_sig_hn
  * flags the task as busy while processing packets. Tasks can
  * activate/deactivate themselves or can be setup to be
- * activated/deactivated automatically under some circumstances (e.g.
- * when their PUB endpoint has no subscriptions, see FRONTEND-TYPE
- * SPECIFICS below). Furthermore they can define actions (data_wakeup,
- * data_sleep) to be run upon activation/deactivation. Tasks which do
- * not process packets (don't define a packet handler) can still use
- * this autosleep feature to run those actions. Their 'active' flag
- * won't be set though and their won't be receiving SIG_WAKEUPS.
+ * activated/deactivated automatically under some circumstances (see
+ * autosleep and automute flags). Furthermore they can define actions
+ * (data_wakeup, data_sleep) to be run upon activation/deactivation.
+ * Tasks which do not process packets (don't define a packet handler)
+ * can still use this autosleep feature to run those actions. Their
+ * 'active' flag won't be set though and their won't be receiving
+ * SIG_WAKEUPS.
  *
  * If the task defines public endpoint addresses, s_task_shim will
  * open the socket, and if the endpoint defines a handler, it will
@@ -64,45 +64,41 @@
  *   struct _task_endpoint_t contains an anonymous union with
  *   socket-type specific data.
  *
- *   ===== XPUB =====
- *   If any of the endpoints is an XPUB and is defined with the
- *   automanage flag, a generic handler is registered for it. It
- *   inspects messages received, updates the list of active
- *   subscription patterns ((struct _task_endpoint_t*)->pub.subscriptions).
- *   If the endpoint also has the autosleep flag it will be
- *   deactivated when the socket has no subscribers and reactivated at
- *   the first subscription.
+ *   ===== XPUB, XSUB, SUB =====
+ *   If the endpoint is an XPUB and is defined with the automanage
+ *   flag, a generic handler is registered for it. It inspects
+ *   messages received, updates the subscription counter and possibly
+ *   hash table (see below).
+ *   The automanage flag is not used for *SUB endpoints.
+ *
+ *   If the endpoint has the autosleep flag it will be deactivated
+ *   when the socket has no subscribers (XPUB) or subscriptions (*SUB)
+ *   and reactivated at the first subscription.
  *   Note that any additional handler set for the socket will also be
  *   registered in which case it must not try to receive the message
- *   from the socket. It may inspect the list of subscriptions since
- *   it will be called after the default handler. Subscriptions are
- *   appended to list, so the last one is at the tail.
- *   If the endpoint sets max_nsubs > 0, once this number is reached
- *   new subscribers will receive a two-part message of the form
- *   <pattern>|<NULL> to know they have not been added.
- *   For XPUB endpoints (struct _task_endpoint_t*)->pub.subscriptions
- *   is initialized to a new zlistx_t regardless of the automanage
- *   flag, so the socket handler can use it straight away. Furthermore
- *   the comparator function is set to (a wrapper around) strcmp, the
- *   duplicator function to (a wrapper around) strdup and the
- *   destructor to (a wrapper) around free. Tasks may change the
- *   comparator/duplicator/destructor in their data_init method.
+ *   from the socket. It may inspect the hash table of subscriptions
+ *   since it will be called after the default handler.
  *
- *   ===== *SUB =====
- *   If any of the endpoints is an XSUB or SUB it can make use of
- *   endp_subscribe and endp_unsubscribe to subscribe and unsubscribe
- *   (the type XSUB vs SUB is checked and the appropriate action is
- *   taken.
- *   The no. of subscriptions (struct _task_endpoint_t*)->pub.nsubs
- *   and the list of (struct _task_endpoint_t*)->pub.subscriptions is
- *   updated. The same default comparator/duplicator/destructor is set
- *   as for XPUB.
- *   If the endpoint sets max_nsubs > 0 endp_subscribe will return
- *   with an error if more subscriptions are requested.
- *   If the endpoint also has the autosleep flag it will be
- *   deactivated when the socket has no subscriptions and reactivated
- *   when it requests a new subscription.
- *   The automanage flag is not used.
+ *   If the endpoint defines a sub_processor, new subscriptions (to
+ *   XPUB or enabled for *SUB via endp_subscribe) will be added to a
+ *   hash table (pub.subscriptions). The processor receives the hash
+ *   key (subscription string) and must return the value to be added.
+ *   If it returns NULL, the subscription is to be discarded
+ *   (for *SUB endpoints endp_subscribe won't update the counter and
+ *   the socket state; for automanaged XPUB endpoints, clients will
+ *   receive a two-part message of the form <pattern>|<NULL> to know
+ *   they have not been added).
+ *   The item destructor is set to (a wrapper) around free. The
+ *   default key comparator/duplicator/destructor is unchanged (see
+ *   zhashx(3) ). Tasks may change any config for the zhashx_t object
+ *   in their data_init method.
+ *
+ *   If the endpoint is an XPUB and sets max_nsubs > 0, once this
+ *   number is reached new subscribers will receive a two-part message
+ *   of the form <pattern>|<NULL> to know they have not been added.
+ *   If the endpoint is an *SUB and sets max_nsubs > 0, once this
+ *   number is reached endp_subscribe will return 0xDeadBeef and the
+ *   subscription state will not be updated.
  *
  * Right after the loop terminates, s_task_shim will call the task
  * finalizer, so it can cleanup its data and possibly send final
@@ -179,9 +175,6 @@
  *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Print debugging stats every UPDATE_INTERVAL via the
  *   coordinator.
- * - Write a wrapper around zlistx_add_end (or whichever one we use
- *   that calls the item duplicator) to handle errors gracefully;
- *   zlistx asserts duplicator returns non-NULL.
  */
 
 #include "tesd_tasks.h"
@@ -193,9 +186,6 @@ static zactor_fn       s_task_shim;
 static zloop_reader_fn s_sig_hn;
 static zloop_reader_fn s_die_hn;
 static zloop_reader_fn s_sub_hn;
-static zlistx_comparator_fn s_item_cmp;
-static zlistx_duplicator_fn s_item_dup;
-static zlistx_destructor_fn s_item_free;
 
 static int  s_task_start (tes_ifdesc* ifd, task_t* self);
 static void s_task_stop (task_t* self);
@@ -206,6 +196,7 @@ static int  s_endp_sub_send (task_endp_t* endpoint, char cmd,
 	char* pattern);
 static int  s_endp_sub_add (task_endp_t* endpoint, char* pattern);
 static int  s_endp_sub_del (task_endp_t* endpoint, char* pattern);
+static void s_free (void** item_p);
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
@@ -321,6 +312,7 @@ static task_t s_tasks[] = {
 			{
 				.addresses = "tcp://*:" TES_COINCCOUNT_PUB_LPORT,
 				.type      = ZMQ_XPUB,
+				.pub.sub_processor = task_coinccount_sub_process,
 				.pub.autosleep  = true,
 				.pub.automanage = true,
 			},
@@ -498,6 +490,7 @@ task_activate (task_t* self)
 	if (self->pkt_handler == NULL)
 		return 0;
 
+	assert ( ! self->active );
 	for (int r = 0; r < NUM_RINGS; r++)
 	{
 		tes_ifring* rxring = tes_if_rxring (self->ifd, r);
@@ -587,10 +580,10 @@ endp_subscribe (task_endp_t* endpoint, char* pattern)
 	assert (pattern != NULL);
 	assert (endpoint != NULL);
 	
-	if (s_endp_sub_send (endpoint, 1, pattern) == TASK_ERROR)
-		return TASK_ERROR;
+	if (s_endp_sub_add (endpoint, pattern) == (int)0xDeadBeef)
+		return 0xDeadBeef;
 
-	return s_endp_sub_add (endpoint, pattern);
+	return s_endp_sub_send (endpoint, 1, pattern);
 }
 
 int
@@ -599,10 +592,10 @@ endp_unsubscribe (task_endp_t* endpoint, char* pattern)
 	assert (pattern != NULL);
 	assert (endpoint != NULL);
 	
-	if (s_endp_sub_send (endpoint, 0, pattern) == TASK_ERROR)
-		return TASK_ERROR;
+	if (s_endp_sub_del (endpoint, pattern) == (int)0xDeadBeef)
+		return 0xDeadBeef;
 	
-	return s_endp_sub_del (endpoint, pattern);
+	return s_endp_sub_send (endpoint, 0, pattern);
 }
 
 /* -------------------------------------------------------------- */
@@ -683,13 +676,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 		if (endpoint->type == ZMQ_XPUB ||
 			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB)
 		{
-			endpoint->pub.subscriptions = zlistx_new ();
-			zlistx_set_comparator (endpoint->pub.subscriptions,
-				s_item_cmp);
-			zlistx_set_duplicator (endpoint->pub.subscriptions,
-				s_item_dup);
-			zlistx_set_destructor (endpoint->pub.subscriptions,
-				s_item_free);
+			endpoint->pub.subscriptions = zhashx_new ();
+			zhashx_set_destructor (
+				endpoint->pub.subscriptions, s_free);
 		}
 
 		rc = 0;
@@ -978,10 +967,7 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	}
 	else if (req_rc == 1)
 	{
-		int rc = s_endp_sub_add (endpoint, msgstr + 1);
-		if (rc == TASK_ERROR)
-			return TASK_ERROR;
-		if (rc == (int)0xDeadBeef)
+		if (s_endp_sub_add (endpoint, msgstr + 1) == (int)0xDeadBeef)
 		{
 			zsock_send (endpoint->sock, "sz", msgstr + 1);
 			deadbeef = true;
@@ -1173,7 +1159,6 @@ s_task_next_ring (task_t* self, uint16_t* missed_p)
  * Returns TASK_SLEEP or TASK_ERROR if pkt_handler does so.
  * Returns ?? if a jump in frame sequence is seen (TO DO).
  */
-
 static int
 s_task_dispatch (task_t* self, zloop_t* loop,
 		uint16_t ring_id, uint16_t missed)
@@ -1269,6 +1254,10 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 	return 0;
 }
 
+/*
+ * Returns 0 on success.
+ * Returns TASK_ERROR for XSUB sockets if the message cannot be sent.
+*/
 static int
 s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 {
@@ -1300,14 +1289,16 @@ s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 	return 0;
 }
 
-
 /*
- * Returns 0 on success, TASK_ERROR if the pattern cannot be saved or
- * if the maximum number of subscription is reached.
+ * Returns 0 on success.
+ * Returns 0xDeadBeef if the pattern is invalid or if the maximum
+ * number of subscriptions is reached.
 */
 static int
 s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 {
+	logmsg (0, LOG_DEBUG, "Subscription for '%s'", pattern);
+
 	if (endpoint->pub.max_nsubs > 0 &&
 		endpoint->pub.nsubs == endpoint->pub.max_nsubs)
 	{
@@ -1316,35 +1307,57 @@ s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 		return 0xDeadBeef;
 	}
 
-	logmsg (0, LOG_DEBUG, "Subscription for '%s'", pattern);
-
-	/* FIX */
-	void* item = s_zlistx_add_end (
-		endpoint->pub.subscriptions, pattern);
-	if (item == NULL)
+	if (endpoint->pub.sub_processor != NULL)
 	{
-		logmsg (0, LOG_WARNING, "Invalid pattern");
-		return TASK_ERROR;
+		void* item = endpoint->pub.sub_processor (pattern);
+		if (item == NULL)
+		{
+			logmsg (0, LOG_WARNING, "Invalid pattern");
+			return 0xDeadBeef;
+		}
+		int rc = zhashx_insert (endpoint->pub.subscriptions, pattern, item);
+		assert (rc != -1); /* key should not have been present */
+		dbg_assert (zhashx_size (endpoint->pub.subscriptions) ==
+			endpoint->pub.nsubs + 1);
 	}
+
 	endpoint->pub.nsubs++;
 	return 0;
 }
 
+/*
+ * Returns 0 on success.
+ * Returns 0xDeadBeef if the pattern wasn't in the table.
+*/
 static int
 s_endp_sub_del (task_endp_t* endpoint, char* pattern)
 {
 	logmsg (0, LOG_DEBUG, "Unsubscription for '%s'", pattern);
 
-	void* item = zlistx_find (endpoint->pub.subscriptions, pattern);
-	if (item == NULL)
+	if (endpoint->pub.sub_processor != NULL)
 	{
-		logmsg (0, LOG_WARNING, "Pattern not in list");
-		return 0xDeadBeef;
+		void* item = zhashx_lookup (endpoint->pub.subscriptions,
+			pattern);
+		if (item == NULL)
+		{
+			logmsg (0, LOG_WARNING, "Pattern not in table");
+			return 0xDeadBeef;
+		}
+		zhashx_delete (endpoint->pub.subscriptions, pattern);
+		dbg_assert (zhashx_size (endpoint->pub.subscriptions) ==
+			endpoint->pub.nsubs - 1);
 	}
 
 	dbg_assert (endpoint->pub.nsubs > 0);
 	endpoint->pub.nsubs--;
-	int rc = zlistx_delete (endpoint->pub.subscriptions, item);
-	dbg_assert (rc != -1);
 	return 0;
 }
+
+static void
+s_free (void** item_p)
+{
+	assert (item_p != NULL);
+	if (*item_p != NULL)
+		freen (*item_p); /* from czmq_prelude */
+}
+
