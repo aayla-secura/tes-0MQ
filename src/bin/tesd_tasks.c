@@ -673,8 +673,9 @@ s_task_shim (zsock_t* pipe, void* self_)
 		logmsg (0, LOG_INFO,
 			"Listening on port(s) %s", endpoint->addresses);
 
-		if (endpoint->type == ZMQ_XPUB ||
-			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB)
+		if ( (endpoint->type == ZMQ_XPUB ||
+			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB) &&
+			endpoint->pub.sub_processor != NULL)
 		{
 			endpoint->pub.subscriptions = zhashx_new ();
 			zhashx_set_destructor (
@@ -768,7 +769,13 @@ cleanup:
 			endpoint->addresses != NULL &&
 			endpoint <= &self->endpoints[MAX_FRONTENDS - 1];
 			endpoint++)
+	{
+		if (endpoint->type == ZMQ_XPUB ||
+			endpoint->type == ZMQ_XSUB || endpoint->type == ZMQ_SUB)
+			zhashx_destroy (&endpoint->pub.subscriptions);
+
 		zsock_destroy (&endpoint->sock);
+	}
 	logmsg (0, LOG_DEBUG, "Done");
 
 	if (self->pkt_handler == NULL)
@@ -1282,6 +1289,7 @@ s_endp_sub_send (task_endp_t* endpoint, char cmd, char* pattern)
 			return TASK_ERROR;
 		assert ((size_t)rc == len + 1);
 		rc = zstr_send (endpoint->sock, msg);
+		zstr_free (&msg);
 		if (rc == -1)
 			return TASK_ERROR;
 	}
@@ -1316,6 +1324,7 @@ s_endp_sub_add (task_endp_t* endpoint, char* pattern)
 
 	if (endpoint->pub.sub_processor != NULL)
 	{
+		dbg_assert (endpoint->pub.subscriptions != NULL);
 		void* item = endpoint->pub.sub_processor (pattern);
 		if (item == NULL)
 		{
@@ -1349,6 +1358,7 @@ s_endp_sub_del (task_endp_t* endpoint, char* pattern)
 
 	if (endpoint->pub.sub_processor != NULL)
 	{
+		dbg_assert (endpoint->pub.subscriptions != NULL);
 		void* item = zhashx_lookup (endpoint->pub.subscriptions,
 			pattern);
 		if (item == NULL)
