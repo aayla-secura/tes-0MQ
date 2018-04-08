@@ -31,13 +31,26 @@ else  # unknown OS
 endif
 endif # end HDF5LIB == ""
 
-all: tests main
+##################################################
+
+all: libs tests main
 
 ##################################################
 
-main: $(BIN_DEST)/tesd $(BIN_DEST)/tesc
+tesd: $(BIN_DEST)/tesd
+
+tesc: $(BIN_DEST)/tesc
+
+task_%:
+	@touch $(BIN_SRC)/tesd_task_$*.c
+	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) tesd
+
+main: tesd tesc
+	@echo
 	@echo
 	@echo "Now run 'make install'"
+	@echo
+	@echo
 
 libs: $(LIBS:%=$(LIB_DEST)/lib%.a) \
 	| $(LIB_DEST)
@@ -83,13 +96,19 @@ install: $(BIN_DEST)/tesd $(BIN_DEST)/tesc
 	install -m 755 $(BIN_DEST)/tesd $(PREFIX)/sbin/tesd
 	install -m 755 $(BIN_DEST)/tesc $(PREFIX)/bin/tesc
 	@echo
+	@echo
 	@echo "Now run 'make clean'"
+	@echo
+	@echo
 
 ##################################################
 
 clean:
+	rm -f $(LIB_SRC)/*.o $(BIN_SRC)/*.o $(TEST_SRC)/*.o
+
+fullclean:
 	rm -f $(LIB_SRC)/*.o $(BIN_SRC)/*.o $(TEST_SRC)/*.o \
 		$(BIN_DEST)/* $(LIB_DEST)/*
 
 .DEFAULT_GOAL := main
-.PHONY: all main libs tests clean install
+.PHONY: all main libs tests clean fullclean install
