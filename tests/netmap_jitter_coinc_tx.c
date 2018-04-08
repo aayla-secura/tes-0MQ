@@ -205,7 +205,7 @@ main (void)
 
 		struct tespkt_trace_full_hdr* th =
 			(struct tespkt_trace_full_hdr*) tespkt_ehdr (pkt, 0);
-		/* FIX: should ticks be the same channel all the time */
+		/* FIXME: should ticks be the same channel all the time */
 		th->trace.flags.CH = ch;
 
 		th->trace.toff = DELAY(ch);

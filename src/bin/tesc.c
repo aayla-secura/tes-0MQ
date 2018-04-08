@@ -47,7 +47,7 @@ static char s_prog_name[PATH_MAX];
 #define OPTS_R_ALL    "m:w:t:e:rocCa"
 #define OPTS_L_TRACE  "w:"
 #define OPTS_L_HIST   "n:" /* both jitter and mca */
-#define OPTS_L_COINC  "" /* FIX */
+#define OPTS_L_COINC  "" /* FIXME */
 
 static void
 s_usage (void)
@@ -195,7 +195,7 @@ s_packet_info (const char* server, const char* filename,
 				break;
 			case 'w':
 				timeout = strtoul (optarg, &buf, 10);
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -329,7 +329,7 @@ s_jitter_conf (const char* server, const char* filename,
 				else
 					ref_ch = strtoul (optarg, &buf, 10);
 
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -419,7 +419,7 @@ s_coinc_conf (const char* server, const char* filename,
 			case 'w':
 				window = strtoul (optarg, &buf, 10);
 
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -541,7 +541,7 @@ s_coinc_th_conf (const char* server, const char* filename,
 					thresholds[nth++] = tmp;
 				}
 
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -668,7 +668,7 @@ s_local_save_trace (const char* server, const char* filename,
 				break;
 			case 'w':
 				timeout = strtoul (optarg, &buf, 10);
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -809,7 +809,7 @@ s_local_save_generic (const char* server, const char* filename,
 				break;
 			case 'n':
 				num_msgs = strtoul (optarg, &buf, 10);
-				if (strlen (buf) || num_msgs == 0)
+				if (strlen (buf) > 0 || num_msgs == 0)
 				{
 					s_invalid_arg (opt);
 					return -1;
@@ -880,7 +880,7 @@ s_local_save_generic (const char* server, const char* filename,
 	}
 
 	/* mmap it */
-	/* TO DO: map starting at the last page boundary before end of
+	/* TODO: map starting at the last page boundary before end of
 	 * file. */
 	unsigned char* map = (unsigned char*)mmap (NULL,
 		fsize + num_msgs*max_size,
@@ -998,7 +998,7 @@ s_remote_save_all (const char* server, const char* filename,
 				else
 					min_events = strtoul (optarg, &buf, 10);
 
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 				{
 					s_invalid_arg (opt);
 					return -1;

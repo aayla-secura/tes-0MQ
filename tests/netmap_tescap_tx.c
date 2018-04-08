@@ -1,5 +1,5 @@
 /*
- * TO FIX:
+ * FIXME:
  * MCA header not correctly constructed?
  */
 
@@ -594,7 +594,7 @@ main (int argc, char* argv[])
 	tespkt_self_test ();
 
 	int rc;
-	/* TO DO: support single .adat with a frame index and automatically
+	/* TODO: support single .adat with a frame index and automatically
 	 * detect if headers are saved (from the length of a tick) */
 	if (argc != 2)
 		return -1;

@@ -9,7 +9,7 @@
 #define TES_INFO_REQ_OK    0 // accepted, reply/action follows
 #define TES_INFO_REQ_EINV  1 // malformed request
 
-#define TES_INFO_REQ_PIC         "4"
+#define TES_INFO_REQ_PIC "4"
 #define TES_INFO_REP_PIC "188888881"
 
 #define TES_INFO_ETYPE_PEAK       1
@@ -32,7 +32,7 @@
 #define TES_CAP_REQ_EFIN   7 // conversion ok, error deleting data
                              // files or writing stats
 
-#define TES_CAP_REQ_PIC  "ss88111"
+#define TES_CAP_REQ_PIC "ss88111"
 #define TES_CAP_REP_PIC "18888888"
 
 #define TES_H5_OVRWT_NONE   0 // error if /<RG>/<group> exists
@@ -79,7 +79,7 @@
 #define TES_COINC_REP_PIC   TES_COINC_REQ_PIC
 #define TES_COINC_REQ_TH_OK    0
 #define TES_COINC_REQ_TH_EINV  1 // malformed request
-#define TES_COINC_REQ_TH_PIC  "11b"
+#define TES_COINC_REQ_TH_PIC   "11b"
 #define TES_COINC_REP_TH_PIC   "1b"
 #define TES_COINC_REP_LPORT    "55558"
 #define TES_COINC_REP_TH_LPORT "55559"
@@ -110,7 +110,7 @@
 
 /* Publish coincidence counters */
 #define TES_COINCCOUNT_PUB_PIC "s2888888"
-#define TES_COINCCOUNT_REQ_PIC        "8"
+#define TES_COINCCOUNT_REQ_PIC "4"
 #define TES_COINCCOUNT_REP_PIC  TES_COINCCOUNT_REQ_PIC
 #define TES_COINCCOUNT_REP_LPORT "55560"
 #define TES_COINCCOUNT_PUB_LPORT "55570"

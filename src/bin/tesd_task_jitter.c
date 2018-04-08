@@ -1,5 +1,5 @@
 /*
- * TO DO:
+ * TODO:
  *  - cache histograms so subsequent subscribers can get the last
  *    completed one.
  *  - determine number of channels at startup by querying the register

@@ -1,4 +1,4 @@
-/* TO DO: test with mmapped files, in daemon mode */
+/* TODO: test with mmapped files, in daemon mode */
 
 #include "hdf5conv.h"
 #include "api.h"

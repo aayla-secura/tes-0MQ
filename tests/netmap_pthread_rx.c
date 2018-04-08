@@ -256,7 +256,7 @@ main_body (void* arg)
 	data.nmd = nm_open(NM_IFNAME"}1", NULL, 0, 0);
 	if (data.nmd == NULL)
 	{
-		// TO DO: Move the error reporting to the main thread?
+		// TODO: Move the error reporting to the main thread?
 		ERROR ("Could not open interface %s\n", NM_IFNAME);
 		pthread_exit (NULL);
 	}

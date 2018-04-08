@@ -9,6 +9,11 @@ drivers for the NIC connected to the FPGA.
 
 The server talks to clients over [ØMQ](http://zeromq.org/) sockets. 
 
+Some interfaces publish raw (binary data). Others specify a "picture".
+These are simply multi-frame messages, with each frame being a string
+representation of the binary value. Each character in the picture
+is a format specifier (see `zsock_send` and `zsock_recv` from CZMQ).
+
 ## PACKET INFO REP INTERFACE
 
 This interface accepts requests to reply with and log statistics, such
@@ -76,10 +81,6 @@ This interface accepts requests to save all received frames, until
 a given minimum number of tick frames and a given minimum number of
 events are seen, to a file (on the server). It can also return the
 status of a previous successful request.
-
-Messages are sent and read via `zsock_send` and `zsock_recv`
-respectively. These are simply multi-frame ØMQ messages, with each
-frame being a string representation of the value.
 
 Valid requests have a picture of "ss88111", replies have a picture of
 "18888888".
@@ -236,8 +237,8 @@ Valid requests have a picture of "4", replies have a picture of "1b".
 
 ## MCA HISTOGRAM PUB INTERFACE
 
-This interface publishes single-frame messages, each message contains
-one full histogram (MCA stream).
+This interface publishes single-frame raw messages, each message
+contains one full histogram (MCA stream).
 
 ## JITTER HISTOGRAM REP+PUB INTERFACE
 
@@ -285,10 +286,10 @@ effect at the next histogram.
 
 ## RAW COINCIDENCE REP+REP+PUB INTERFACE
 
-This interface publishes single-frame messages, each message contains
-all coincidences which occured between two ticks as one or more
-vectors. The vectors are `<number of channels>` bytes long. Each byte
-is a token that gives the number of photons in the given channel
+This interface publishes single-frame raw messages, each message
+contains all coincidences which occured between two ticks as one or
+more vectors. The vectors are `<number of channels>` bytes long. Each
+byte is a token that gives the number of photons in the given channel
 within the coincidence window. The maximum number of photons for each
 channel is the number of set thresholds for this channel. The maximum
 number of thresholds that can be set is 16.
@@ -366,6 +367,8 @@ coincidences, an additional flag is used:
 
 ### Window/measurement type configuration
 
+Valid requests and replies have a picture of "21".
+
 #### Message frames in a valid request
 
 1. **Coindidence window**
@@ -395,6 +398,8 @@ the settings and be echoed back. The new settings will take effect at
 the next tick.
 
 ### Threshold configuration
+
+Valid requests have a picture of "11b", replies have a picture of "1b".
 
 #### Message frames in a valid request
 
@@ -432,14 +437,8 @@ for this channel will be the number of set threshold elements).
 
 ## COINCIDENCE COUNTER REP+PUB INTERFACE
 
-This interface accepts subscriptions that are of the form...
-It counts number of coincidences over a globally configurable number
-of ticks. For each subscription it publishes multi-frame messages with
-a picture "s2888888" as follows:
-
-1. **Pattern**
-
-   This is a string of coma separated tokens, as follows:
+This interface accepts subscriptions as a string of coma separated
+tokens, as follows:
 
    * 0:    No photons (either no events or noise)
    * -:    Noise
@@ -447,9 +446,24 @@ a picture "s2888888" as follows:
    * N:    Any non-zero number of photons
    * X:    Any (including a missing measurement)
 
-   X can be omitted, i.e. consequtive separators assume X, as do
-   missing tokens at the end (fewer tokens than the number of channels
-   was given).
+X can be omitted, i.e. consequtive separators assume X, as do missing
+tokens at the end (fewer tokens than the number of channels was
+given). A missing separator or a total number of separators >= no. of
+channels is an invalid pattern and will be discarded.
+
+If a pattern is invalid or the maximum number of subscription patterns
+has been reached, the task sends out a two-frame message of the form
+`<pattern>|<NULL>`, where `<pattern>` is echoing back the subscription
+and `<NULL>` is an empty frame.
+
+The task counts number of coincidences over a globally configurable
+number of ticks. For each subscription it publishes multi-frame
+messages with a picture "s2888888" as follows:
+
+1. **Pattern**
+
+   Echoing back the subscription pattern. Only clients that subscribed
+   to this will receive the whole message.
 
 2. **Coincidence window**
 
@@ -474,11 +488,13 @@ start receiving counts at the next batch of `n = <no. of ticks>`
 
 ### Tick number configuration
 
+Valid requests and replies have a picture of "4".
+
 #### Message frames in a valid request
 
 1. **No. of ticks**
 
-   The value is read as an **unsigned** int64.
+   The value is read as an **unsigned** int32.
 
 #### Message frames in a reply
 

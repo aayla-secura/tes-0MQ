@@ -1,5 +1,5 @@
 /*
- * TO DO:
+ * TODO:
  *  - duplicator/comparator
  */
 

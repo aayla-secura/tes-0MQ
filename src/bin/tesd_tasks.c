@@ -165,7 +165,7 @@
  * handler to return.
  *
  * -----------------------------------------------------------------
- ------------------------------- TO DO -----------------------------
+ ------------------------------- TODO -----------------------------
  * -----------------------------------------------------------------
  * - Alert subscribers to PUB tasks when shutting down.
  * - Test with using more than one of the rings: how to get the NIC
@@ -1165,7 +1165,7 @@ s_task_next_ring (task_t* self, uint16_t* missed_p)
  * the task's pkt_handler.
  * Returns 0 if all packets until the tail are processed.
  * Returns TASK_SLEEP or TASK_ERROR if pkt_handler does so.
- * Returns ?? if a jump in frame sequence is seen (TO DO).
+ * Returns ?? if a jump in frame sequence is seen (TODO).
  */
 static int
 s_task_dispatch (task_t* self, zloop_t* loop,
@@ -1202,7 +1202,7 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 		self->heads[ring_id] = tes_ifring_following (
 			rxring, self->heads[ring_id]) )
 	{
-		/* FIX: TO DO: return code for a jump in fseq */
+		/* FIXME: return code for a jump in fseq */
 		// if (fseq_gap > 0)
 		//         return 0;
 

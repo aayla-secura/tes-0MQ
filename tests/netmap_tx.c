@@ -78,7 +78,7 @@
  *   from pkt-gen:
  *     system_ncpus, dump_payload, source_hwaddr, checksum
  * 
- * TO DO:
+ * TODO:
  *   check if passing pointer to flag union is faster than passing it as int
  */
 

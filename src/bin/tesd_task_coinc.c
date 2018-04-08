@@ -1,8 +1,6 @@
 /*
- * TO DO:
- *  - add a flag when configuration has changed (either replacing
- *    TES_COINC_FLAG_TICK or set to another entry in the first vector
- *    of the frame)
+ * TODO:
+ *  - add a config header
  *  - when sending set thresholds, prefix with no. of set ones (and
  *    omit empty elements from buffer?)
  */
@@ -14,6 +12,7 @@
 #define ENDP_REP    0
 #define ENDP_REP_TH 1
 #define ENDP_PUB    2
+#define MAX_COUNT(thres) s_count_from_thres(UINT32_MAX, thres)
 
 /*
  * If DEFER_EMPTY is set, do not publish when a tick comes unless
@@ -22,7 +21,7 @@
 // #define DEFER_EMPTY
 
 /*
- * :::::::::: FLAGS (see api.h) ::::::::::
+ * :::::::::: FLAGS ::::::::::
  *
  * Flags in the first byte of a vector.
  * A tick vector is a vector with all elements (masked for flags) ==
@@ -57,10 +56,8 @@
  *  - if n > 1 ticks occured between coincidences, there'd be n-1 all
  *    TES_COINC_TOK_TICK vectors with this flag
 #endif
- */
-
-/*
- * :::::::::: TOKENS (see api.h) ::::::::::
+ *
+ * :::::::::: TOKENS ::::::::::
  *
  * Maximum number of thresholds is 16, meaning that maximum photon
  * number is 16 (meaning 16 or more photons). No event in the channel is
@@ -136,6 +133,7 @@ struct s_data_t
 static int s_check_conf (struct s_conf_t* conf);
 static int s_save_conf (task_t* self, struct s_conf_t* conf);
 static void s_apply_conf (struct s_data_t* data);
+static inline int s_num_set_thres (ch_thresh_t* thres);
 static inline uint16_t s_count_from_thres (uint32_t val,
 	ch_thresh_t* thres);
 static inline s_frame_check_fn s_has_area;
@@ -235,6 +233,15 @@ s_apply_conf (struct s_data_t* data)
 			assert (false);
 	}
 	data->conf.changed = 0;
+}
+
+static inline int
+s_num_set_thres (ch_thresh_t* thres)
+{
+		uint16_t p = 0;
+		for (; p < TES_COINC_MAX_PHOTONS && *thres[p] > 0; p++)
+			;
+		return p;
 }
 
 static inline uint16_t
@@ -535,7 +542,7 @@ s_publish (task_t* self, uint16_t reserve)
 	}
 #endif
 
-	/* TO DO: employ circular buffer instead of moving */
+	/* TODO: employ circular buffer instead of moving */
 	if (data->cur_frame.cur_group.num_ongoing > 0)
 	{ /* move ongoing coincidence vectors to 0 */
 		assert (num_ready + data->cur_frame.cur_group.num_ongoing <=

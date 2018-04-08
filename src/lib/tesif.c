@@ -27,7 +27,7 @@
  * corresponding object associated with the id (reader).
  *
  * -----------------------------------------------------------------
- * ----------------------------- TO DO -----------------------------
+ * ----------------------------- TODO -----------------------------
  * -----------------------------------------------------------------
  * - More rigorous checks when setting head or cursor. In
  *   particular, ensure cursor never ends up between head and tail

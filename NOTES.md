@@ -150,7 +150,6 @@ $ modprobe -r netmap
 
 * test with big-endian FPGA byte order
 
-* [comments] replace: FIX with XXX
 * replace `<type>* <pt>` with `<type> *<pt>`
 * remove cast of `malloc`/`mmap`
 * remove space after function name?

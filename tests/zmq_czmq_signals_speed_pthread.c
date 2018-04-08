@@ -225,7 +225,7 @@ main (void)
 
 	printf ("Destroying thread\n");
 
-    /* FIX: thread is not listening for term signal */
+    /* FIXME: thread is not listening for term signal */
 	zactor_destroy (&task);
 #ifndef USE_PIPE /* zmq sock */
 	zsock_destroy (&slavesock);

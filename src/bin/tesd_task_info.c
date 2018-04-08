@@ -1,5 +1,5 @@
 /*
- * TO DO:
+ * TODO:
  *  - Make endpoint a ROUTER and send average statistics. If a new
  *    request comes with a timeout less than already elapsed, send reply
  *    immediately.
@@ -148,7 +148,7 @@ task_info_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	bool is_tick = tespkt_is_tick (pkt);
 	bool is_header = tespkt_is_header (pkt);
 	bool is_tr_header = (tespkt_is_trace_long (pkt) && is_header) ||
-		tespkt_is_trace_dp (pkt); /* FIX: should trace_dp count here */
+		tespkt_is_trace_dp (pkt); /* FIXME: should trace_dp count here */
 	bool is_mca_header = tespkt_is_mca (pkt) && is_header;
 	bool is_event = (tespkt_is_event (pkt) && ! is_tick);
 

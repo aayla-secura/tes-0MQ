@@ -54,7 +54,7 @@
  * all tasks cleanly.
  *
  * -----------------------------------------------------------------
- * ----------------------------- TO DO -----------------------------
+ * ----------------------------- TODO -----------------------------
  * -----------------------------------------------------------------
  */
 
@@ -368,7 +368,7 @@ s_new_pkts_hn (zloop_t* loop, zmq_pollitem_t* pitem, void* data_)
 
 	/* For each ring get the head of the slowest task. */
 	uint32_t* heads = tasks_get_heads ();
-	/* FIX: check if NULL */
+	/* FIXME: check if NULL */
 
 	/* Signal the waiting tasks. */
 	int rc = tasks_wakeup ();
@@ -610,17 +610,17 @@ main (int argc, char **argv)
 				break;
 			case 'U':
 				data.stat_period = strtol (optarg, &buf, 10);
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 					s_usage (argv[0]);
 				break;
 			case 'u':
 				data.run_as_uid = strtoul (optarg, &buf, 10);
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 					s_usage (argv[0]);
 				break;
 			case 'g':
 				data.run_as_gid = strtoul (optarg, &buf, 10);
-				if (strlen (buf))
+				if (strlen (buf) > 0)
 					s_usage (argv[0]);
 				break;
 			case 'f':

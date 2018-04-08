@@ -1,7 +1,7 @@
 /*
- * TO DO:
+ * TODO:
  *  - Check filename for non-printable and non-ASCII characters.
- *  - FIX: why does the task count more missed packets than
+ *  - FIXME: why does the task count more missed packets than
  *    coordinator?
  *  - Log REQ jobs in a global database such that it can be looked
  *    up by filename, client IP or time frame.
@@ -77,7 +77,7 @@ struct s_stats_t
 	uint64_t frames;         // total frames saved
 	uint64_t frames_lost;    // total frames lost
 	uint64_t frames_dropped; // total frames dropped
-	uint64_t errors;         // TO DO: last 8-bytes of tick header 
+	uint64_t errors;         // TODO: last 8-bytes of tick header 
 };
 
 /*
@@ -868,12 +868,12 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 #endif
 	if (jobrc == -1)
 	{
-		/* TO DO: how to handle errors */
+		/* TODO: how to handle errors */
 		logmsg (errno, LOG_ERR, "Could not write to file");
 	}
 	else if (jobrc == -2)
 	{
-		/* TO DO: how to handle errors */
+		/* TODO: how to handle errors */
 #if DEBUG_LEVEL >= VERBOSE
 		logmsg (0, LOG_ERR, "Queued %lu bytes, wrote %lu",
 			aiobuf->bufzone.enqueued,
@@ -1533,7 +1533,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 	else
 	{ /* short event */
-		/* FIX: check num events for dp trace */
+		/* FIXME: check num events for dp trace */
 		sjob->st.events += tespkt_event_nums (pkt);
 	}
 

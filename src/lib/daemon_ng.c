@@ -1,5 +1,5 @@
 /*
- * TO DO:
+ * TODO:
  *   - use BSD's closefrom () if available 
  *   - method for finding highest fd number is not portable, see
  *     https://stackoverflow.com/questions/899038/getting-the-highest-allocated-file-descriptor/918469#918469

@@ -15,7 +15,7 @@
 #  define htofl bswap32
 #endif
 
-/* TO DO: declarations with descriptions here */
+/* TODO: declarations with descriptions here */
 
 static inline void
 tespkt_set_type_mca (tespkt* pkt)

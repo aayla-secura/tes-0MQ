@@ -1,7 +1,7 @@
 /*
- * TO DO:
+ * TODO:
  *  - per subscriber tick counter
- *  - query window config
+ *  - set window from config
  *  - check pattern agains no. set thresholds
  */
 
@@ -46,7 +46,7 @@ struct s_subscription_t
 		uint64_t num_res;
 		uint64_t num_res_noMP;
 		uint64_t num_unres;
-		uint64_t ticks; // TO DO
+		uint64_t ticks; // TODO
 		uint64_t cur_ticks;
 	} counts;
 	bool publishing; // wait for next round of published counts
@@ -380,16 +380,19 @@ task_coinccount_sub_process (const char* pattern_str)
 				return NULL;
 		}
 	}
+	/* Add the token following the last separator (or the start of the
+	 * string if no separator. */
 	if (ntoks == TES_NCHANNELS)
 	{
 		logmsg (0, LOG_DEBUG, "Too many tokens");
 		return NULL;
 	}
 	if (symbolic && tok == 0)
-		tok = TES_COINCCOUNT_SYM_ANY;
+		tok = TES_COINCCOUNT_SYM_ANY; /* nothing after last separator */
 	subsc.pattern[ntoks] = tok;
 	ntoks++;
 
+	/* Add missing trailing 'X's */
 	for (; ntoks < TES_NCHANNELS; ntoks++)
 		subsc.pattern[ntoks] = TES_COINCCOUNT_SYM_ANY;
 
@@ -402,7 +405,7 @@ task_coinccount_sub_process (const char* pattern_str)
 	if (subsc_p == NULL)
 	{
 		logmsg (0, LOG_ERR, "Out of memory");
-		/* FIX: How to propagate error here... */
+		/* FIXME: How to propagate error here... */
 		return NULL;
 	}
 	memcpy (subsc_p, &subsc, sizeof (struct s_subscription_t));

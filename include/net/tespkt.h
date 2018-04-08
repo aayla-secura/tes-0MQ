@@ -7,7 +7,7 @@
  * change the byte order where necessary. Type tespkt is aliased to
  * struct tespkt.
  *
- * TO DO:
+ * TODO:
  *  - add debugging checks to inline macros (ensure they are called on
  *    the correct packet type and that pointer arithmetic does not go
  *    beyond packet length.
