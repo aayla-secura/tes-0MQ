@@ -7,7 +7,7 @@ drivers for the NIC connected to the FPGA.
 
 # API
 
-The server talks to clients over [ØMQ](http://zeromq.org/) sockets. 
+The server talks to clients over [ØMQ](http://zeromq.org/) sockets.
 
 Some interfaces publish raw (binary data). Others specify a "picture".
 These are simply multi-frame messages, with each frame being a string
@@ -101,7 +101,7 @@ done.
    Name of hdf5 group relative to a hardcoded topmost group. It must
    be non-empty if conversion is to be done (now or at a later
    request).
-   
+
 3. **No. of ticks**
 
    The server will record all packets (including ethernet header)
@@ -165,7 +165,7 @@ receive the reply.
 
  * "1": capture request was not understood or
         conversion request was not understood (capture was successful)
- 
+
  * "2": file exists (in case of a no-overwrite request) or
         file does not exist (in case of status request)
 
@@ -437,28 +437,11 @@ for this channel will be the number of set threshold elements).
 
 ## COINCIDENCE COUNTER REP+PUB INTERFACE
 
-This interface accepts subscriptions as a string of coma separated
-tokens, as follows:
-
-   * 0:    No photons (either no events or noise)
-   * -:    Noise
-   * 1-16: Exactly that many photons were measured
-   * N:    Any non-zero number of photons
-   * X:    Any (including a missing measurement)
-
-X can be omitted, i.e. consequtive separators assume X, as do missing
-tokens at the end (fewer tokens than the number of channels was
-given). A missing separator or a total number of separators >= no. of
-channels is an invalid pattern and will be discarded.
-
-If a pattern is invalid or the maximum number of subscription patterns
-has been reached, the task sends out a two-frame message of the form
-`<pattern>|<NULL>`, where `<pattern>` is echoing back the subscription
-and `<NULL>` is an empty frame.
-
-The task counts number of coincidences over a globally configurable
-number of ticks. For each subscription it publishes multi-frame
-messages with a picture "s2888888" as follows:
+This interface counts number of coincidences over a configurable
+number of ticks, matching them against all of its subscription
+patterns (see below for the format of a pattern). For each
+subscription it publishes multi-frame messages with a picture
+"s2888888" as follows:
 
 1. **Pattern**
 
@@ -481,12 +464,51 @@ messages with a picture "s2888888" as follows:
 
 where "single peak" means the **BAD** flag is not set.
 
-Pattern counts are synchronized in that they start counting at the
-same tick and over the same number of ticks. New subscriptions will
-start receiving counts at the next batch of `n = <no. of ticks>`
-(potentially waiting for `2*n - 1` tick periods).
+By default pattern counts are synchronized in that they start counting
+at the same tick and over the same globally configurable number of
+ticks, `gt`. New subscriptions will start receiving counts at the next
+batch of `gt` (potentially waiting for `2*gt - 1` tick periods).
 
-### Tick number configuration
+The global tick number can be configured by a REQ port, see below.
+
+A subscription may request its own private tick counter, `lt`, in
+which case counting begins immediately and counts are published every
+`lt` ticks.
+
+A valid subscription is a string of coma separated tokens, as follows:
+
+   * 0:    No photons (either no events or noise)
+   * -:    Noise
+   * 1-16: Exactly that many photons were measured
+   * N:    Any non-zero number of photons
+   * X:    Any (including a missing measurement)
+
+X can be omitted, i.e. consequtive separators assume X, as do missing
+tokens at the end (fewer tokens than the number of channels was
+given). A missing separator or a total number of separators >= no. of
+channels is an invalid pattern and will be discarded.
+
+The token list may optionally be followed by a `:<no. of ticks>` in
+which case the pattern will use its own private tick counter. Counting
+will begin at the next tick and be published every `lt = <no. of ticks>`
+ticks. The tick number cannot be negative (such pattern is invalid).
+
+   * If the tick number is 0 or is missing (but there is a colon) it
+     defaults to the global tick number, `gt`, and will change if that
+     changes. Counting for the pattern however will start immediately
+     and be published every `gt` ticks.
+
+   * If no tick number is given (no colon) the pattern will be
+     synchronised with other patterns (that use the global tick
+     counter). It will start counting at the next block of `gt` ticks
+     and be published every `gt` ticks.
+
+If a pattern is invalid or the maximum number of subscription patterns
+has been reached, the task sends out a two-frame message of the form
+`<pattern>|<NULL>`, where `<pattern>` is echoing back the subscription
+and `<NULL>` is an empty frame.
+
+### Global tick number configuration
 
 Valid requests and replies have a picture of "4".
 

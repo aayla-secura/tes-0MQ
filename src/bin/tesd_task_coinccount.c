@@ -46,23 +46,26 @@ struct s_subscription_t
 		uint64_t num_res;
 		uint64_t num_res_noMP;
 		uint64_t num_unres;
-		uint64_t ticks; // TODO
-		uint64_t cur_ticks;
+		uint32_t ticks; // re-read at 'activation' and when publishing
+		uint32_t cur_ticks;
 	} counts;
-	bool publishing; // wait for next round of published counts
-	                 // to synchronize displays
+	uint32_t ticks;  // set at subscription; if 0, read global
+	bool active;     // just subscribed, waiting for its tick
+	bool is_private; // start at next tick; otherwise wait for next
+	                 // batch of global counts
 };
 
 struct s_data_t
 {
-	uint64_t ticks;
-	uint64_t cur_ticks;
-	uint64_t next_ticks;
+	uint32_t ticks;     // globally synchronized patterns
+	uint32_t cur_ticks; // globally synchronized patterns
+	uint32_t next_ticks; // config applied at next batch
 	uint16_t window;
 };
 
 static bool s_matches (coinc_vec_t* cvec, coinc_vec_t* pattern);
-static int s_publish (task_t* self);
+static int s_publish_subsc (task_t* self,
+	struct s_subscription_t* subsc);
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
@@ -96,39 +99,34 @@ s_matches (coinc_vec_t* cvec, coinc_vec_t* pattern)
 }
 
 static int
-s_publish (task_t* self)
+s_publish_subsc (task_t* self, struct s_subscription_t* subsc)
 {
 	dbg_assert (self != NULL);
-	struct s_data_t* data = (struct s_data_t*) self->data;
-	dbg_assert (data->ticks == data->cur_ticks);
+	dbg_assert (subsc != NULL);
+	dbg_assert (subsc->active);
 
-	for (struct s_subscription_t* subsc = FIRST_SUB(self);
-		subsc != NULL; subsc = NEXT_SUB(self))
+	struct s_data_t* data = (struct s_data_t*) self->data;
+
+	int rc = zsock_send (self->endpoints[ENDP_PUB].sock,
+		TES_COINCCOUNT_PUB_PIC,
+		subsc->pattern_str,
+		data->window,
+		subsc->counts.ticks,
+		subsc->counts.num_res_match,
+		subsc->counts.num_res_match_noMP,
+		subsc->counts.num_res,
+		subsc->counts.num_res_noMP,
+		subsc->counts.num_unres);
+	if (rc == -1)
 	{
-		if ( ! subsc->publishing )
-		{
-			subsc->publishing = true;
-			continue;
-		}
-		int rc = zsock_send (self->endpoints[ENDP_PUB].sock,
-			TES_COINCCOUNT_PUB_PIC,
-			subsc->pattern_str,
-			data->window,
-			data->ticks,
-			subsc->counts.num_res_match,
-			subsc->counts.num_res_match_noMP,
-			subsc->counts.num_res,
-			subsc->counts.num_res_noMP,
-			subsc->counts.num_unres);
-		if (rc == -1)
-		{
-			logmsg (errno, LOG_ERR,
-				"Cannot send the counts");
-			return TASK_ERROR;
-		}
-		memset (&subsc->counts, 0, sizeof (subsc->counts));
+		logmsg (errno, LOG_ERR, "Cannot send the counts");
+		return TASK_ERROR;
 	}
-	data->ticks = data->next_ticks;
+
+	memset (&subsc->counts, 0, sizeof (subsc->counts));
+	subsc->counts.ticks =
+		(subsc->ticks > 0 ? subsc->ticks : data->ticks);
+
 	return 0;
 }
 
@@ -144,7 +142,7 @@ task_coinccount_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	task_t* self = (task_t*) self_;
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	
-	uint64_t ticks;
+	uint32_t ticks;
 	int rc = zsock_recv (endpoint, TES_COINCCOUNT_REQ_PIC, &ticks);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
@@ -210,16 +208,19 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		is_tick = true; /* has_counts stays true */
 #endif
 	if (is_tick)
-	{
 		data->cur_ticks++;
-		if (data->cur_ticks == data->ticks &&
-			s_publish (self) == TASK_ERROR)
-			return TASK_ERROR;
+
+	bool next_global = (data->ticks == data->cur_ticks);
+	if (next_global)
+	{
+		dbg_assert (is_tick);
+		data->ticks = data->next_ticks;
+		data->cur_ticks = 0;
 	}
+	dbg_assert (data->cur_ticks < data->ticks);
 
-	if ( ! has_counts )
-		return 0;
-
+	bool mp = (*cvec)[0] & TES_COINC_FLAG_BAD;
+	bool unres = (*cvec)[0] & TES_COINC_FLAG_UNRESOLVED;
 	for (struct s_subscription_t* subsc = FIRST_SUB(self);
 		subsc != NULL; subsc = NEXT_SUB(self))
 	{
@@ -231,21 +232,41 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 			subsc->counts.num_res);
 		dbg_assert (subsc->counts.num_res_match_noMP <=
 			subsc->counts.num_res_noMP);
+		dbg_assert (subsc->counts.ticks == 0 ||
+			subsc->counts.cur_ticks < subsc->counts.ticks);
 
-		if ( ! subsc->publishing )
+		if ( ! subsc->active )
 		{
 			dbg_assert (subsc->counts.num_res == 0);
 			dbg_assert (subsc->counts.num_unres == 0);
-			continue;
+			dbg_assert (subsc->counts.ticks == 0);
+
+			subsc->active = (is_tick &&
+				(next_global || subsc->is_private));
+			if ( ! subsc->active )
+				continue;
+
+			subsc->counts.ticks =
+				(subsc->ticks > 0 ? subsc->ticks : data->ticks);
+		}
+		else if (is_tick)
+		{ /* 'else' so we don't count this tick for patterns that just
+		     joined */
+			subsc->counts.cur_ticks++;
+			if (subsc->counts.cur_ticks == subsc->counts.ticks &&
+					s_publish_subsc (self, subsc) == TASK_ERROR)
+				return TASK_ERROR;
 		}
 
-		if ((*cvec)[0] & TES_COINC_FLAG_UNRESOLVED)
+		if ( ! has_counts )
+			continue;
+
+		if (unres)
 		{
 			subsc->counts.num_unres++;
 			continue;
 		}
 		subsc->counts.num_res++;
-		bool mp = (*cvec)[0] & TES_COINC_FLAG_BAD;
 		if ( ! mp )
 			subsc->counts.num_res_noMP++;
 
@@ -313,7 +334,8 @@ task_coinccount_sub_process (const char* pattern_str)
 	unsigned int tok = 0;
 	bool symbolic = true;
 	int ntoks = 0;
-	for (const char* p = pattern_str; *p != '\0'; p++)
+	const char* p = pattern_str;
+	for (; *p != '\0'; p++)
 	{
 		if (ntoks == TES_NCHANNELS)
 		{
@@ -321,7 +343,7 @@ task_coinccount_sub_process (const char* pattern_str)
 			return NULL;
 		}
 
-		if (*p == TES_COINCCOUNT_SEPARATOR)
+		if (*p == TES_COINCCOUNT_SEP_SYM)
 		{
 			if (symbolic && tok == 0)
 				tok = TES_COINCCOUNT_SYM_ANY;
@@ -392,10 +414,27 @@ task_coinccount_sub_process (const char* pattern_str)
 	subsc.pattern[ntoks] = tok;
 	ntoks++;
 
-	/* Add missing trailing 'X's */
+	/* Add missing trailing 'X's. */
 	for (; ntoks < TES_NCHANNELS; ntoks++)
 		subsc.pattern[ntoks] = TES_COINCCOUNT_SYM_ANY;
 
+	/* Read tick number. */
+	char* buf;
+	if (*p == TES_COINCCOUNT_SEP_TICKS)
+	{
+		long long int ticks = -1;
+		ticks = strtoll (p + 1, &buf, 10);
+		if (strlen (buf) > 0 || ticks < 0)
+		{
+			logmsg (0, LOG_DEBUG, "Invalid tick number");
+			return NULL;
+		}
+		logmsg (0, LOG_DEBUG, "Using own tick counter: %lld", ticks);
+		subsc.is_private = true; /* start at next tick */
+		subsc.ticks = (uint32_t) ticks;
+	}
+
+	/* Save pattern string. */
 	int rc = snprintf (subsc.pattern_str, MAX_SUBSC_LEN, "%s",
 		pattern_str);
 	assert (rc < MAX_SUBSC_LEN);

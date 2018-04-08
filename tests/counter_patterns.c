@@ -6,6 +6,7 @@
 
 #define NITEMS 10
 #define SEP ','
+#define ECHAR ':'
 #define TOK_NOISE 17
 #define SYM_NOISE '-'
 #define SYM_NUM 'N'
@@ -16,6 +17,9 @@ int main (void)
 {
 	const char* patts[] = {
 		",N,X,,,1,16,-",
+		",N,X,,,1,16,-:",
+		",N,X,,,1,16,-:23",
+		",N,X,,,1,16,-:-23",
 		"",
 		",",
 		"2,N,X,,,1,16,-,2,3,4,5",
@@ -36,7 +40,8 @@ int main (void)
 		bool seek = false;
 		bool symbolic = true;
 		int ntoks = 0;
-		for (const char* p = patts[i]; *p != '\0'; p++)
+    const char* p = patts[i];
+		for (; *p != '\0' && *p != ECHAR; p++)
 		{
 			if (ntoks == NITEMS)
 			{
@@ -131,6 +136,16 @@ invalid:
 		for (; ntoks < NITEMS; ntoks++)
 			printf ("\t--> Token: %d\n", SYM_ANY);
 #endif
+    long long int ticks = -1;
+    char* buf;
+    if (*p == ECHAR)
+    {
+      ticks = strtoll (p+1, &buf, 10);
+      if (strlen (buf) > 0 || ticks <= 0)
+        printf ("Invalid tick number\n");
+      else
+        printf ("Ticks = %lld\n", ticks);
+    }
 
 		printf ("Num tokens: %d\n", ntoks);
 	}
