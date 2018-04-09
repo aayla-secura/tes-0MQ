@@ -210,6 +210,15 @@ task_data_fn    task_jitter_init;
 task_data_fn    task_jitter_wakeup;
 
 /* Publish raw coincidences */
+struct task_coinc_hdr_t
+{
+	uint8_t nchannels; // no. of active channels
+	uint8_t measurement;
+	uint16_t window;
+	uint32_t ticks; // this frame, == 0 if buffer filled up
+	uint8_t  ch_info[TES_MAX_NCHANNELS];
+};
+
 zloop_reader_fn task_coinc_req_hn;
 zloop_reader_fn task_coinc_req_th_hn;
 task_pkt_fn     task_coinc_pkt_hn;

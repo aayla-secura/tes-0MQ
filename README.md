@@ -330,40 +330,17 @@ channel  delay  photons
   3        10      3       ==>  UNRESOLVED [1, 2, 1, 3]
 ```
 
-A vector of all zeroes (after flags are masked out) indicates a tick.
-The last tick before the start of a coincidence may be joined with the
-coincidence vector (as a flag). This is enabled/disabled at compile
-time.
-
 The highest two (or three) bits of the first element are reserved for
 flags as follows:
 
- * `bit[7]` **UNRESOLVED** (coincidence vector):
+ * `bit[7]` **UNRESOLVED**:
    * consecutive events each within less than `<window>` delay from
      the previous, but last one is delayed more than `<window>` since
      first
    * two events in the same channel within the same coincidence
- * `bit[7]` **UNRESOLVED** (tick vector):
-   tick occured during the previous coincidence (there may be
-   multiple consecutive tick vectors with this flag, but never an
-   unresolved tick following a resolved one with no coincidences in
-   between
- * `bit[6]` **BAD** (coincidence vector):
+ * `bit[6]` **BAD**:
    measurement is not peak and there are multiple peaks within one of
    the events in the coincidence group
-
-If ticks are joined with the coincidence the UNRESOLVED flag will not
-be applied to the coincidence vector with the tick flag set, even if
-that tick occured during the coincidence. It will only be set for the
-extra tick vectors before that coincidence, if any of them also
-occured during the coincidence. Furthermore, if ticks are joined with
-coincidences, an additional flag is used:
-
- * `bit[5]` **TICK** (coincidence vector):
-   coincidence is first after a tick
- * `bit[5]` **TICK** (tick vector):
-   if n > 1 ticks occured between coincidences, there'd be n - 1
-   tick vectors with this flag
 
 ### Window/measurement type configuration
 

@@ -2,7 +2,8 @@
 #ifndef __API_H__INCLUDED__
 #define __API_H__INCLUDED__
 
-#define TES_NCHANNELS 2
+#define TES_NCHANNELS 2 // TODO: query register server
+#define TES_MAX_NCHANNELS 8
 
 /* Server info */
 #define TES_INFO_LPORT "55554"
@@ -89,25 +90,26 @@
 #define TES_COINC_MEAS_PEAK 1
 #define TES_COINC_MEAS_DOTP 2
 #define TES_COINC_MAX_WINDOW UINT16_MAX
+#define TES_COINC_HDR_LEN  16
 #define TES_COINC_MAX_SIZE  (TES_NCHANNELS*256)
-#define TES_COINC_HDR_LEN   0 // TODO
 
-#define TES_COINC_TOK_TICK  0 // tick vector
 #define TES_COINC_TOK_NONE  0 // no event in this channel
 #define TES_COINC_TOK_NOISE   \
 	(TES_COINC_MAX_PHOTONS+1) // measurement below threshold
 #define TES_COINC_TOK_UNKNOWN \
 	(TES_COINC_MAX_PHOTONS+2) // an event with no measurement
 
+/*
+ * Three most-significant bits are reserved for flags.
+ * TES_COINC_HDR_FLAG_* apply to the per-channel info elements in the
+ * header.
+ * TES_COINC_VEC_FLAG_* apply to the first element of a coincidence
+ * vector.
+ */
 #define TES_COINC_FLAG_MASK  0xE0
-#define TES_COINC_FLAG_UNRESOLVED  (1 << 7)
-#define TES_COINC_FLAG_BAD         (1 << 6)
-#define TICK_WITH_COINC  0 // 0 or 1
-#if TICK_WITH_COINC > 0
-#  define TES_COINC_FLAG_TICK      (1 << 5)
-#else
-#  define TES_COINC_FLAG_TICK            0
-#endif
+#define TES_COINC_HDR_FLAG_HASNOISE    (1 << 7)
+#define TES_COINC_VEC_FLAG_UNRESOLVED  (1 << 7)
+#define TES_COINC_VEC_FLAG_BAD         (1 << 6)
 
 /* Publish coincidence counters */
 #define TES_COINCCOUNT_PUB_PIC "s2888888"

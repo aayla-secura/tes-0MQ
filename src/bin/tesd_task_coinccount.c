@@ -161,7 +161,7 @@ s_process_vec (task_t* self, coinc_vec_t* cvec)
 
 #if TICK_WITH_COINC > 0
 	/* Check if it includes a tick. */
-	if (has_counts && ((*cvec)[0] & TES_COINC_FLAG_TICK))
+	if (has_counts && ((*cvec)[0] & TES_COINC_VEC_FLAG_TICK))
 		is_tick = true; /* has_counts stays true */
 #endif
 
@@ -201,8 +201,8 @@ s_process_vec (task_t* self, coinc_vec_t* cvec)
 #endif
 	dbg_assert (data->cur_ticks < data->ticks);
 
-	bool mp = (*cvec)[0] & TES_COINC_FLAG_BAD;
-	bool unres = (*cvec)[0] & TES_COINC_FLAG_UNRESOLVED;
+	bool mp = (*cvec)[0] & TES_COINC_VEC_FLAG_BAD;
+	bool unres = (*cvec)[0] & TES_COINC_VEC_FLAG_UNRESOLVED;
 	for (struct s_subscription_t* subsc = FIRST_SUB(self);
 		subsc != NULL; subsc = NEXT_SUB(self))
 	{
