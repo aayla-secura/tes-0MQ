@@ -287,29 +287,58 @@ effect at the next histogram.
 ## RAW COINCIDENCE REP+REP+PUB INTERFACE
 
 This interface publishes single-frame raw messages, each message
-contains all coincidences which occured between two ticks as one or
-more vectors. The vectors are `<number of channels>` bytes long. Each
-byte is a token that gives the number of photons in the given channel
-within the coincidence window. The maximum number of photons for each
-channel is the number of set thresholds for this channel. The maximum
-number of thresholds that can be set is 16.
+contains a 16-byte header followed by all coincidences which occured
+between two ticks as one or more vectors.
 
-The tokens are as follows:
-(values subject to change, but they will be > 16 and < 32)
+#### Header
+
+The structure of the header is as follows:
+
+ * `byte [0]`:   number of active channels
+
+ * `byte [1]`:   measurement type, see [Measurement type configuration](#window-and-measurement-type-configuration)
+
+ * `bytes[2:4]`: coincidence window
+
+ * `bytes[4:8]`: number of ticks since last frame
+
+ * `bytes[8:16]`: per-channel info
+
+   There can be at most 8 channels. `byte[b+8]` gives info for
+   channel b. Bytes at offset beyond the number of active channels
+   are to be discarded. The highest three bits of each byte are
+   reserved for flags as follows:
+   * `bit [7]`:   **HASNOISE**:
+     The lowest threshold for the channel is > 0, meaning a noise
+     measurement is possible, see [Coincidence vectors](#coincidence-vectors)
+   * `bits[5:7]` : (reserved for future)
+
+#### Coincidence vectors
+
+The vectors are `<number of channels>` bytes long. Each byte is a
+token which, after ay flags are masked out, gives the number of
+photons in the given channel within the coincidence window. The
+maximum number of photons for each channel is the number of set
+thresholds for this channel. The maximum number of thresholds that can
+be set is 16. Flags are described later. The count tokens are as
+follows:
 
  * 0:    No events occurred in this channel
  * 1-16: That many photons (according to the thresholds) were measured
  * 17:   There was an event, but the measurement was below the
-	       lowest threshold, i.e. it was noise.
+         lowest threshold, i.e. it was noise.
  * 18:   There was an event but it did not contain the configured
-   measurement, i.e. no. of photons is unknown.
+         measurement, i.e. no. of photons is unknown.
+
+Values for "noise" and "unknown" are subject to change but they will
+be > 16 and < 32.
 
 A coincidence ends when an event arrives with a delay > `<window>`
 since the last event.
 
 If more than one event occurs in the same channel during the
 coincidence the coincidence will contain more than one vector and is
-flagged as **UNRESOLVED** (see flags below).
+flagged as **UNRESOLVED**, see [flags](#coincidence-vector-flags).
 
 If the total delay since the start of the coincidence exceeds
 `<window>` all vectors in the coincidence are also flagged as
@@ -330,8 +359,9 @@ channel  delay  photons
   3        10      3       ==>  UNRESOLVED [1, 2, 1, 3]
 ```
 
-The highest two (or three) bits of the first element are reserved for
-flags as follows:
+##### Coincidence vector flags
+The highest three bits of the first element are reserved for flags as
+follows:
 
  * `bit[7]` **UNRESOLVED**:
    * consecutive events each within less than `<window>` delay from
@@ -341,8 +371,9 @@ flags as follows:
  * `bit[6]` **BAD**:
    measurement is not peak and there are multiple peaks within one of
    the events in the coincidence group
+ * `bit[5]` (reserved for future)
 
-### Window/measurement type configuration
+### Window and measurement type configuration
 
 Valid requests and replies have a picture of "21".
 
@@ -382,7 +413,7 @@ Valid requests have a picture of "11b", replies have a picture of "1b".
 
 1. **Measurement type**
 
-   Any valid measurement type, see measurement type configuration.
+   Any valid measurement type, see [Measurement type configuration](#window-and-measurement-type-configuration)
 
    The value is read as an **unsigned** int8.
 
@@ -416,9 +447,9 @@ for this channel will be the number of set threshold elements).
 
 This interface counts number of coincidences over a configurable
 number of ticks, matching them against all of its subscription
-patterns (see below for the format of a pattern). For each
-subscription it publishes multi-frame messages with a picture
-"s2888888" as follows:
+patterns (see [Subscription pattern](#subscription-pattern) for the
+format of a pattern). For each subscription it publishes multi-frame
+messages with a picture "s2888888" as follows:
 
 1. **Pattern**
 
@@ -446,11 +477,14 @@ at the same tick and over the same globally configurable number of
 ticks, `gt`. New subscriptions will start receiving counts at the next
 batch of `gt` (potentially waiting for `2*gt - 1` tick periods).
 
-The global tick number can be configured by a REQ port, see below.
+The global tick number can be configured by a REQ port, see [Global
+tick number configuration](#global-tick-number-configuration).
 
 A subscription may request its own private tick counter, `lt`, in
 which case counting begins immediately and counts are published every
 `lt` ticks.
+
+#### Subscription pattern
 
 A valid subscription is a string of coma separated tokens, as follows:
 

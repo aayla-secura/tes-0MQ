@@ -116,6 +116,7 @@ bool matches_v2 (coinc_pt vec_p, coinc_pt patt_p)
 	return false;
 }
 
+#if 0
 bool is_tick_v1 (coinc_pt vec_p)
 {
 	uint8_t tick[NCHANNELS];
@@ -131,6 +132,7 @@ bool is_tick_v2 (coinc_pt vec_p)
 			return false;
 	return true;
 }
+#endif
 
 int main (void)
 {
@@ -143,7 +145,6 @@ int main (void)
 	struct timespec ts;
 	long long avg;
 
-#if 0
 	long unsigned int matched = 0;
 	tic (&ts);
 	for (long unsigned int r = 0; r < NLOOPS; r++)
@@ -161,8 +162,8 @@ int main (void)
 		"Average time: %.5e\n",
 		matched,
 		(double)avg / NSEC_IN_SEC / NLOOPS);
-#endif
 
+#if 0
 	long unsigned int ticks = 0;
 	tic (&ts);
 	for (long unsigned int r = 0; r < NLOOPS; r++)
@@ -180,5 +181,6 @@ int main (void)
 		"Average time: %.5e\n",
 		ticks,
 		(double)avg / NSEC_IN_SEC / NLOOPS);
+#endif
 	return 0;
 }
