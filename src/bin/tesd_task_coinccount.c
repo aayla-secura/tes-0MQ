@@ -353,7 +353,6 @@ task_coinccount_init (task_t* self)
 	assert ((TOK_NUM & ~TES_COINC_FLAG_MASK) != TES_COINC_TOK_UNKNOWN);
 
 	static struct s_data_t data;
-	/* TODO: read conf from file */
 	/* Default */
 	data.next_ticks = 1;
 	self->data = &data;

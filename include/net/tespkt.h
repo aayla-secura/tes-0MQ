@@ -313,30 +313,30 @@ struct tespkt_event_type
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	uint8_t TR  :  2;
-	uint8_t     :  6; /* reserved */
+	uint8_t     :  6; // reserved
 
-	uint8_t     :  1; /* reserved */
+	uint8_t     :  1; // reserved
 	uint8_t T   :  1;
 	uint8_t PKT :  2;
-	uint8_t     :  4; /* reserved */
+	uint8_t     :  4; // reserved
 #else
-	uint8_t     :  6; /* reserved */
+	uint8_t     :  6; // reserved
 	uint8_t TR  :  2;
 
-	uint8_t     :  4; /* reserved */
+	uint8_t     :  4; // reserved
 	uint8_t PKT :  2;
 	uint8_t T   :  1;
-	uint8_t     :  1; /* reserved */
+	uint8_t     :  1; // reserved
 #endif
 };
 
 struct tespkt_mca_flags
 {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-	uint8_t   :  8; /* reserved */
+	uint8_t   :  8; // reserved
 
 	uint8_t Q :  4;
-	uint8_t   :  4; /* reserved */
+	uint8_t   :  4; // reserved
 
 	uint8_t T :  4;
 	uint8_t V :  4;
@@ -344,9 +344,9 @@ struct tespkt_mca_flags
 	uint8_t C :  3;
 	uint8_t N :  5;
 #else
-	uint8_t   :  8; /* reserved */
+	uint8_t   :  8; // reserved
 
-	uint8_t   :  4; /* reserved */
+	uint8_t   :  4; // reserved
 	uint8_t Q :  4;
 
 	uint8_t V :  4;
@@ -366,7 +366,7 @@ struct tespkt_event_flags
 	uint8_t PC : 4;
 #else
 	uint8_t PC : 2;
-	uint8_t    : 2; /* reserved */
+	uint8_t    : 2; // reserved
 #endif
 
 	uint8_t N  : 1;
@@ -378,7 +378,7 @@ struct tespkt_event_flags
 #if TES_VERSION < 2
 	uint8_t PC : 4;
 #else
-	uint8_t    : 2; /* reserved */
+	uint8_t    : 2; // reserved
 	uint8_t PC : 2;
 #endif
 	uint8_t O  : 1;
@@ -398,18 +398,18 @@ struct tespkt_tick_flags
 	uint8_t TL : 1;
 	uint8_t EL : 1;
 	uint8_t MF : 1;
-	uint8_t    : 5; /* reserved */
+	uint8_t    : 5; // reserved
 
 	uint8_t N  : 1;
 	uint8_t T  : 1;
-	uint8_t    : 6; /* reserved */
+	uint8_t    : 6; // reserved
 #else
-	uint8_t    : 5; /* reserved */
+	uint8_t    : 5; // reserved
 	uint8_t MF : 1;
 	uint8_t EL : 1;
 	uint8_t TL : 1;
 
-	uint8_t    : 6; /* reserved */
+	uint8_t    : 6; // reserved
 	uint8_t T  : 1;
 	uint8_t N  : 1;
 #endif
@@ -421,13 +421,13 @@ struct tespkt_trace_flags
 	uint8_t STR : 5;
 	uint8_t MP  : 1;
 	uint8_t MH  : 1;
-	uint8_t     : 1; /* reserved */
+	uint8_t     : 1; // reserved
 
 	uint8_t OFF : 4;
 	uint8_t TS  : 2;
 	uint8_t TT  : 2;
 #else
-	uint8_t     : 1; /* reserved */
+	uint8_t     : 1; // reserved
 	uint8_t MH  : 1;
 	uint8_t MP  : 1;
 	uint8_t STR : 5;
@@ -470,7 +470,7 @@ struct tespkt_mca_hdr
 	uint16_t size;
 	uint16_t last_bin;
 	uint32_t lowest_value;
-	uint16_t : 16; /* reserved */
+	uint16_t : 16; // reserved
 	uint16_t most_frequent;
 	struct tespkt_mca_flags flags;
 	uint64_t total;
@@ -490,12 +490,12 @@ struct tespkt_tick_hdr
 {
 	uint32_t period;
 	struct tespkt_tick_flags flags;
-	uint16_t toff; /* time since last event */
-	uint64_t ts;   /* timestamp */
+	uint16_t toff; // time since last event
+	uint64_t ts;   // timestamp
 	uint8_t  ovrfl;
 	uint8_t  err;
 	uint8_t  cfd;
-	uint8_t  : 8;   /* reserved */
+	uint8_t  : 8;   // reserved
 	uint32_t lost;
 };
 
@@ -532,7 +532,7 @@ struct tespkt_pulse
 struct tespkt_pulse_hdr
 {
 	uint16_t size;
-	uint16_t : 16; /* reserved */
+	uint16_t : 16; // reserved
 	struct tespkt_event_flags flags;
 	uint16_t toff;
 	struct   tespkt_pulse pulse;
@@ -554,7 +554,7 @@ struct tespkt_trace_full_hdr
 
 struct tespkt_dot_prod
 {
-	uint16_t : 16; /* reserved */
+	uint16_t : 16; // reserved
 	uint64_t dot_prod : 48;
 } __attribute__ ((__packed__));
 
@@ -562,15 +562,15 @@ struct tespkt
 {
 	struct
 	{
-		struct ether_header eth_hdr; /* packed, 14 bytes */
-		uint16_t length;             /* length of packet */
+		struct ether_header eth_hdr; // packed, 14 bytes
+		uint16_t length;             // length of packet
 	} __attribute__ ((__packed__));
 	struct
 	{
 		uint16_t fseq;
 		uint16_t pseq;
-		uint16_t esize;                 /* undefined for MCA */
-		struct tespkt_event_type etype; /* undefined for MCA */
+		uint16_t esize;                 // undefined for MCA
+		struct tespkt_event_type etype; // undefined for MCA
 	} tes_hdr;
 	void* body;
 };
@@ -1395,7 +1395,7 @@ tespkt_error (int err)
 		if (err & 1)
 			return _tespkt_errors[e];
 
-	return NULL; /* suppress gcc warning */
+	return NULL;
 }
 
 static int
@@ -1410,7 +1410,7 @@ tespkt_serror (char* buf, int err)
 		}
 	}
 
-	return 0; /* suppress gcc warning */
+	return 0;
 }
 
 /* -------------------------------------------------------------- */
