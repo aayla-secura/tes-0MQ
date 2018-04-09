@@ -65,7 +65,6 @@ struct s_data_t
 static bool s_matches (coinc_vec_t* cvec, coinc_vec_t* pattern);
 static int s_publish_subsc (task_t* self,
 	struct s_subscription_t* subsc);
-static int s_process_vec (task_t* self, coinc_vec_t* cvec);
 
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
@@ -137,136 +136,6 @@ s_publish_subsc (task_t* self, struct s_subscription_t* subsc)
 	return 0;
 }
 
-static int
-s_process_vec (task_t* self, coinc_vec_t* cvec)
-{
-	dbg_assert (self != NULL);
-	dbg_assert (self->data != NULL);
-	dbg_assert (cvec != NULL);
-
-	struct s_data_t* data = (struct s_data_t*) self->data;
-	dbg_assert (data->next_ticks > 0);
-
-	/* Check if it's a tick vector (no counts). */
-	bool is_tick = true;
-	for (int i = 0; i < TES_NCHANNELS; i++)
-	{
-		if (((*cvec)[i] & ~TES_COINC_FLAG_MASK) != TES_COINC_TOK_TICK)
-		{
-			is_tick = false;
-			break;
-		}
-	}
-	bool has_counts = ! is_tick;
-
-#if TICK_WITH_COINC > 0
-	/* Check if it includes a tick. */
-	if (has_counts && ((*cvec)[0] & TES_COINC_VEC_FLAG_TICK))
-		is_tick = true; /* has_counts stays true */
-#endif
-
-	if (is_tick)
-	{
-		data->cur_ticks++;
-		if (data->ticks == 0)
-			data->ticks = data->next_ticks; /* first tick since activation */
-	}
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-	char vec_repr[MAX_SUBSC_LEN] = {0};
-	size_t len = 0;
-	for (int i = 0; i < TES_NCHANNELS; i++)
-	{
-		len += snprintf (vec_repr + len, MAX_SUBSC_LEN - len,
-				"%d,", (*cvec)[i]);
-		assert (len < MAX_SUBSC_LEN);
-	}
-	logmsg (0, LOG_DEBUG,
-		"A %s vector%s: %s", has_counts ? "coincidence" : "tick",
-		(is_tick && has_counts) ? " after a tick" : "", vec_repr);
-#endif
-
-	if (data->ticks == 0)
-		return 0;
-
-	bool next_global = (data->ticks == data->cur_ticks);
-	if (next_global)
-	{
-		dbg_assert (is_tick);
-		data->ticks = data->next_ticks;
-		data->cur_ticks = 0;
-	}
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-	logmsg (0, LOG_DEBUG, "%u/%u ticks",
-		data->cur_ticks, data->ticks);
-#endif
-	dbg_assert (data->cur_ticks < data->ticks);
-
-	bool mp = (*cvec)[0] & TES_COINC_VEC_FLAG_BAD;
-	bool unres = (*cvec)[0] & TES_COINC_VEC_FLAG_UNRESOLVED;
-	for (struct s_subscription_t* subsc = FIRST_SUB(self);
-		subsc != NULL; subsc = NEXT_SUB(self))
-	{
-		dbg_assert (subsc->counts.num_res_match_noMP <=
-			subsc->counts.num_res_match);
-		dbg_assert (subsc->counts.num_res_match <=
-			subsc->counts.num_res);
-		dbg_assert (subsc->counts.num_res_noMP <=
-			subsc->counts.num_res);
-		dbg_assert (subsc->counts.num_res_match_noMP <=
-			subsc->counts.num_res_noMP);
-		dbg_assert (subsc->counts.ticks == 0 ||
-			subsc->counts.cur_ticks < subsc->counts.ticks);
-
-		if ( ! subsc->active )
-		{
-			dbg_assert (subsc->counts.num_res == 0);
-			dbg_assert (subsc->counts.num_unres == 0);
-			dbg_assert (subsc->counts.ticks == 0);
-
-			subsc->active = (is_tick &&
-				(next_global || subsc->is_private));
-			if ( ! subsc->active )
-				continue;
-
-#if DEBUG_LEVEL >= FEELING_LUCKY
-			logmsg (0, LOG_DEBUG,
-				"Activating subscription '%s'", subsc->pattern_str);
-#endif
-			subsc->counts.ticks =
-				(subsc->ticks > 0 ? subsc->ticks : data->ticks);
-		}
-		else if (is_tick)
-		{ /* 'else' so we don't count this tick for patterns that just
-		     joined */
-			subsc->counts.cur_ticks++;
-			if (subsc->counts.cur_ticks == subsc->counts.ticks &&
-					s_publish_subsc (self, subsc) == TASK_ERROR)
-				return TASK_ERROR;
-		}
-
-		if ( ! has_counts )
-			continue;
-
-		if (unres)
-		{
-			subsc->counts.num_unres++;
-			continue;
-		}
-		subsc->counts.num_res++;
-		if ( ! mp )
-			subsc->counts.num_res_noMP++;
-
-		if (s_matches (cvec, &subsc->pattern))
-		{
-			subsc->counts.num_res_match++;
-			if ( ! mp )
-				subsc->counts.num_res_match_noMP++;
-		}
-	}
-
-	return 0;
-}
-
 /* -------------------------------------------------------------- */
 /* ----------------------------- API ---------------------------- */
 /* -------------------------------------------------------------- */
@@ -307,6 +176,9 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	task_t* self = (task_t*) self_;
 	dbg_assert (self->data != NULL);
 
+	struct s_data_t* data = (struct s_data_t*) self->data;
+	dbg_assert (data->next_ticks > 0);
+
 	unsigned char* buf;
 	size_t len;
 	int rc = zsock_recv (endpoint, "b", &buf, &len);
@@ -330,13 +202,97 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	assert (len % CVEC_SIZE == 0);
 #endif
 
-	/* FIXME: read header */
+	/* Configuration, including window, should not change while there
+	 * are active subscriptions, we don't try to detect change. */
+	struct task_coinc_hdr_t* hdr = (struct task_coinc_hdr_t*)buf;
+	data->window = hdr->window;
+	data->cur_ticks += hdr->ticks;
+	bool next_global = (data->ticks > data->cur_ticks);
+	if (next_global)
+	{ /* waiting patterns using global sync will join now */
+		data->ticks = data->next_ticks;
+		data->cur_ticks = 0;
+	}
 
-	for (size_t pos = TES_COINC_HDR_LEN; pos < len; pos += CVEC_SIZE)
+	if (data->ticks == 0)
 	{
-		coinc_vec_t* cvec = (coinc_vec_t*)(buf + pos);
-		if (s_process_vec (self, cvec) == TASK_ERROR)
-			return TASK_ERROR;
+		dbg_assert (hdr->ticks == 0);
+		return 0; /* no ticks since activation */
+	}
+	dbg_assert (data->cur_ticks < data->ticks);
+	dbg_assert (data->ticks > 0);
+#if DEBUG_LEVEL >= LETS_GET_NUTS
+	logmsg (0, LOG_DEBUG, "%u/%u ticks",
+		data->cur_ticks, data->ticks);
+#endif
+
+	for (struct s_subscription_t* subsc = FIRST_SUB(self);
+		subsc != NULL; subsc = NEXT_SUB(self))
+	{
+		dbg_assert (subsc->counts.num_res_match_noMP <=
+			subsc->counts.num_res_match);
+		dbg_assert (subsc->counts.num_res_match <=
+			subsc->counts.num_res);
+		dbg_assert (subsc->counts.num_res_noMP <=
+			subsc->counts.num_res);
+		dbg_assert (subsc->counts.num_res_match_noMP <=
+			subsc->counts.num_res_noMP);
+		dbg_assert (subsc->counts.ticks == 0 ||
+			subsc->counts.cur_ticks < subsc->counts.ticks);
+		dbg_assert (subsc->active || subsc->counts.num_res == 0);
+		dbg_assert (subsc->active || subsc->counts.num_unres == 0);
+		dbg_assert (subsc->active || subsc->counts.ticks == 0);
+
+		if ( ! subsc->active )
+		{
+			dbg_assert (subsc->counts.num_res == 0);
+			dbg_assert (subsc->counts.num_unres == 0);
+			dbg_assert (subsc->counts.ticks == 0);
+
+			subsc->active = (hdr->ticks > 0 &&
+				(next_global || subsc->is_private));
+			if ( ! subsc->active )
+				continue;
+
+#if DEBUG_LEVEL >= FEELING_LUCKY
+			logmsg (0, LOG_DEBUG,
+				"Activating subscription '%s'", subsc->pattern_str);
+#endif
+			subsc->counts.ticks =
+				(subsc->ticks > 0 ? subsc->ticks : data->ticks);
+		}
+		else
+		{ /* 'else' so we don't count this batch of ticks for patterns
+				 that just joined */
+			subsc->counts.cur_ticks += hdr->ticks;
+			if (subsc->counts.cur_ticks > subsc->counts.ticks &&
+					s_publish_subsc (self, subsc) == TASK_ERROR)
+				return TASK_ERROR;
+		}
+
+		for (size_t pos = TES_COINC_HDR_LEN; pos < len; pos += CVEC_SIZE)
+		{
+			dbg_assert (pos + CVEC_SIZE <= len);
+			coinc_vec_t* cvec = (coinc_vec_t*)(buf + pos);
+			bool mp = (*cvec)[0] & TES_COINC_VEC_FLAG_BAD;
+			bool unres = (*cvec)[0] & TES_COINC_VEC_FLAG_UNRESOLVED;
+
+			if (unres)
+			{
+				subsc->counts.num_unres++;
+				return 0;
+			}
+			subsc->counts.num_res++;
+			if ( ! mp )
+				subsc->counts.num_res_noMP++;
+
+			if (s_matches (cvec, &subsc->pattern))
+			{
+				subsc->counts.num_res_match++;
+				if ( ! mp )
+					subsc->counts.num_res_match_noMP++;
+			}
+		}
 	}
 	freen (buf); /* from czmq_prelude */
 	return 0;
