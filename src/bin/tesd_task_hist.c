@@ -55,6 +55,7 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
+	dbg_assert (self->data != NULL);
 
 	if (err)
 		return 0; /* we don't handle bad frames */
@@ -183,6 +184,7 @@ int
 task_hist_wakeup (task_t* self)
 {
 	assert (self != NULL);
+	assert (self->data != NULL);
 	struct s_data_t* hist = (struct s_data_t*) self->data;
 
 	s_clear (hist);

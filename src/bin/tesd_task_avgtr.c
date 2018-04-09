@@ -52,6 +52,7 @@ task_avgtr_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	assert (self->data != NULL);
 
 	uint32_t timeout;    
 
@@ -106,6 +107,7 @@ task_avgtr_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
+	dbg_assert (self->data != NULL);
 
 	if ( ! tespkt_is_trace_avg (pkt) )
 		return 0;

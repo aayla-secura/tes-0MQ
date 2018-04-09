@@ -187,6 +187,7 @@ task_jitter_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	assert (self->data != NULL);
 
 	uint8_t ref_ch;
 	uint64_t ticks;
@@ -245,6 +246,7 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
+	dbg_assert (self->data != NULL);
 
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	dbg_assert (data->cur_conf.ticks > 0);
@@ -385,6 +387,7 @@ int
 task_jitter_wakeup (task_t* self)
 {
 	assert (self != NULL);
+	assert (self->data != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 
 	memset (&data->points, 0, sizeof (data->points));

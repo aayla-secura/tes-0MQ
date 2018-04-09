@@ -102,6 +102,7 @@ static int
 s_publish_subsc (task_t* self, struct s_subscription_t* subsc)
 {
 	dbg_assert (self != NULL);
+	dbg_assert (self->data != NULL);
 	dbg_assert (subsc != NULL);
 	dbg_assert (subsc->active);
 #if DEBUG_LEVEL >= FEELING_LUCKY
@@ -140,6 +141,7 @@ static int
 s_process_vec (task_t* self, coinc_vec_t* cvec)
 {
 	dbg_assert (self != NULL);
+	dbg_assert (self->data != NULL);
 	dbg_assert (cvec != NULL);
 
 	struct s_data_t* data = (struct s_data_t*) self->data;
@@ -275,6 +277,7 @@ task_coinccount_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	assert (self->data != NULL);
 	struct s_data_t* data = (struct s_data_t*) self->data;
 	
 	uint32_t ticks;
@@ -302,6 +305,7 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	dbg_assert (self->data != NULL);
 
 	unsigned char* buf;
 	size_t len;
@@ -363,6 +367,7 @@ int
 task_coinccount_wakeup (task_t* self)
 {
 	assert (self != NULL);
+	assert (self->data != NULL);
 
 	endp_subscribe (&self->endpoints[ENDP_SUB], "");
 
@@ -376,6 +381,7 @@ int
 task_coinccount_sleep (task_t* self)
 {
 	assert (self != NULL);
+	assert (self->data != NULL);
 
 	endp_unsubscribe (&self->endpoints[ENDP_SUB], "");
 	return 0;

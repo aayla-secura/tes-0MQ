@@ -1098,6 +1098,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	dbg_assert (self_ != NULL);
 
 	task_t* self = (task_t*) self_;
+	assert (self->data != NULL);
 
 	struct s_data_t* sjob = (struct s_data_t*) self->data;
 	dbg_assert ( ! sjob->recording );
@@ -1241,6 +1242,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	uint16_t missed, int err, task_t* self)
 {
 	dbg_assert (self != NULL);
+	dbg_assert (self->data != NULL);
 
 	struct s_data_t* sjob = (struct s_data_t*) self->data;
 
@@ -1664,6 +1666,7 @@ int
 task_cap_fin (task_t* self)
 {
 	assert (self != NULL);
+	assert (self->data != NULL);
 
 	struct s_data_t* sjob = (struct s_data_t*) self->data;
 	assert (sjob != NULL);
