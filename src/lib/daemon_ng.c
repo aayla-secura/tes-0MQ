@@ -3,7 +3,6 @@
  *   - use BSD's closefrom () if available 
  *   - method for finding highest fd number is not portable, see
  *     https://stackoverflow.com/questions/899038/getting-the-highest-allocated-file-descriptor/918469#918469
- *   - multiple verbose levels
  * 
  * NOTES:
  *   - valgrind temporarily increases the current soft limit and
@@ -43,7 +42,7 @@
 #define DAEMON_TIMEOUT 3000 /* default */
 
 static bool is_daemon;
-static bool is_verbose;
+static int verbose_level;
 static char time_fmt[MAX_LOG_TIMEFMT_LEN];
 static __thread char log_id[MAX_LOG_ID_LEN];
 
@@ -282,8 +281,11 @@ s_send_sig (int pipe_fd, char* sig)
 void
 logmsg (int errnum, int priority, const char* format, ...)
 {
-	if ( ! is_verbose && priority == LOG_DEBUG )
+	if ( verbose_level <= priority - LOG_DEBUG )
 		return;
+
+	if (priority > LOG_DEBUG)
+		priority = LOG_DEBUG;
 
 	va_list args;
 	va_start (args, format);
@@ -330,7 +332,8 @@ logmsg (int errnum, int priority, const char* format, ...)
 	else
 	{
 		FILE* outbuf;
-		if ((priority == LOG_DEBUG) || (! is_verbose && priority < 5))
+		if ((priority == LOG_DEBUG) ||
+			( verbose_level == 0 && priority < LOG_NOTICE ))
 			outbuf = stderr;
 		else
 			outbuf = stdout;
@@ -363,12 +366,12 @@ set_logid (char* id)
 	return log_id;
 }
 
-bool
-set_verbose (bool be_verbose)
+int
+set_verbose (int level)
 {
-	if (be_verbose)
-		is_verbose = be_verbose;
-	return is_verbose;
+	if (level >= 0)
+		verbose_level = level;
+	return verbose_level;
 }
 
 bool

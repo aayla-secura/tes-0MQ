@@ -29,6 +29,7 @@
 #  define NUMCPUS 4L // fallback if sysconf
                      // (_SC_NPROCESSORS_ONLN) fails
 #endif
+#define DBG_VERBOSE 1
 
 void
 tic (struct timespec* ts)
@@ -118,9 +119,9 @@ mkdirr (const char* path, mode_t mode, bool create_basename)
 	if (path == NULL || strlen (path) == 0)
 		return -1;
 	
-#if DEBUG_LEVEL >= VERBOSE
-	logmsg (0, LOG_DEBUG, "Recursively create '%s'", path);
-#endif
+	logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+		"Recursively create '%s'", path);
+
 	/* Start from the root and create directories as needed. */
 	char buf[PATH_MAX] = {0};
 	const char* cur_seg = path;
@@ -151,9 +152,8 @@ mkdirr (const char* path, mode_t mode, bool create_basename)
 
 		/* If link is a dangling link, it will result in EEXIST.
 		 * On the next invocation it will be ENOENT. */
-#if DEBUG_LEVEL >= VERBOSE
-		logmsg (0, LOG_DEBUG, "Checking directory '%s'", buf);
-#endif
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+			"Checking directory '%s'", buf);
 		int rc = mkdir (buf, mode);
 		if (rc == 0)
 			logmsg (0, LOG_DEBUG, "Created directory '%s'", buf);
@@ -180,10 +180,9 @@ canonicalize_path (const char* root, const char* path,
 	 * It must end with a slash for memcmp to determine if inside
 	 * realroot.
 	 */
-#if DEBUG_LEVEL >= VERBOSE
-	logmsg (0, LOG_DEBUG, "Canonicalize path '%s' under '%s'",
+	logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+		"Canonicalize path '%s' under '%s'",
 		path, (root == NULL ? "" : root));
-#endif
 	char buf[PATH_MAX] = {0};
 	bool root_given = (root != NULL && strlen (root) > 0);
 	if ( (root_given && root[0] != '/') ||
@@ -197,10 +196,8 @@ canonicalize_path (const char* root, const char* path,
 			return NULL;
 		}
 		assert (buf[0] == '/');
-#if DEBUG_LEVEL >= VERBOSE
-		logmsg (0, LOG_DEBUG,
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 			"Prepending current working directory '%s'", buf);
-#endif
 	}
 
 	/* add given root */
@@ -245,9 +242,8 @@ canonicalize_path (const char* root, const char* path,
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
-#if DEBUG_LEVEL >= VERBOSE
-	logmsg (0, LOG_DEBUG, "Canonicalizing path '%s'", buf);
-#endif
+	logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+		"Canonicalizing path '%s'", buf);
 
 	/* Check if the file exists first. */
 	rs = realpath (buf, finalpath);
@@ -260,9 +256,9 @@ canonicalize_path (const char* root, const char* path,
 				finalpath);
 			return NULL;
 		}
-#if DEBUG_LEVEL >= VERBOSE
-		logmsg (0, LOG_DEBUG, "Path resolved to '%s'", finalpath);
-#endif
+
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+			"Final path resolved to '%s'", finalpath);
 		return finalpath;
 	}
 
@@ -316,8 +312,7 @@ canonicalize_path (const char* root, const char* path,
 		return NULL;
 	}
 
-#if DEBUG_LEVEL >= VERBOSE
-	logmsg (0, LOG_DEBUG, "Path resolved to '%s'", finalpath);
-#endif
+	logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+		"Final path resolved to '%s'", finalpath);
 	return finalpath;
 }

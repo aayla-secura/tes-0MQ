@@ -64,10 +64,8 @@ struct s_data_t
 {
 	struct s_conf_t cur_conf; // current configuration
 	struct s_conf_t conf;     // to be applied at next hist
-#if DEBUG_LEVEL >= VERBOSE
 	uint64_t published;    // number of published histograms
 	uint64_t dropped;      // number of aborted histograms
-#endif
 	struct s_hist_t hist;
 	uint64_t ticks;        // number of ticks so far
 	struct s_point_t points[MAX_SIMULT_POINTS];
@@ -117,9 +115,8 @@ s_save_points (struct s_data_t* data)
 		if (bin > pt->delay_until)
 			bin = - (int)pt->delay_until;
 
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-		logmsg (0, LOG_DEBUG, "Added a point at %d", bin);
-#endif
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"Added a point at %d", bin);
 
 		bin += BIN_OFFSET;
 		if (bin < 0)
@@ -131,10 +128,9 @@ s_save_points (struct s_data_t* data)
 		dbg_assert (pt->hid >= 0);
 		struct s_subhist_t* hist = &data->hist.hists[pt->hid];
 		hist->bins[bin]++;
-#if DEBUG_LEVEL >= VERBOSE
 		if (data->hist.hists[pt->hid].bins[bin] == 0)
-			logmsg (0, LOG_WARNING, "Overflow of bin %hd", bin);
-#endif
+			logmsg (0, LOG_DEBUG + DBG_FEELING_LUCKY,
+				"Overflow of bin %hd", bin);
 	}
 	/* Start accumulating delay for next non-reference frame. */
 	data->points[0].delay_since = 0;
@@ -285,11 +281,13 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		if ( ! is_ref )
 			s_add_to_since (&data->points[data->cur_npts - 1], delay);
 
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-		logmsg (0, LOG_DEBUG, "Channel %hhu frame%s, delay is %hu",
+#if DEBUG_LEVEL > NO_DEBUG
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"Channel %hhu frame%s, delay is %hu",
 			ef->CH, is_tick ? " (tick)" : "       ", delay);
 		for (uint8_t p = 0; p < data->cur_npts; p++)
-			logmsg (0, LOG_DEBUG, "Point %hhu delays: %hu, %hu",
+			logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+				"Point %hhu delays: %hu, %hu",
 				p, data->points[p].delay_since,
 				data->points[p].delay_until);
 #endif
@@ -319,13 +317,9 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				new_ghost->hid = -1;
 				data->cur_npts++;
 			}
-#if DEBUG_LEVEL >= VERBOSE
 			else
-			{
-				logmsg (0, LOG_WARNING,
+				logmsg (0, LOG_DEBUG,
 					"Too many non-reference frames since last reference");
-			}
-#endif
 		}
 	}
 
@@ -341,17 +335,15 @@ task_jitter_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			return TASK_ERROR;
 		}
 
-#if DEBUG_LEVEL >= VERBOSE
 		if ((unsigned int)rc != TES_JITTER_SIZE)
-			logmsg (errno, LOG_ERR,
+			logmsg (errno, LOG_DEBUG + DBG_FEELING_LUCKY,
 				"Histogram is %lu bytes long, sent %u",
 				TES_JITTER_SIZE, rc);
 
 		data->published++;
 		if (data->published % 50 == 0)
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 				"Published 50 more histogtams");
-#endif
 
 		s_prep_next (data);
 	}

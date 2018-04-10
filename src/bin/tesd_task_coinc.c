@@ -45,9 +45,7 @@ struct s_conf_t
  */
 struct s_data_t
 {
-#if DEBUG_LEVEL >= VERBOSE
 	uint64_t published; // number of published coincidences
-#endif
 	struct
 	{
 		struct
@@ -183,12 +181,10 @@ s_apply_conf (struct s_data_t* data)
 		data->buf.hdr.ch_info[c] = s_num_set_thres (thres);
 		if ((*thres)[0] > 0)
 			data->buf.hdr.ch_info[c] |= TES_COINC_HDR_FLAG_HASNOISE;
-#if DEBUG_LEVEL >= VERBOSE
-		logmsg (0, LOG_DEBUG,
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 			"Channel %d: has_noise = %s, max_counts = %d",
 			c, ((*thres)[0] > 0 ? "yes" : "no"),
 			data->buf.hdr.ch_info[c] & ~TES_COINC_FLAG_MASK);
-#endif
 	}
 
 	switch (data->conf.measurement)
@@ -223,17 +219,17 @@ s_num_set_thres (ch_thresh_t* thres)
 static inline uint16_t
 s_count_from_thres (uint32_t val, ch_thresh_t* thres)
 {
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-		logmsg (0, LOG_DEBUG, "Measurement value is %u", val);
-#endif
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"Measurement value is %u", val);
+
 		uint16_t p = 0;
 		for (; val >= (*thres)[p] &&
 			p < TES_COINC_MAX_PHOTONS &&
 			(p == 0 || (*thres)[p] > 0); p++)
 			;
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-		logmsg (0, LOG_DEBUG, " -> %hhu photons", p);
-#endif
+
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			" -> %hhu photons", p);
 		return (p == 0 ? TES_COINC_TOK_NOISE : p);
 }
 
@@ -352,12 +348,12 @@ s_add_to_group (task_t* self)
 	else
 		dbg_assert (data->buf.hdr.ticks == 0);
 	
-#if DEBUG_LEVEL >= LETS_GET_NUTS
 	if (data->cur_frame.cur_group.num_ongoing == 0)
-		logmsg (0, LOG_DEBUG, "New group");
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"New group");
 	else
-		logmsg (0, LOG_DEBUG, "New vector in group");
-#endif
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"New vector in group");
 	
 	if (data->cur_frame.idx == MAX_COINC_VECS - 1)
 		if (s_publish (self, 1) == TASK_ERROR)
@@ -369,9 +365,9 @@ s_add_to_group (task_t* self)
 	
 	coinc_vec_t* cvec = &data->buf.coinc[data->cur_frame.idx];
 	(*cvec)[0] |= flags;
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-	logmsg (0, LOG_DEBUG, "Added a vector with flags = 0x%02x", flags);
-#endif
+
+	logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+		"Added a vector with flags = 0x%02x", flags);
 	return 0;
 }
 
@@ -406,12 +402,11 @@ s_publish (task_t* self, uint16_t reserve)
 	 * completes after a tick. */
 	dbg_assert (data->cur_frame.idx + reserve >= MAX_COINC_VECS ||
 		data->cur_frame.cur_group.num_ongoing == 0);
-#if DEBUG_LEVEL >= LETS_GET_NUTS
+
 	if (data->cur_frame.idx + reserve >= MAX_COINC_VECS)
-		logmsg (0, LOG_DEBUG, "Buffer full");
-	logmsg (0, LOG_DEBUG,
+		logmsg (0, LOG_DEBUG + DBG_FEELING_LUCKY, "Buffer full");
+	logmsg (0, LOG_DEBUG + DBG_FEELING_LUCKY,
 		"Publishing frame with %d ticks", data->buf.hdr.ticks);
-#endif
 
 	int rc = zmq_send (
 		zsock_resolve (self->endpoints[ENDP_PUB].sock),
@@ -422,15 +417,13 @@ s_publish (task_t* self, uint16_t reserve)
 			"Cannot send the coincidence");
 		return TASK_ERROR;
 	}
-#if DEBUG_LEVEL >= VERBOSE
 	else
 	{
 		data->published++;
 		if (data->published % 50 == 0)
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 				"Published 50 more coincidences");
 	}
-#endif
 	data->buf.hdr.ticks = 0;
 	
 	if (num_ready == 0)
@@ -645,9 +638,8 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	if ( err || ! tespkt_is_event (pkt) )
 		return 0;
 
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-	logmsg (0, LOG_DEBUG, "------------------------------");
-#endif
+	logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+		"------------------------------");
 
 	bool is_tick = tespkt_is_tick (pkt);
 	if (is_tick)
@@ -672,13 +664,13 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		data->cur_frame.cur_group.delay_since_start += delay;
 		struct tespkt_event_flags* ef = tespkt_evt_fl (pkt, e);
 		
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-		logmsg (0, LOG_DEBUG, "Channel %hhu %s, delay is %hu",
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"Channel %hhu %s, delay is %hu",
 			ef->CH, is_tick ? "tick " : "frame", delay);
-		logmsg (0, LOG_DEBUG, "Delay since start: %hu, since last: %hu",
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"Delay since start: %hu, since last: %hu",
 			data->cur_frame.cur_group.delay_since_start,
 			data->cur_frame.cur_group.delay_since_last);
-#endif
 		
 		if (data->cur_frame.cur_group.delay_since_last >
 				data->buf.hdr.window)
@@ -693,9 +685,7 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			
 			if (s_ongoing (data))
 			{ /* ongoing group ends */
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-				logmsg (0, LOG_DEBUG, "Group ends");
-#endif
+				logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS, "Group ends");
 				data->cur_frame.cur_group.num_ongoing = 0;
 				if (data->buf.hdr.ticks > 0 &&
 					s_publish (self, 0) == TASK_ERROR)
@@ -734,10 +724,11 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				dbg_assert (ch_seen ||
 					(data->cur_frame.cur_group.num_ongoing > 1 ||
 						TES_NCHANNELS > 2));
-#if DEBUG_LEVEL >= LETS_GET_NUTS
+
 				if (data->cur_frame.cur_group.num_ongoing == 1)
-					logmsg (0, LOG_DEBUG, "Group becomes unresolved");
-#endif
+					logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+						"Group becomes unresolved");
+
 				coinc_vec_t* cvec = &data->buf.coinc[data->cur_frame.idx];
 				(*cvec)[0] |= TES_COINC_VEC_FLAG_UNRESOLVED;
 			}
@@ -761,9 +752,8 @@ task_coinc_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		
 		if (data->util.is_bad (pkt, e))
 		{
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-			logmsg (0, LOG_DEBUG, "Measurement is bad");
-#endif
+			logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+				"Measurement is bad");
 			(*cvec)[0] |= TES_COINC_VEC_FLAG_BAD;
 		}
 		dbg_assert (((*cvec)[ef->CH] & ~TES_COINC_FLAG_MASK) == 0);

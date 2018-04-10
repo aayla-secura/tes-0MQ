@@ -37,7 +37,7 @@
  * than ~2kB (it'd be much slower than synchronous write). */
 #define BUFSIZE 10485760UL // 10 MB
 #define MINSIZE 512000UL   // 500 kB
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 #  define STAT_NBINS 11
 #endif
 
@@ -66,18 +66,18 @@ struct s_ftype_t
 	( (pkt_type == TESPKT_TYPE_TRACE) ? 3 + tr_type : pkt_type )
 
 /*
- * Statistics sent as a reply and saved to the file. 
+ * Statistics sent as a reply and saved to the file.
  */
 struct s_stats_t
 {
 	uint64_t ticks;
-	uint64_t events;         // number of events written 
-	uint64_t traces;         // number of traces written 
-	uint64_t hists;          // number of histograms written 
+	uint64_t events;         // number of events written
+	uint64_t traces;         // number of traces written
+	uint64_t hists;          // number of histograms written
 	uint64_t frames;         // total frames saved
 	uint64_t frames_lost;    // total frames lost
 	uint64_t frames_dropped; // total frames dropped
-	uint64_t errors;         // TODO: last 8-bytes of tick header 
+	uint64_t errors;         // TODO: last 8-bytes of tick header
 };
 
 /*
@@ -157,7 +157,7 @@ struct s_aiobuf_t
 		unsigned char* ceil; // base + BUFSIZE
 		size_t waiting;      // copied to buffer since last aio_write
 		size_t enqueued;     // queued for writing at last aio_write
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		struct
 		{
 			size_t prev_enqueued;
@@ -291,7 +291,7 @@ static int   s_queue_aiobuf (struct s_aiobuf_t* aiobuf, bool force);
 static char* s_canonicalize_path (const char* filename,
 	char* finalpath, bool mustexist);
 
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 static void  s_dbg_stats (struct s_data_t* sjob);
 #endif
 
@@ -487,7 +487,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
 			return TES_CAP_REQ_EFAIL;
 		}
 	}
-  
+
 	return TES_CAP_REQ_OK;
 }
 
@@ -606,7 +606,7 @@ s_close_aiobuf (struct s_aiobuf_t* aiobuf)
 
 	aiobuf->bufzone.waiting = 0;
 	aiobuf->bufzone.enqueued = 0;
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	memset (&aiobuf->bufzone.st, 0, sizeof(aiobuf->bufzone.st));
 #endif
 
@@ -821,14 +821,14 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	int reserve = len - (aiobuf->bufzone.ceil - aiobuf->bufzone.cur);
 	if (likely (reserve < 0))
 	{
-		memcpy (aiobuf->bufzone.cur, buf, len); 
+		memcpy (aiobuf->bufzone.cur, buf, len);
 		aiobuf->bufzone.cur += len;
 	}
 	else
 	{
-		memcpy (aiobuf->bufzone.cur, buf, len - reserve); 
+		memcpy (aiobuf->bufzone.cur, buf, len - reserve);
 		if (reserve > 0)
-			memcpy (aiobuf->bufzone.base, buf + len - reserve, reserve); 
+			memcpy (aiobuf->bufzone.base, buf + len - reserve, reserve);
 		aiobuf->bufzone.cur = aiobuf->bufzone.base + reserve;
 	}
 	aiobuf->bufzone.waiting += len;
@@ -843,7 +843,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 
 	/* Try to queue next batch but don't force */
 	int jobrc = s_queue_aiobuf (aiobuf, false);
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	if (jobrc == EINPROGRESS)
 		aiobuf->bufzone.st.num_skipped++;
 #endif
@@ -851,18 +851,18 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	/* If there is no space for a full frame, force write until
 	 * there is. If we are finalizingm wait for all bytes to be
 	 * written. */
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	bool blocked = false;
 #endif
 	while ( aiobuf->bufzone.enqueued + aiobuf->bufzone.waiting >
 		BUFSIZE - TESPKT_MTU && jobrc == EINPROGRESS )
 	{
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		blocked = true;
 #endif
 		jobrc = s_queue_aiobuf (aiobuf, true);
 	}
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	if (blocked)
 		aiobuf->bufzone.st.num_blocked++;
 #endif
@@ -874,13 +874,13 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
 	else if (jobrc == -2)
 	{
 		/* TODO: how to handle errors */
-#if DEBUG_LEVEL >= VERBOSE
+#  if DEBUG_LEVEL > NO_DEBUG
 		logmsg (0, LOG_ERR, "Queued %lu bytes, wrote %lu",
 			aiobuf->bufzone.enqueued,
 			aiobuf->bufzone.st.last_written);
-#else /* DEBUG_LEVEL >= VERBOSE */
+#  else /* DEBUG_LEVEL > NO_DEBUG */
 		logmsg (0, LOG_ERR, "Wrote unexpected number of bytes");
-#endif /* DEBUG_LEVEL >= VERBOSE */
+#  endif /* DEBUG_LEVEL > NO_DEBUG */
 	}
 
 #else /* skip writing */
@@ -900,7 +900,7 @@ s_try_queue_aiobuf (struct s_aiobuf_t* aiobuf,
  * If force is true, will suspend if file is not ready for writing.
  * Always calls aio_return for previous job. Calls aio_return if
  * waiting for new job.
- * 
+ *
  * Returns 0 if no new bytes in the bufzone (should only happen if
  * flushing or waiting for a large batch and no space in the
  * bufzone).
@@ -946,7 +946,7 @@ s_queue_aiobuf (struct s_aiobuf_t* aiobuf, bool force)
 	ssize_t wrc = aio_return (&aiobuf->aios);
 	if (wrc == -1 && errno == EAGAIN)
 	{
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		aiobuf->bufzone.st.failed_batches++;
 #endif
 		goto queue_as_is; /* requeue previous batch */
@@ -957,7 +957,7 @@ s_queue_aiobuf (struct s_aiobuf_t* aiobuf, bool force)
 	if ((size_t)wrc != aiobuf->bufzone.enqueued)
 	{
 		dbg_assert (aiobuf->bufzone.enqueued > 0);
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		aiobuf->bufzone.st.last_written = wrc;
 #endif
 		return -2;
@@ -965,7 +965,7 @@ s_queue_aiobuf (struct s_aiobuf_t* aiobuf, bool force)
 
 	/* ---------------------------------------------------------- */
 prepare_next:
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	{
 		int bin = aiobuf->bufzone.enqueued *
 			(STAT_NBINS - 1) / BUFSIZE;
@@ -1053,18 +1053,19 @@ s_canonicalize_path (const char* filename,
 		mustexist, 0777);
 }
 
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 static void
 s_dbg_stats (struct s_data_t* sjob)
 {
 	for (int s = 0; s < NUM_DSETS ; s++)
 	{
 		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
-		logmsg (0, LOG_DEBUG, "Dataset %s: ", aiobuf->dataset); 
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+			"Dataset %s: ", aiobuf->dataset);
 		uint64_t batches_tot = 0, steps = BUFSIZE / (STAT_NBINS - 1);
 		for (int b = 0 ; b < STAT_NBINS ; b++)
 		{
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 				"     %lu B to %lu B: %lu batches",
 				b*steps,
 				(b+1)*steps,
@@ -1072,7 +1073,7 @@ s_dbg_stats (struct s_data_t* sjob)
 			batches_tot += aiobuf->bufzone.st.batches[b];
 		}
 
-		logmsg (0, LOG_DEBUG,
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 			"     Wrote %lu batches (%lu repeated, "
 			"%lu skipped, %lu blocked)",
 			batches_tot,
@@ -1300,10 +1301,9 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	/* Check for sequence error. */
 	if (missed > 0)
 	{
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-		logmsg (0, LOG_DEBUG, "Missed %hu at frame #%lu",
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+			"Missed %hu at frame #%lu",
 			missed, sjob->st.frames - 1);
-#endif
 		fidx.ftype.SEQ = 1;
 	}
 
@@ -1351,7 +1351,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		const struct tespkt_event_type* etype = tespkt_etype (pkt);
 		uint8_t pt = linear_etype (etype->PKT, etype->TR);
 		fidx.ftype.PT = pt;
-		if ( sjob->st.frames > 1 && 
+		if ( sjob->st.frames > 1 &&
 			( sjob->prev_etype != pt || sjob->prev_esize != esize ) )
 		{
 			fidx.changed = 1;
@@ -1410,7 +1410,7 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	bool interrupts_stream = ( ! continues_stream &&
 		sjob->cur_stream.size > 0 );
 
-	if (interrupts_stream) 
+	if (interrupts_stream)
 	{
 		sjob->cur_stream.discard = true;
 		sjob->cur_stream.size = 0;
@@ -1420,10 +1420,10 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			(is_trace && ! sjob->cur_stream.is_event) ||
 			(is_mca && sjob->cur_stream.is_event) ||
 			( ! is_trace && ! is_mca ) );
-#if DEBUG_LEVEL >= LETS_GET_NUTS
+
 		if (missed == 0)
 		{ /* should only happen in case of FPGA fault */
-			logmsg (0, LOG_NOTICE,
+			logmsg (0, LOG_DEBUG + DBG_FEELING_LUCKY,
 				"Received a%s %sframe (#%lu) "
 				"while a %s was ongoing",
 				is_mca ? " histogram" : (
@@ -1435,7 +1435,6 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 				sjob->cur_stream.is_event ?
 				"trace" : "histogram");
 		}
-#endif
 	}
 
 	if (starts_stream || continues_stream)
@@ -1467,12 +1466,10 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		sjob->cur_stream.cur_size += paylen;
 		if (sjob->cur_stream.cur_size > sjob->cur_stream.size)
 		{ /* extra bytes */
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-			logmsg (0, LOG_DEBUG, "Extra %s data "
-				"at frame #%lu",
+			logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
+				"Extra %s data at frame #%lu",
 				is_mca ? "histogram" : "trace",
 				sjob->st.frames - 1);
-#endif
 			sjob->cur_stream.size = 0;
 			sjob->cur_stream.cur_size = 0;
 			sjob->cur_stream.discard = true;
@@ -1511,13 +1508,11 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 
 			if ( ! sjob->cur_stream.discard )
 			{
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-				logmsg (0, LOG_DEBUG,
+				logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
 					"Received a non-header %s frame (#%lu) "
 					"while no stream was ongoing",
 					is_mca ? "histogram" : "trace",
 					sjob->st.frames - 1);
-#endif
 				sjob->cur_stream.discard = true;
 			}
 		}
@@ -1566,7 +1561,7 @@ done:
 		logmsg (0, LOG_INFO,
 			"Finished writing %lu ticks and %lu events",
 			sjob->st.ticks, sjob->st.events);
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		s_dbg_stats (sjob);
 #endif
 		/* Close stream and index files. */

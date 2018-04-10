@@ -23,7 +23,7 @@
 
 int main (void)
 {
-	set_verbose (true);
+	set_verbose (1);
 
 	/* Open the data file. */
 	int fd = open (DATAFILE, O_RDONLY);

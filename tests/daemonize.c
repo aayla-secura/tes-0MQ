@@ -15,7 +15,14 @@ int foo (void* arg)
 /* Check the system logger to confirm all is ok */
 int main (void)
 {
-	set_verbose (true);
+	for (int vlevel = 0; vlevel < 3; vlevel++)
+	{
+		logmsg (0, LOG_INFO, "Setting verbose level to %d", vlevel);
+		set_verbose (vlevel);
+		for (int l = 0; l < 3; l++)
+			logmsg (0, LOG_DEBUG + l, "debug level %d", l);
+	}
+
 	int rc = daemonize ("/tmp/test.pid", foo, NULL, 5);
 	if (rc != 0)
 	{
@@ -27,5 +34,13 @@ int main (void)
 	logmsg (0, LOG_INFO, "main here %d", getpid());
 	sleep (2);
 	logmsg (0, LOG_INFO, "main done");
+
+	for (int vlevel = 0; vlevel < 3; vlevel++)
+	{
+		logmsg (0, LOG_INFO, "Setting verbose level to %d", vlevel);
+		set_verbose (vlevel);
+		for (int l = 0; l < 3; l++)
+			logmsg (0, LOG_DEBUG + l, "debug level %d", l);
+	}
 	return 0;
 }

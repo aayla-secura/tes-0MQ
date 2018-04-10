@@ -5,10 +5,8 @@
  */
 struct s_data_t
 {
-#if DEBUG_LEVEL >= VERBOSE
 	uint64_t      published; // number of published histograms
 	uint64_t      dropped;   // number of aborted histograms
-#endif
 	uint16_t      nbins;     // total number of bins in histogram
 	uint16_t      cur_nbins; // number of received bins so far
 #ifndef TES_MCASIZE_BUG
@@ -95,12 +93,10 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		{
 			/* Drop the previous one. */
 			s_clear (hist);
-#if DEBUG_LEVEL >= VERBOSE
 			hist->dropped++;
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 				"Discarded %lu out of %lu histograms so far",
 				hist->dropped, hist->dropped + hist->published);
-#endif
 		}
 
 		dbg_assert (hist->nbins == 0);
@@ -148,17 +144,15 @@ task_hist_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 			return TASK_ERROR;
 		}
 
-#if DEBUG_LEVEL >= VERBOSE
 		if ((unsigned int)rc != hist->cur_size)
-			logmsg (errno, LOG_ERR,
+			logmsg (errno, LOG_DEBUG + DBG_VERBOSE,
 				"Histogram is %lu bytes long, sent %u",
 				hist->cur_size, rc);
 
 		hist->published++;
 		if (hist->published % 50 == 0)
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 				"Published 50 more histogtams");
-#endif
 
 		s_clear (hist);
 		return 0;

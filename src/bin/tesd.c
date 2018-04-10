@@ -158,7 +158,9 @@ s_usage (const char* self)
 		            "                      "            "Default is 0.\n"
 		ANSI_FG_RED "    -g <n>            " ANSI_RESET "If <n> > 0 setgid to <n>.\n"
 		            "                      "            "Default is 0.\n"
-		ANSI_FG_RED "    -v                " ANSI_RESET "Print debugging messages.\n",
+		ANSI_FG_RED "    -v                " ANSI_RESET "Print debugging messages.\n"
+		            "                      "            "Giving this option more than once will\n"
+		            "                      "            "print even more information.\n",
 		self, UPDATE_INTERVAL
 		);
 	exit (EXIT_FAILURE);
@@ -580,13 +582,13 @@ cleanup:
 int
 main (int argc, char **argv)
 {
-#if DEBUG_LEVEL >= CAUTIOUS
+#if DEBUG_LEVEL > NO_DEBUG
 	tespkt_self_test ();
 #endif
 
 	/* Process command-line options. */
 	bool be_daemon = true;
-	bool be_verbose = false;
+	int verbose_level = 0;
 	int opt;
 	char* buf = NULL;
 	struct data_t data = {0};
@@ -629,7 +631,7 @@ main (int argc, char **argv)
 				be_daemon = false;
 				break;
 			case 'v':
-				be_verbose = true;
+				verbose_level++;
 				break;
 			case 'h':
 			case '?':
@@ -651,7 +653,7 @@ main (int argc, char **argv)
 	}
 
 	assert (data.confdir[strlen (data.confdir) - 1] == '/');
-	set_verbose (be_verbose);
+	set_verbose (verbose_level);
 	char log_id[32] = {0};
 	if (be_daemon)
 		snprintf (log_id, sizeof (log_id), "[Coordinator] ");

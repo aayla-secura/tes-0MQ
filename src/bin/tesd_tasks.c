@@ -859,8 +859,8 @@ cleanup:
 	if (self->pkt_handler == NULL)
 		return;
 
-#if DEBUG_LEVEL >= VERBOSE
-	logmsg (0, LOG_DEBUG,
+#if DEBUG_LEVEL > NO_DEBUG
+	logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 		"Woken up %lu times, %lu when not active, "
 		"%lu when no new packets, dispatched "
 		"%lu rings, %lu packets missed",
@@ -871,7 +871,7 @@ cleanup:
 		self->dbg_stats.pkts.missed
 		);
 	for (int r = 0; r < NUM_RINGS; r++)
-		logmsg (0, LOG_DEBUG,
+		logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 			"Ring %d received: %lu", r,
 			self->dbg_stats.pkts.rcvd_in[r]);
 #endif
@@ -908,22 +908,22 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 	 * the PAIR socket and coming with a slight delay. */
 	if ( ! self->active )
 	{
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		if (self->dbg_stats.wakeups_inactive == 0)
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_VERBOSE,
 				"First inactive wakeup");
 		self->dbg_stats.wakeups_inactive++;
 #endif
 		self->busy = false;
 		return 0;
 	}
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	self->dbg_stats.wakeups++;
 #endif
 	// self->busy = true;
 
 	/* Process packets. */
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	bool first = true;
 #endif
 	while (true)
@@ -937,13 +937,13 @@ s_sig_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		 */
 		if (next_ring_id < 0)
 		{
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 			if (first)
 				self->dbg_stats.wakeups_false++;
 #endif
 			break;
 		}
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		first = false;
 #endif
 
@@ -979,11 +979,7 @@ s_die_hn (zloop_t* loop, zsock_t* reader, void* ignored)
 	dbg_assert (ignored == NULL);
 
 	int sig = zsock_wait (reader);
-	// if (sig == -1)
-	// { /* this shouldn't happen */
-	//   logmsg (0, LOG_DEBUG, "Receive interrupted");
-	//   return -1;
-	// }
+	assert (sig != -1); /* we don't get interrupted */
 
 	if (sig == SIG_DIED)
 	{
@@ -1026,10 +1022,11 @@ s_sub_hn (zloop_t* loop, zsock_t* reader, void* self_)
 		return 0;
 	}
 
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	zframe_t* f = zmsg_first (msg);
 	char* hexstr = zframe_strhex (f);
-	logmsg (0, LOG_DEBUG, "Got message %s", hexstr);
+	logmsg (0, LOG_DEBUG + DBG_VERBOSE,
+		"Got message %s", hexstr);
 	zstr_free (&hexstr);
 #endif
 
@@ -1158,8 +1155,7 @@ s_task_stop (task_t* self)
 	assert (self != NULL);
 	if (self->shim == NULL)
 	{
-		logmsg (0, LOG_DEBUG,
-			"Task had already exited");
+		logmsg (0, LOG_DEBUG, "Task had already exited");
 		return;
 	}
 
@@ -1260,18 +1256,16 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 
 	tes_ifring* rxring = tes_if_rxring (self->ifd, ring_id);
 	dbg_assert ( self->heads[ring_id] != tes_ifring_tail (rxring) );
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	self->dbg_stats.rings_dispatched++;
-#if DEBUG_LEVEL >= LETS_GET_NUTS
 	if (missed)
 	{
 		tespkt* pkt = (tespkt*) tes_ifring_buf (
 			rxring, self->heads[ring_id]);
-		logmsg (0, LOG_DEBUG,
+		logmsg (0, LOG_DEBUG + DBG_LETS_GET_NUTS,
 			"Dispatching ring %hu: missed %hu at frame %hu",
 			ring_id, missed, tespkt_fseq (pkt));
 	}
-#endif
 #endif
 
 	/*
@@ -1279,7 +1273,7 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 	 * dispatch was called with this ring_id.
 	 */
 	uint16_t fseq_gap = 0;
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 	bool first = true;
 #endif
 	for ( ; self->heads[ring_id] != tes_ifring_tail (rxring);
@@ -1298,23 +1292,21 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 		 * Check packet.
 		 */
 		int err = tespkt_is_valid (pkt);
-#if DEBUG_LEVEL >= VERBOSE
 		if (err != 0)
 		{
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_FEELING_LUCKY,
 				"Packet invalid, error is 0x%x", err);
 		}
-#endif
+
 		uint16_t len =
 			tes_ifring_len (rxring, self->heads[ring_id]);
 		uint16_t flen = tespkt_flen (pkt);
 		if (flen > len)
 		{
-#if DEBUG_LEVEL >= VERBOSE
-			logmsg (0, LOG_DEBUG,
+			logmsg (0, LOG_DEBUG + DBG_FEELING_LUCKY,
 				"Packet too long (header says %hu, "
 				"ring slot is %hu)", flen, len);
-#endif
+
 			err |= TES_EETHLEN;
 			flen = len;
 		}
@@ -1322,7 +1314,7 @@ s_task_dispatch (task_t* self, zloop_t* loop,
 
 		uint16_t cur_fseq = tespkt_fseq (pkt);
 		fseq_gap = cur_fseq - self->prev_fseq - 1;
-#if DEBUG_LEVEL >= VERBOSE
+#if DEBUG_LEVEL > NO_DEBUG
 		if (first)
 			dbg_assert (fseq_gap == missed);
 		first = false;

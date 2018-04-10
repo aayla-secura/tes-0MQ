@@ -79,16 +79,22 @@ int fork_and_run (daemon_fn* initializer, daemon_fn* action,
  * Print formatted messages of a given priority (one of syslog's
  * levels.). If errnum is not 0, error description will be appended.
  *
+ * priority may be > LOG_DEBUG (numerically highest valid syslog
+ * level), in which case it is treated as LOG_DEBUG but the process'
+ * verbosity level determins if the message is printed at all.
+ *
  * When running as a daemon all messages are sent to syslog with the
  * requested priority.
  * When running in foreground they are sent to either stdout or
  * stderr, depending on the verbosity level:
- *   if verbose is false, warnings and errors are sent to stderr,
- *     informational messages to stdout;
- *   if verbose is true, debugging messages are sent to stderr, all
- *     others to stdout.
+ *   if verbosity level == 0, warnings and errors are sent to stderr,
+ *     other messages to stdout;
+ *   if verbosity level > 0, debugging messages are sent to stderr,
+ *     all others to stdout.
  *
- * If verbose is false, debugging messages are always suppressed.
+ * Messages of priority = LOG_DEBUG + n are always suppressed if
+ * verbosity level is <= n. I.e. verbosity = 0 suppresses all
+ * debugging messages.
  *
  * Messages may be prefixed by the current time, if a time format is set
  * via set_time_fmt.
@@ -120,13 +126,11 @@ char* set_time_fmt (const char* fmt);
 char* set_logid (char* id);
 
 /*
- * Set or get verbosity. It is not thread-specific.
- * If be_verbose < 0,  the current value is returned.
- * If be_verbose == 0, debugging messages are suppressed, 0 is
- * returned.
- * If be_verbose > 0,  they will be printed, 1 is returned.
+ * Set or get verbosity level. It is not thread-specific.
+ * If be_verbose < 0, value is unchanged.
+ * Returns the set value.
  */
-bool set_verbose (bool be_verbose);
+int set_verbose (int level);
 
 /*
  * Returns 1 is process has been daemonized (using damonize).

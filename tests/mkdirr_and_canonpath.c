@@ -4,7 +4,7 @@
 
 int main (int argc, char *argv[])
 {
-	set_verbose (true);
+	set_verbose (1);
 	if (argc != 6)
 		return -1;
 

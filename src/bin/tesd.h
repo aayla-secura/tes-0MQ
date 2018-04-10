@@ -22,14 +22,19 @@
 // #define CZMQ_BUILD_DRAFT_API
 #include <czmq.h>
 
-/* Debug levels. */
-#define NO_DEBUG        0
-#define CAUTIOUS        1
-#define TESTING         5
-#define VERBOSE        10
-#define FEELING_LUCKY  30
-#define LETS_GET_NUTS  50 // Have you ever debugged with the devil
-                          // by the pale moon light?
+/*
+ * Verbosity levels. Added to LOG_DEBUG when calling logmsg.
+ */
+#define DBG_VERBOSE        1
+#define DBG_FEELING_LUCKY  2
+#define DBG_LETS_GET_NUTS  3 // Have you ever debugged with the devil
+                             // by the pale moon light?
+/*
+ * DEBUG_LEVEL enables/disables certain checks that may affect performance (not
+ * benchmarked).
+ */
+#define NO_DEBUG  0
+#define TESTING   1
 #ifndef DEBUG_LEVEL
 #  define DEBUG_LEVEL TESTING
 #endif
