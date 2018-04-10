@@ -186,6 +186,10 @@
 #include "tesd_tasks_coordinator.h"
 
 static char s_config_dir[PATH_MAX]; // given by coordinator
+/* Config files are checked before reading/writing; they must be of
+ * the right length and include the right header. */
+#define TASK_CONF_MAGIC_LEN 8
+const char* s_conf_magic = "\x74\x65\x73\x63\x6f\x6e\x66\x00";
 
 static zactor_fn       s_task_shim;
 static zloop_reader_fn s_sig_hn;
@@ -202,11 +206,6 @@ static int  s_endp_sub_send (task_endp_t* endpoint, char cmd,
 static int  s_endp_sub_add (task_endp_t* endpoint, char* pattern);
 static int  s_endp_sub_del (task_endp_t* endpoint, char* pattern);
 static void s_free (void** item_p);
-
-/* Config files are checked before reading/writing; they must be of
- * the right length and include the right header. */
-#define TASK_CONF_MAGIC_LEN 8
-const char* s_conf_magic = "\x74\x65\x73\x63\x6f\x6e\x66\x00";
 
 /* ------------------------ THE TASK LIST ----------------------- */
 
@@ -567,6 +566,8 @@ task_conf (task_t* self, void* conf, size_t len, int cmd)
 
 	bool save = (cmd == TES_TASK_SAVE_CONF);
 	char conffile[PATH_MAX];
+	/* FIXME: generate name from task name, not id, so reordering of
+	 * tasks won't mess up configs. */
 	snprintf (conffile, PATH_MAX, "%s/task_%d.bin",
 		s_config_dir, self->id);
 	

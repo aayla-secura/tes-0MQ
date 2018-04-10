@@ -290,6 +290,11 @@ This interface publishes single-frame raw messages, each message
 contains a 16-byte header followed by all coincidences which occured
 between two ticks as one or more vectors.
 
+There are two REQ/REP configuration ports. If there are no subscribers
+configuration is applied immediately and is reflected in the response.
+Otherwise the configuration will be applied when the last subscriber
+leaves.
+
 #### Header
 
 The structure of the header is as follows:
