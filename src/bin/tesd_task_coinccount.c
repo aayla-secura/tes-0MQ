@@ -77,6 +77,9 @@ s_matches (coinc_vec_t* cvec, coinc_vec_t* pattern)
 	{
 		uint8_t v = (*cvec)[i];
 		uint8_t p = (*pattern)[i];
+#if DEBUG_LEVEL >= LETS_GET_NUTS
+		logmsg (0, LOG_DEBUG, " Count 0x%02hhx vs token 0x%02hhx", v, p);
+#endif
 		if (p == TOK_ANY)
 			continue;
 		else if (v == TES_COINC_TOK_UNKNOWN)
@@ -106,9 +109,12 @@ s_publish_subsc (task_t* self, struct s_subscription_t* subsc)
 	dbg_assert (subsc->active);
 #if DEBUG_LEVEL >= FEELING_LUCKY
 	logmsg (0, LOG_DEBUG,
-		"Publishing subscription '%s' with %u ticks",
+		"Publishing subscription '%s' with %u ticks and "
+		"%lu/%lu matches",
 		subsc->pattern_str,
-		subsc->counts.ticks);
+		subsc->counts.ticks,
+		subsc->counts.num_res_match,
+		subsc->counts.num_res);
 #endif
 
 	struct s_data_t* data = (struct s_data_t*) self->data;
@@ -207,8 +213,13 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	struct task_coinc_hdr_t* hdr = (struct task_coinc_hdr_t*)buf;
 	data->window = hdr->window;
 	data->cur_ticks += hdr->ticks;
-	bool next_global = (data->ticks > data->cur_ticks);
-	if (next_global)
+#if DEBUG_LEVEL >= LETS_GET_NUTS
+	logmsg (0, LOG_DEBUG, "%u/%u ticks",
+		data->cur_ticks, data->ticks);
+#endif
+
+	bool next_global = (data->ticks >= data->cur_ticks);
+	if (next_global || (hdr->ticks > 0 && data->ticks == 0))
 	{ /* waiting patterns using global sync will join now */
 		data->ticks = data->next_ticks;
 		data->cur_ticks = 0;
@@ -217,14 +228,11 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	if (data->ticks == 0)
 	{
 		dbg_assert (hdr->ticks == 0);
+		dbg_assert (data->cur_ticks == 0);
 		return 0; /* no ticks since activation */
 	}
 	dbg_assert (data->cur_ticks < data->ticks);
 	dbg_assert (data->ticks > 0);
-#if DEBUG_LEVEL >= LETS_GET_NUTS
-	logmsg (0, LOG_DEBUG, "%u/%u ticks",
-		data->cur_ticks, data->ticks);
-#endif
 
 	for (struct s_subscription_t* subsc = FIRST_SUB(self);
 		subsc != NULL; subsc = NEXT_SUB(self))
@@ -265,7 +273,7 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		{ /* 'else' so we don't count this batch of ticks for patterns
 				 that just joined */
 			subsc->counts.cur_ticks += hdr->ticks;
-			if (subsc->counts.cur_ticks > subsc->counts.ticks &&
+			if (subsc->counts.cur_ticks >= subsc->counts.ticks &&
 					s_publish_subsc (self, subsc) == TASK_ERROR)
 				return TASK_ERROR;
 		}
@@ -276,6 +284,10 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 			coinc_vec_t* cvec = (coinc_vec_t*)(buf + pos);
 			bool mp = (*cvec)[0] & TES_COINC_VEC_FLAG_BAD;
 			bool unres = (*cvec)[0] & TES_COINC_VEC_FLAG_UNRESOLVED;
+#if DEBUG_LEVEL >= LETS_GET_NUTS
+			logmsg (0, LOG_DEBUG, "Vec: unresolved: %s, MP: %s",
+				unres ? "yes" : "no", mp ? "yes" : "no");
+#endif
 
 			if (unres)
 			{
@@ -288,6 +300,9 @@ task_coinccount_pub_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 
 			if (s_matches (cvec, &subsc->pattern))
 			{
+#if DEBUG_LEVEL >= LETS_GET_NUTS
+				logmsg (0, LOG_DEBUG, "  MATCH ");
+#endif
 				subsc->counts.num_res_match++;
 				if ( ! mp )
 					subsc->counts.num_res_match_noMP++;
@@ -373,7 +388,10 @@ task_coinccount_sub_process (const char* pattern_str, void** subsc_p)
 		if (*p == TES_COINCCOUNT_SEP_SYM)
 		{
 			if (symbolic && tok == 0)
-				tok = TES_COINCCOUNT_SYM_ANY;
+				tok = TOK_ANY;
+#if DEBUG_LEVEL >= VERBOSE
+			logmsg (0, LOG_DEBUG, "Token is 0x%02hhx", tok);
+#endif
 			subsc.pattern[ntoks] = tok;
 			ntoks++;
 			tok = 0;
@@ -437,13 +455,17 @@ task_coinccount_sub_process (const char* pattern_str, void** subsc_p)
 		return 0;
 	}
 	if (symbolic && tok == 0)
-		tok = TES_COINCCOUNT_SYM_ANY; /* nothing after last separator */
+		tok = TOK_ANY; /* nothing after last separator */
+#if DEBUG_LEVEL >= VERBOSE
+	else
+		logmsg (0, LOG_DEBUG, "Token is 0x%02hhx", tok);
+#endif
 	subsc.pattern[ntoks] = tok;
 	ntoks++;
 
 	/* Add missing trailing 'X's. */
 	for (; ntoks < TES_NCHANNELS; ntoks++)
-		subsc.pattern[ntoks] = TES_COINCCOUNT_SYM_ANY;
+		subsc.pattern[ntoks] = TOK_ANY;
 
 	/* Read tick number. */
 	char* buf;
