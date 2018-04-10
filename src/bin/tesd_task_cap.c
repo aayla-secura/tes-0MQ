@@ -239,7 +239,7 @@ struct s_data_t
 	{ /* given by client */
 		uint64_t min_ticks;   // cpature at least that many ticks
 		uint64_t min_events;  // cpature at least that many events
-		uint8_t  ovrwtmode;   // TES_H5_OVRT_*, see hdf5conv.h
+		uint8_t  ovrwtmode;   // HDF5CONV_OVRT_*, see hdf5conv.h
 		uint8_t  async;       // copy data to hdf5 in the background
 		uint8_t  capmode;     // only convert a previous capture
 		char*    basefname;   // datafiles will be
@@ -361,16 +361,16 @@ s_is_req_valid (struct s_data_t* sjob)
 		{
 			logmsg ((errno == ENOMEM) ? 0 : errno, LOG_ERR,
 				"Cannot allocate memory");
-			return TES_CAP_REQ_EFAIL;
+			return TES_CAP_REQ_EINIT;
 		}
 		sjob->measurement[0] = '\0';
 	}
 
 	switch (sjob->ovrwtmode)
 	{
-		case TES_H5_OVRWT_NONE:
-		case TES_H5_OVRWT_RELINK:
-		case TES_H5_OVRWT_FILE:
+		case HDF5CONV_OVRWT_NONE:
+		case HDF5CONV_OVRWT_RELINK:
+		case HDF5CONV_OVRWT_FILE:
 			break;
 		default:
 			logmsg (0, LOG_ERR, "Invalid overwrite mode");
@@ -408,7 +408,7 @@ s_is_req_valid (struct s_data_t* sjob)
 	sjob->noconvert = (statusonly || sjob->capmode == TES_CAP_CAPONLY);
 
 	/* Should we overwrite data files. */
-	sjob->nooverwrite = (sjob->ovrwtmode == TES_H5_OVRWT_NONE);
+	sjob->nooverwrite = (sjob->ovrwtmode == HDF5CONV_OVRWT_NONE);
 
 	return TES_CAP_REQ_OK;
 }
@@ -434,7 +434,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
 	{
 		logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
 			"Cannot construct filename for capture directory");
-		return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+		return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
 	}
 
 	/* Statistics file. */
@@ -445,7 +445,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
 	{
 		logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
 			"Cannot construct filename for stat file");
-		return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+		return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
 	}
 	char* tmpfname_p = s_canonicalize_path (
 		tmpfname, sjob->statfilename, sjob->nocapture);
@@ -472,7 +472,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
 		{
 			logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
 				"Cannot construct filename for hdf5 file");
-			return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+			return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
 		}
 		tmpfname_p = s_canonicalize_path (
 			tmpfname, sjob->hdf5filename, false);
@@ -496,7 +496,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
 			logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
 				"Cannot construct filename for dataset %s",
 				s_dsets[s].extension);
-			return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+			return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
 		}
 		tmpfname_p = s_canonicalize_path (
 			tmpfname, aiobuf->filename, false);
@@ -550,7 +550,7 @@ s_open (struct s_data_t* sjob, mode_t fmode)
 			{
 				logmsg (errno, LOG_ERR,
 					"Could not open the capture files");
-				return TES_CAP_REQ_EFAIL;
+				return TES_CAP_REQ_EINIT;
 			}
 		}
 	}
@@ -668,10 +668,15 @@ s_conv_data (struct s_data_t* sjob)
 	};
 
 	int rc = hdf5_conv (&creq);
-	if (rc != TES_CAP_REQ_OK)
+	if (rc == HDF5CONV_REQ_EFIN)
+		return TES_CAP_REQ_EFIN;
+	else if (rc != HDF5CONV_REQ_OK)
+	{
 		logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
+		return TES_CAP_REQ_ECONV;
+	}
 
-	return rc;
+	return TES_CAP_REQ_OK;
 }
 
 /*
@@ -703,7 +708,7 @@ s_stats_read (struct s_data_t* sjob)
 	{
 		logmsg (errno, LOG_ERR, "Could not open stats file");
 		/* The stat file is ensured to be present at this point. */
-		return TES_CAP_REQ_EFAIL;
+		return TES_CAP_REQ_EINIT;
 	}
 
 	off_t rc = read (sjob->statfd, &sjob->st, STAT_LEN);
@@ -713,7 +718,7 @@ s_stats_read (struct s_data_t* sjob)
 	if (rc != STAT_LEN)
 	{
 		logmsg (errno, LOG_ERR, "Could not read stats");
-		return TES_CAP_REQ_EFAIL;
+		return TES_CAP_REQ_EINIT;
 	}
 	
 	return TES_CAP_REQ_OK;
@@ -1239,7 +1244,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		if (rc == -1)
 		{
 			logmsg (errno, LOG_ERR, "Could not delete stat file");
-			s_send_err (sjob, endpoint, TES_CAP_REQ_EFAIL);
+			s_send_err (sjob, endpoint, TES_CAP_REQ_EINIT);
 
 			s_close (sjob);
 			return 0;

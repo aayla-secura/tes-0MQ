@@ -40,30 +40,41 @@
  */
 struct hdf5_dset_desc_t
 {
-	char*   dsetname; /* dataset name */
-	off_t   offset;   /* from beginning of file */
-	ssize_t length;   /* how many bytes to copy to dataset */
-	char*   filename; /* /path/to/<datafile> */
-	void*   buffer;   /* address of mmapped data */
+	char*   dsetname; // dataset name
+	off_t   offset;   // from beginning of file
+	ssize_t length;   // how many bytes to copy to dataset
+	char*   filename; // /path/to/<datafile>
+	void*   buffer;   // address of mmapped data
 };
 
 struct hdf5_conv_req_t
 {
-	char*   filename;  /* /path/to/<hdf5file> */
-	char*   group;     /* group name under root group /<RG> */
-	struct  hdf5_dset_desc_t* dsets; /* an array of datasets */
-	uint8_t num_dsets; /* how many elements in datasets array */
-	uint8_t ovrwtmode; /* see api.h */
-	bool    async;     /* return after opening files,
-	                    * convert in background */
+	char*   filename;  // /path/to/<hdf5file>
+	char*   group;     // group name under root group /<RG>
+	struct  hdf5_dset_desc_t* dsets; // an array of datasets
+	uint8_t num_dsets; // how many elements in datasets array
+#define HDF5CONV_OVRWT_NONE   0 // error if /<RG>/<group> exists
+#define HDF5CONV_OVRWT_RELINK 1 // only move existing group to
+                                // /<RG>/overwritten/<group>_<timestamp>
+#define HDF5CONV_OVRWT_FILE   2 // overwrite entire hdf5 file
+
+	uint8_t ovrwtmode;
+	bool    async;     // return after opening files,
+	                   // convert in background
 };
 
 /*
  * Open/create creq->filename, create/overwrite group
  * <root_group>/creq->group. For each dataset mmap the file.
  * <root_group> is currently "capture".
- * Returns 0 on success, -1 on error.
+ * Returns HDF5CONV_REQ_*
  */
+#define HDF5CONV_REQ_OK     0 // accepted (async) or all OK (non-async)
+#define HDF5CONV_REQ_EINV   1 // malformed request
+#define HDF5CONV_REQ_EABORT 2 // file/group exists and not overwriting
+#define HDF5CONV_REQ_EINIT  3 // error initializing
+#define HDF5CONV_REQ_ECONV  4 // error while converting
+#define HDF5CONV_REQ_EFIN   5 // error deleting data files
 int hdf5_conv (struct hdf5_conv_req_t* creq);
 
 #endif

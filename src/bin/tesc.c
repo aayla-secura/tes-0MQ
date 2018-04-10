@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <czmq.h>
 #include "api.h"
+#include "hdf5conv.h"
 #include "ansicolors.h"
 
 #ifndef PATH_MAX
@@ -1013,9 +1014,9 @@ s_remote_save_all (const char* server, const char* filename,
 				}
 
 				if (opt == 'r')
-					ovrwtmode = TES_H5_OVRWT_RELINK;
+					ovrwtmode = HDF5CONV_OVRWT_RELINK;
 				else
-					ovrwtmode = TES_H5_OVRWT_FILE;
+					ovrwtmode = HDF5CONV_OVRWT_FILE;
 				break;
 			case 'c':
 			case 'C':
@@ -1064,9 +1065,9 @@ s_remote_save_all (const char* server, const char* filename,
 				(capmode == TES_CAP_CAPONLY ? "capture only" :
 				"capture"),
 			filename, measurement,
-			(ovrwtmode == TES_H5_OVRWT_FILE) ?
+			(ovrwtmode == HDF5CONV_OVRWT_FILE) ?
 				"Will overwrite file.\n" :
-				(ovrwtmode == TES_H5_OVRWT_RELINK) ?
+				(ovrwtmode == HDF5CONV_OVRWT_RELINK) ?
 					"Will backup measurement group.\n" : "",
 			min_ticks, min_events);
 	}
@@ -1126,7 +1127,7 @@ s_remote_save_all (const char* server, const char* filename,
 		case TES_CAP_REQ_EPERM:
 			printf ("Filename is not allowed\n");
 			break;
-		case TES_CAP_REQ_EFAIL:
+		case TES_CAP_REQ_EINIT:
 			printf ("Unknown error while initializing\n\n");
 			break;
 		case TES_CAP_REQ_EWRT:

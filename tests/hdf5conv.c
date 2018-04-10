@@ -15,9 +15,9 @@
 #define DATAFILE "/media/data/testcap"
 #define H5FNAME "/media/data/test.hdf5"
 #define MEASUREMENT "foo"
-// #define OVRWTMODE TES_H5_OVRWT_NONE
-#define OVRWTMODE TES_H5_OVRWT_RELINK
-// #define OVRWTMODE TES_H5_OVRWT_FILE
+// #define OVRWTMODE HDF5CONV_OVRWT_NONE
+#define OVRWTMODE HDF5CONV_OVRWT_RELINK
+// #define OVRWTMODE HDF5CONV_OVRWT_FILE
 #define ASYNC false
 #define DAEMONIZE false
 
