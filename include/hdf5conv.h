@@ -52,13 +52,11 @@ struct hdf5_conv_req_t
 	char*   filename;  // /path/to/<hdf5file>
 	char*   group;     // group name under root group /<RG>
 	struct  hdf5_dset_desc_t* dsets; // an array of datasets
-	uint8_t num_dsets; // how many elements in datasets array
-#define HDF5CONV_OVRWT_NONE   0 // error if /<RG>/<group> exists
-#define HDF5CONV_OVRWT_RELINK 1 // only move existing group to
-                                // /<RG>/overwritten/<group>_<timestamp>
-#define HDF5CONV_OVRWT_FILE   2 // overwrite entire hdf5 file
-
-	uint8_t ovrwtmode;
+	size_t  num_dsets; // how many elements in datasets array
+	bool    use_existing; // insert group into existing file
+	                      // instead of overwriting it
+	bool    overwrite; // otherwise abort if existing
+	bool    backup;    // rename file/group before overwriting it
 	bool    async;     // return after opening files,
 	                   // convert in background
 };
