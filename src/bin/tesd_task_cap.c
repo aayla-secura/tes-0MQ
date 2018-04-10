@@ -1637,6 +1637,7 @@ task_cap_init (task_t* self)
 		FTYPE_TRACE_DPTR);
 
 	static struct s_data_t sjob;
+	self->data = &sjob;
 	sjob.statfd = -1;
 
 	int rc = 0;
@@ -1652,7 +1653,6 @@ task_cap_init (task_t* self)
 		return -1;
 	}
 
-	self->data = &sjob;
 	return 0;
 }
 

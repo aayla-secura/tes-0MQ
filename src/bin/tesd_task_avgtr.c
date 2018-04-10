@@ -205,7 +205,7 @@ task_avgtr_init (task_t* self)
 	assert (self != NULL);
 
 	static struct s_data_t trace;
-
 	self->data = &trace;
+
 	return 0;
 }

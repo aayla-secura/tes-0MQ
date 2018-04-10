@@ -174,9 +174,9 @@ task_hist_init (task_t* self)
 	assert (self != NULL);
 
 	static struct s_data_t hist;
-	hist.discard = true;
-
 	self->data = &hist;
+
+	hist.discard = true;
 	return 0;
 }
 

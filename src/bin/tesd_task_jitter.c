@@ -374,12 +374,12 @@ task_jitter_init (task_t* self)
 	assert (self->endpoints[ENDP_PUB].type == ZMQ_XPUB);
 
 	static struct s_data_t data;
+	self->data = &data;
 
 	/* Some defaults. */
 	data.conf.ticks = 5;
 	data.conf.ref_ch = 0;
 
-	self->data = &data;
 	return 0;
 }
 

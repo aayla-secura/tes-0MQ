@@ -195,7 +195,7 @@ task_info_init (task_t* self)
 		TES_INFO_ETYPE_TRACE_DPTR);
 
 	static struct s_data_t info;
-
 	self->data = &info;
+
 	return 0;
 }

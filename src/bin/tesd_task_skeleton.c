@@ -65,8 +65,8 @@ task__init (task_t* self)
 	assert (self != NULL);
 
 	static struct s_data_t data;
-
 	self->data = &data;
+
 	return 0;
 }
 
