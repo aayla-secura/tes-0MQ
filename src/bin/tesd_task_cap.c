@@ -589,9 +589,7 @@ s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode)
 	dbg_assert (aiobuf->bufzone.enqueued == 0);
 
 	/* If overwriting, unlink the file first to prevent permission
-	 * errors if owned by another user and to avoid writing outside of
-	 * root if data file is a symlink (it is not checked with
-	 * s_canonicalize_path). */
+	 * errors if owned by another user. */
 	if (! (fmode & O_EXCL))
 	{
 		int fok = access (aiobuf->filename, F_OK);
@@ -1375,11 +1373,10 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 		const struct tespkt_event_type* etype = tespkt_etype (pkt);
 		uint8_t pt = linear_etype (etype->PKT, etype->TR);
 		fidx.ftype.PT = pt;
-		if ( sjob->st.frames > 1 &&
-			( sjob->prev_etype != pt || sjob->prev_esize != esize ) )
-		{
+		if ( sjob->st.events > 0 &&
+				( sjob->prev_etype != pt || sjob->prev_esize != esize ) )
 			fidx.changed = 1;
-		}
+
 		sjob->prev_esize = esize;
 		sjob->prev_etype = pt;
 
@@ -1554,7 +1551,6 @@ task_cap_pkt_hn (zloop_t* loop, tespkt* pkt, uint16_t flen,
 	}
 	else
 	{ /* short event */
-		/* FIXME: check num events for dp trace */
 		sjob->st.events += tespkt_event_nums (pkt);
 	}
 
