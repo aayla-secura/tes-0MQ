@@ -178,6 +178,8 @@
  *   https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=219715
  * - Print debugging stats every UPDATE_INTERVAL via the
  *   coordinator.
+ * - add the zhashx_t subscriptions to a union with a zlistx_t and
+ *   allow tasks to choose a simple flat list.
  */
 
 #include "tesd_tasks.h"
@@ -575,9 +577,16 @@ task_conf (task_t* self, void* conf, size_t len, int cmd)
 		return -1;
 	}
 
+	ssize_t rc = 0;
 	if (cmd == TES_TASK_SAVE_CONF)
-		return write (fd, conf, len);
-	return read (fd, conf, len);
+		rc = write (fd, conf, len);
+	else
+		rc = read (fd, conf, len);
+
+	if ((size_t)rc != len)
+		logmsg (0, LOG_WARNING,
+			"Read unexpected number of bytes from config file: %lu", rc);
+	return rc;
 }
 
 int

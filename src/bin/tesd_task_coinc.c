@@ -140,6 +140,9 @@ s_check_conf (struct s_conf_t* conf)
 static int
 s_save_conf (task_t* self, struct s_conf_t* conf)
 {
+	dbg_assert (self != NULL);
+	assert (self->data != NULL);
+
 	if (s_check_conf (conf) == -1)
 		return ECONFINVAL;
 	struct s_data_t* data = (struct s_data_t*) self->data;
@@ -148,7 +151,7 @@ s_save_conf (task_t* self, struct s_conf_t* conf)
 
 	ssize_t rc = task_conf (self, conf, sizeof (struct s_conf_t),
 		TES_TASK_SAVE_CONF);
-	if (rc == -1 || (size_t)rc != sizeof (struct s_conf_t))
+	if ((size_t)rc != sizeof (struct s_conf_t))
 		return ECONFWR;
 
 	if ( ! self->active )
@@ -500,12 +503,12 @@ task_coinc_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 			"Setting measurement to %hhu, window to %hu",
 			conf.measurement, conf.window);
 
-	if (rc == ECONFWR)
-	{
-		logmsg (errno, LOG_WARNING,
-			"Could not save configuration");
-		// return TASK_ERROR;
-	}
+	// if (rc == ECONFWR)
+	// {
+	//   logmsg (errno, LOG_WARNING,
+	//     "Could not save configuration");
+	//   return TASK_ERROR;
+	// }
 	zsock_send (endpoint, TES_COINC_REP_PIC,
 		data->conf.window, data->conf.measurement);
 	
@@ -588,12 +591,12 @@ task_coinc_req_th_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 				meas, channel);
 		}
 
-		if (rc == ECONFWR)
-		{
-			logmsg (errno, LOG_WARNING,
-				"Could not save configuration");
-			// return TASK_ERROR;
-		}
+		// if (rc == ECONFWR)
+		// {
+		//   logmsg (errno, LOG_WARNING,
+		//     "Could not save configuration");
+		//   return TASK_ERROR;
+		// }
 	}
 	else
 	{
@@ -794,31 +797,21 @@ task_coinc_init (task_t* self)
 	static struct s_data_t data;
 	assert (sizeof (data.buf.coinc[0]) == CVEC_SIZE);
 	assert (sizeof (data.buf) == TES_COINC_MAX_SIZE);
+	self->data = &data;
 
 	struct s_conf_t conf = {0};
+	bool set_default = true;
 	ssize_t rc = task_conf (self, &conf, sizeof (struct s_conf_t),
 		TES_TASK_READ_CONF);
-	if (rc == 0)
-		return 0; /* config disabled */
-	
-	bool set_default = false;
-	if ((size_t)rc != sizeof (struct s_conf_t))
-	{
-		if (rc != -1)
-			logmsg (0, LOG_WARNING,
-				"Read unexpected number of bytes from config file: %lu", rc);
-		set_default = true;
-	}
-	else
+	if ((size_t)rc == sizeof (struct s_conf_t))
 	{
 		if (s_check_conf (&conf) == -1)
-		{
-			logmsg (0, LOG_WARNING,
-					"Read invalid configuration");
-			set_default = true;
-		}
+			logmsg (0, LOG_WARNING, "Read invalid configuration");
 		else
+		{
 			memcpy (&data.conf, &conf, sizeof (struct s_conf_t));
+			set_default = false;
+		}
 	}
 
 	if (set_default)
@@ -828,18 +821,17 @@ task_coinc_init (task_t* self)
 		conf.measurement = TES_COINC_MEAS_AREA;
 		rc = s_save_conf (self, &conf);
 		assert (rc != ECONFINVAL);
-		if (rc == ECONFWR)
-		{
-			logmsg (errno, LOG_WARNING,
-				"Could not save configuration");
-			// return TASK_ERROR;
-		}
+		// if (rc == ECONFWR)
+		// {
+		//   logmsg (errno, LOG_WARNING,
+		//     "Could not save configuration");
+		//   return TASK_ERROR;
+		// }
 	}
 
 	s_apply_conf (&data);
 	data.buf.hdr.nchannels = TES_NCHANNELS; // TODO
 
-	self->data = &data;
 	return 0;
 }
 
