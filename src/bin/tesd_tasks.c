@@ -203,6 +203,11 @@ static int  s_endp_sub_add (task_endp_t* endpoint, char* pattern);
 static int  s_endp_sub_del (task_endp_t* endpoint, char* pattern);
 static void s_free (void** item_p);
 
+/* Config files are checked before reading/writing; they must be of
+ * the right length and include the right header. */
+#define TASK_CONF_MAGIC_LEN 8
+const char* s_conf_magic = "\x74\x65\x73\x63\x6f\x6e\x66\x00";
+
 /* ------------------------ THE TASK LIST ----------------------- */
 
 #define NUM_TASKS 7
@@ -342,6 +347,7 @@ tasks_start (tes_ifdesc* ifd, zloop_t* c_loop, const char* confdir)
 {
 	assert (ifd != NULL);
 	assert (sizeof (s_tasks) == NUM_TASKS * sizeof (task_t));
+	assert (strlen (s_conf_magic) == TASK_CONF_MAGIC_LEN - 1);
 	
 	snprintf (s_config_dir, PATH_MAX, "%s", confdir);
 	
@@ -559,33 +565,81 @@ task_conf (task_t* self, void* conf, size_t len, int cmd)
 	if (s_config_dir == NULL)
 		return 0;
 
+	bool save = (cmd == TES_TASK_SAVE_CONF);
 	char conffile[PATH_MAX];
 	snprintf (conffile, PATH_MAX, "%s/task_%d.bin",
 		s_config_dir, self->id);
-	int flags = 0;
 	
-	if (cmd == TES_TASK_SAVE_CONF)
-		flags = O_CREAT | O_TRUNC | O_WRONLY;
+	int flags = 0;
+	if (save)
+		flags = O_CREAT | O_RDWR;
 	else
 		flags = O_RDONLY;
 
+	/* Open read-only now to do checks. */
 	int fd = open (conffile, flags, S_IRUSR | S_IWUSR);
 	if (fd == -1)
 	{
-		logmsg (errno, LOG_WARNING,
-			"Could not open config file '%s'", conffile);
-		return -1;
+		if (errno != ENOENT)
+		{
+			logmsg (errno, LOG_WARNING,
+					"Could not open config file '%s'", conffile);
+			return -1;
+		}
+		else if ( ! save )
+			return 0; /* no config to read from */
 	}
 
+	/* Check length. */
+	off_t fsize = lseek (fd, 0, SEEK_END);
+	if (fsize == 0)
+	{
+		if ( ! save )
+			return 0; /* no config to read from */
+
+		/* Write magic header. */
+		ssize_t rc = write (fd, s_conf_magic, TASK_CONF_MAGIC_LEN);
+		assert (rc == TASK_CONF_MAGIC_LEN);
+	}
+	else if ((size_t)fsize != len + TASK_CONF_MAGIC_LEN)
+	{
+		logmsg (0, LOG_WARNING,
+			"Config file is of wrong size: %lu, not %s",
+			fsize,
+			(cmd == TES_TASK_SAVE_CONF) ? "overwriting" : "reading");
+		return -1;
+	}
+	else
+	{
+		/* Check magic header. */
+		if (lseek (fd, 0, SEEK_SET) != 0)
+		{
+			logmsg (errno, LOG_ERR,
+				"Cannot seek back to config BOF");
+			return -1;
+		}
+
+		unsigned char magic[TASK_CONF_MAGIC_LEN] = {0};
+		ssize_t rc = read (fd, magic, TASK_CONF_MAGIC_LEN);
+		assert (rc == TASK_CONF_MAGIC_LEN);
+		if (memcmp (magic, s_conf_magic, TASK_CONF_MAGIC_LEN) != 0)
+		{
+			logmsg (0, LOG_WARNING,
+				"Invalid configuration file header, not %s",
+				(cmd == TES_TASK_SAVE_CONF) ? "overwriting" : "reading");
+			return -1;
+		}
+	}
+
+	assert (lseek (fd, 0, SEEK_CUR) == TASK_CONF_MAGIC_LEN);
+	/* Save/read config. */
 	ssize_t rc = 0;
 	if (cmd == TES_TASK_SAVE_CONF)
 		rc = write (fd, conf, len);
 	else
 		rc = read (fd, conf, len);
 
-	if ((size_t)rc != len)
-		logmsg (0, LOG_WARNING,
-			"Read unexpected number of bytes from config file: %lu", rc);
+	assert ((size_t)rc == len);
 	return rc;
 }
 
