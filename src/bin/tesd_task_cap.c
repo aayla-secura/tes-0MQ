@@ -425,21 +425,27 @@ s_task_construct_filenames (struct s_data_t* sjob)
 	assert (sjob->basefname != NULL);
 	assert (sjob->measurement != NULL);
 
-	char tmpfname[PATH_MAX];
-
-	/* Statistics file. */
-	int rc = snprintf (tmpfname, PATH_MAX, "%s%s%s",
+	char basedir[PATH_MAX] = {0};
+	int rc = snprintf (basedir, PATH_MAX, "%s%s%s",
 		sjob->basefname,
 		strlen (sjob->measurement) == 0 ? "" : "/",
 		sjob->measurement);
-	if (rc == -1 || (size_t)rc >= PATH_MAX)
+	if (rc < 0 || (size_t)rc >= PATH_MAX)
 	{
-		logmsg (rc == -1 ? errno : 0, LOG_ERR,
-			"Cannot construct filename for dataset %s%s%s",
-			sjob->basefname,
-			strlen (sjob->measurement) == 0 ? "" : "/",
-			sjob->measurement);
-		return TES_CAP_REQ_EFAIL;
+		logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
+			"Cannot construct filename for capture directory");
+		return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+	}
+
+	/* Statistics file. */
+	char tmpfname[PATH_MAX] = {0};
+	rc = snprintf (tmpfname, PATH_MAX, "%s/stat",
+		basedir);
+	if (rc < 0 || (size_t)rc >= PATH_MAX)
+	{
+		logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
+			"Cannot construct filename for stat file");
+		return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
 	}
 	char* tmpfname_p = s_canonicalize_path (
 		tmpfname, sjob->statfilename, sjob->nocapture);
@@ -461,7 +467,13 @@ s_task_construct_filenames (struct s_data_t* sjob)
 	tmpfname_p = NULL;
 	if (strchr (sjob->measurement, '/') == NULL)
 	{ /* make sure measurement group does not contain a slash. */
-		snprintf (tmpfname, PATH_MAX, "%s.hdf5", sjob->basefname);
+		rc = snprintf (tmpfname, PATH_MAX, "%s.hdf5", sjob->basefname);
+		if (rc < 0 || (size_t)rc >= PATH_MAX)
+		{
+			logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
+				"Cannot construct filename for hdf5 file");
+			return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+		}
 		tmpfname_p = s_canonicalize_path (
 			tmpfname, sjob->hdf5filename, false);
 	}
@@ -477,14 +489,21 @@ s_task_construct_filenames (struct s_data_t* sjob)
 		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
 		aiobuf->dataset = s_dsets[s].dataset;
 
-		rc = snprintf (aiobuf->filename, PATH_MAX, "%s.%s",
-			sjob->statfilename,
-			s_dsets[s].extension);
+		rc = snprintf (tmpfname, PATH_MAX, "%s/%s",
+			basedir, s_dsets[s].extension);
 		if (rc < 0 || (size_t)rc >= PATH_MAX)
 		{
-			logmsg (rc == -1 ? errno : 0, LOG_ERR,
-				"Cannot construct filename for dataset");
-			return TES_CAP_REQ_EFAIL;
+			logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
+				"Cannot construct filename for dataset %s",
+				s_dsets[s].extension);
+			return (rc < 0 ? TES_CAP_REQ_EFAIL : TES_CAP_REQ_EPERM);
+		}
+		tmpfname_p = s_canonicalize_path (
+			tmpfname, aiobuf->filename, false);
+		if (tmpfname_p == NULL)
+		{ /* it must have been a symlink to outside DATAROOT */
+			logmsg (errno, LOG_INFO, "Dataset filename is not valid");
+			return TES_CAP_REQ_EPERM;
 		}
 	}
 
@@ -529,8 +548,8 @@ s_open (struct s_data_t* sjob, mode_t fmode)
 			}
 			else
 			{
-				logmsg (errno, LOG_ERR, "Could not open files '%s.*'",
-					sjob->statfilename);
+				logmsg (errno, LOG_ERR,
+					"Could not open the capture files");
 				return TES_CAP_REQ_EFAIL;
 			}
 		}
