@@ -166,6 +166,9 @@ task_coinccount_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	if (ticks > 0)
 	{
 		data->next_ticks = ticks;
+		rc = task_conf (self, &ticks, sizeof (ticks), TES_TASK_SAVE_CONF);
+		// if ((size_t)rc != sizeof (ticks))
+		//   logmsg (errno, LOG_WARNING, "Could not save configuration");
 		zsock_send (endpoint, TES_COINCCOUNT_REP_PIC, ticks);
 	}
 	else
@@ -328,9 +331,22 @@ task_coinccount_init (task_t* self)
 	assert ((TOK_NUM & ~TES_COINC_FLAG_MASK) != TES_COINC_TOK_UNKNOWN);
 
 	static struct s_data_t data;
-	/* Default */
-	data.next_ticks = 1;
 	self->data = &data;
+
+	bool set_default = true;
+	ssize_t rc = task_conf (self, &data.next_ticks,
+		sizeof (data.next_ticks), TES_TASK_READ_CONF);
+	if ((size_t)rc == sizeof (data.next_ticks))
+	{
+		if (data.next_ticks == 0)
+			logmsg (0, LOG_WARNING, "Read invalid configuration");
+		else
+			set_default = true;
+	}
+
+	if (set_default)
+		data.next_ticks = 1;
+
 	return 0;
 }
 
