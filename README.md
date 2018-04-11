@@ -79,10 +79,53 @@ Valid requests have a picture of "4", replies have a picture of
 
 This interface accepts requests to save all received frames, until
 a given minimum number of tick frames and a given minimum number of
-events are seen, to a file (on the server). It can also return the
-status of a previous successful request.
+events are seen. It can also return the status of a previous successful
+request.
 
-Valid requests have a picture of "ss88111", replies have a picture of
+Files are saved on the server as `<basename>/<measurement>/<data_type>`,
+where `<basename>` and `<measurement>` are given in the request and
+`<data_type>` is one of the following:
+
+ * fidx: Frame index, one 16-byte entry per ethernet frame. Has the
+         following structure:
+   * `bytes[0:8]`:   Byte offset into corresponding `*`dat file
+   * `bytes[8:12]`:  Length in bytes of payload
+   * `bytes[12:14]`: Event size field
+   * `byte [14]`:    1 if event size/type differs from previous
+   * `byte [15]`:    Frame type:
+      * 0: peak
+      * 1: area
+      * 2: pulse
+      * 3: trace single
+      * 4: trace average
+      * 5: dot-product
+      * 6: trace dot-product
+      * 7: tick
+      * 8: mca
+      * 9: bad
+
+ * tidx: Tick index, one 8-byte entry per ethernet frame. Has the
+         following structure:
+   * `bytes[0:4]`: Frame number of first non-tick event after this tick
+   * `bytes[4:8]`: Frame number of last non-tick event before next tick
+
+ * midx/ridx: MCA/Trace index, one 16-byte entry per ethernet frame.
+              Has the following structure:
+   * `bytes[0:8]`:   Byte offset of header frame into mdat/edat
+   * `bytes[8:16]`:  Length in bytes of entire stream (header and
+                     following frames)
+
+ * bdat: Invalid frame payloads
+ * mdat: MCA payloads
+ * tdat: Tick payloads
+ * edat: Event payloads
+
+The request may ask for capture files to be converted to
+[HDF5](https://support.hdfgroup.org/HDF5/) format. If so, the hdf5
+file is named `<basename>.hdf5` and the `<measurement>` is a group
+inside it.
+
+Valid requests have a picture of "ss11881", replies have a picture of
 "18888888".
 
 At the moment we only handle one request at a time. Will block until
@@ -90,57 +133,87 @@ done.
 
 #### Message frames in a valid request
 
-1. **Filename**
+During capture `<basename>` refers to root capture directory and
+`<measurement>` refers to subdirectory.
 
-   Basename for the hdf5 file (no extension). It is relative to
-   a hardcoded root, leading slashes are ignored. Trailing slashes are
-   not allowed. Missing directories are created.
+During conversion `<basename>` refers to the hdf5 file (extension
+added by server) and `<measurement>` refers to hdf5 group.
+
+1. **Basename**
+
+   Basename for the capture directory and/or hdf5 file.
+   It is relative to a hardcoded root, leading slashes are ignored.
+   Trailing slashes are not allowed. Missing directories are created.
 
 2. **Measurement**
 
-   Name of hdf5 group relative to a hardcoded topmost group. It must
-   be non-empty if conversion is to be done (now or at a later
-   request).
+   Name of capture subdirectory and/or hdf5 group. The hdf5 group is
+   relative to a hardcoded subgroup of the root group.
 
-3. **No. of ticks**
+	 It must be non-empty if capture is to be done. If empty and
+	 conversion is requested, the entire `<basename>` directory is
+	 converted to hdf5 format.
+
+3. **Use existing directory/HDF5 file**
+
+   Use in combination with `<access mode>`.
+
+ * "0": if `<basename>` directory and/or hdf5 file exists, it is
+        renamed/removed
+
+ * "1": if `<basename>` directory and/or hdf5 file exists, it is not
+				removed; if `<measurement>` is an existing subdirectory it is
+				renamed/removed
+
+	 If `<use existing>` is false, in what follows `<entity>` refers to
+	 `<basename>`.
+
+	 If `<use existing>` is true, in what follows `<entity>` refers to
+	 `<measurement>`.
+
+   The value is read as an **unsigned** int8.
+
+4. **Access mode**
+
+   If `<entity>` exists:
+
+ * "0": rename `<entity>` to `<previous name>_<timestamp>`
+
+ * "1": delete `<entity>`
+
+ * "2": abort
+
+   The value is read as an **unsigned** int8.
+
+5. **No. of ticks**
 
    The server will record all packets (including ethernet header)
    until at least that many ticks are seen.
 
+   There would actually be one more ticks in the request, as the first
+   and last saved frame is always a tick.
+
    The value is read as an **unsigned** int64.
 
-4. **No. of events**
+6. **No. of events**
 
    The server will record all packets (including ethernet header)
    until at least that many non-tick events are seen.
 
    The value is read as an **unsigned** int64.
 
-5. **Write mode**
+   **If both no. of ticks and no. of events is zero, no capture is
+   performed.**
 
- * "0": do not overwrite hdf5 file or measurement group
+7. **Conversion mode**
 
- * "1": only rename existing measurement group
+ * "0": disable conversion
 
- * "2": overwrite entire hdf5 file
+ * "1": convert in background, i.e. reply when hdf5 conversion begins
 
-6. **Asyncronous conversion**
+ * "2": convert in foreground, i.e. reply when hdf5 conversion ends
 
- * "0": reply when hdf5 file is finalized
-
- * "1": reply when hdf5 conversion begins
-
-7. **Capture mode**
-
- * "0": auto: capture and convert unless only status is requested
-
- * "1": capture only: at least one of ticks or events must be given
-
- * "2": convert only: neither ticks nor events can be given
-
-If neither ticks nor events is given **and** capture mode is auto, the
-request is interpreted as a status request and the reply that was sent
-previously for this filename is resent.
+   The value is read as an **unsigned** int8.
 
 A job will only terminate at receiving a tick, and only if both the
 minimum number of ticks and the minimum number of non-tick events has
@@ -148,14 +221,31 @@ been recorded.
 
 As a consequence of how `zsock_recv` parses arguments, the client may
 omit frames corresponding to ignored arguments or arguments which are
-"0". Therefore to get a status of a file, only the filename and
-possibly measurement is required.
+"0".
+
+If both capture and conversion are disabled, the status of
+`<basename>`/`<measurement>` is returned. If `<measurement>` is
+missing, only the `<error status>` is returned (rest of frames are 0).
+
+If converting an entire directory (i.e. no capture is done and
+`<measurement>` is not given), `<use existing>` applies only to the
+first iteration. Subsequent measurement are always inserted in the
+same fileso that:
+	* if `<use existing>` is false: If `<access mode>` is abort,
+		entire operation is aborted. Otherwise the hdf5 file will be
+		renamed/deleted depending on `<access mode>` before starting.
+	* if `<use existing>` is true: If `<access mode>` is abort,
+		measurements present in the directory will be skipped if there's
+		already a group by that name in the hdf5 file. Otherwise the hdf5
+		group will be renamed/deleted depending on `<access mode>`.
 
 #### Message frames in a reply
 
-Some return codes, namely 1, 4 and 7 may indicate an error in either
-capture or conversion. This should be obvious from the time it took to
-receive the reply.
+Some return codes, namely 2, 4 and 7 may indicate an error in either
+capture or conversion. If capture was performed (and finished
+successfully) but conversion failed (anything other than 0 or 7), then
+6 is returned and captured files are retained. Otherwise, if only
+conversion was performed, the corresponding error code is returned.
 
 1. **Error status**
 
@@ -163,28 +253,26 @@ receive the reply.
         status of a valid previous job was read (in case of status
         request)
 
- * "1": capture request was not understood or
-        conversion request was not understood (capture was successful)
+ * "1": request was invalid
 
- * "2": file exists (in case of a no-overwrite request) or
-        file does not exist (in case of status request)
+ * "2": file/group exists and `<access mode>` is "abort" or
+        file/group does not exist and request was status-only
 
  * "3": filename did not resolve to an allowed path
 
  * "4": error initializing capture, nothing was written or
-        error initializing conversion (capture was successful)
+        error initializing conversion (if no capture was done)
 
  * "5": error while writing to files, some data was saved
 
  * "6": error while converting to hdf5 format
 
- * "7": error while writing stats (capture ok, conversion aborted) or
-        error deleting data files (conversion was successful)
+ * "7": error cleaning up (writing final stats or deleting data files)
 
 2. **No. of ticks written**
 
-   May be less than requested in case of an error during write. *Error status*
-   will be "5" in this case.
+	 May be less than requested in case of an error during write.
+	 `<Error status>` will be "5" in this case.
 
 
 3. **No. of non-tick events written**
@@ -343,11 +431,11 @@ since the last event.
 
 If more than one event occurs in the same channel during the
 coincidence the coincidence will contain more than one vector and is
-flagged as **UNRESOLVED**, see [flags](#coincidence-vector-flags).
+flagged as `<UNRESOLVED>`, see [flags](#coincidence-vector-flags).
 
 If the total delay since the start of the coincidence exceeds
 `<window>` all vectors in the coincidence are also flagged as
-**UNRESOLVED**. For example:
+`<UNRESOLVED>`. For example:
 
 ```
 no. of channels = 2; window > 10
@@ -475,7 +563,7 @@ messages with a picture "s2888888" as follows:
 
 8. **No. of unresolved coincidences**
 
-where "single peak" means the **BAD** flag is not set.
+where "single peak" means the `<BAD>` flag is not set.
 
 By default pattern counts are synchronized in that they start counting
 at the same tick and over the same globally configurable number of

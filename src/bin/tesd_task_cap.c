@@ -15,6 +15,7 @@
 
 #include "tesd_tasks.h"
 #include <aio.h>
+#include <dirent.h>
 #include "hdf5conv.h"
 
 #define FIDX_LEN 16 // frame index
@@ -27,7 +28,7 @@
 
 #define REQUIRE_FILENAME // for now we don't generate filename
 // #define SINGLE_FILE      // save all payloads to a single .dat file
-// #define SAVE_HEADERS     // save headers in .*dat files
+// #define SAVE_HEADERS     // save headers in *dat files
 // #define NO_BAD_FRAMES    // drop bad frames
 
 /* Employ a buffer zone for asynchronous writing. We memcpy frames
@@ -239,21 +240,17 @@ struct s_data_t
 	{ /* given by client */
 		uint64_t min_ticks;   // cpature at least that many ticks
 		uint64_t min_events;  // cpature at least that many events
-		uint8_t  ovrwtmode;   // HDF5CONV_OVRT_*, see hdf5conv.h
-		uint8_t  async;       // copy data to hdf5 in the background
-		uint8_t  capmode;     // only convert a previous capture
+		uint8_t  use_existing; // see hdf5conv.h or README
+		uint8_t  ovrwtmode;   // TES_CAP_OVRWT_*, see api.h or README
+		uint8_t  convmode;    // TES_CAP_CONV_*, see api.h or README
 		char*    basefname;   // datafiles will be
-		                      // <basefname>-<measurement>.*
+		                      // <basefname>/<measurement>/*
 		char*    measurement; // hdf5 group
 	};
-	/* next three are set for convenience */
-	bool     nocapture;   // request is for status or conversion
-	bool     noconvert;   // request is for status or capture only
-	bool     nooverwrite; // overwrite data files
+	/* following are set for convenience */
+	bool     capture;   // require capture
+	bool     convert;   // require conversion
 
-	char     hdf5filename[PATH_MAX]; // full path of hdf5 file
-	char     statfilename[PATH_MAX]; // full path of stats file
-	int      statfd;      // fd for the statis file
 	bool     recording;   // wait for a tick before starting capture
 };
 
@@ -267,19 +264,27 @@ static void  s_fin_aiobuf (struct s_aiobuf_t* aiobuf);
  * the very end (after processing is done).
  */
 /* Job initializer and finalizer. */
-static int  s_is_req_valid (struct s_data_t* sjob);
-static int  s_task_construct_filenames (struct s_data_t* sjob);
-static int  s_open (struct s_data_t* sjob, mode_t fmode);
+static int s_is_req_valid (struct s_data_t* sjob);
+static int s_snprintfname (char* buf, bool mustexist,
+	const char* format, ...);
+static int s_construct_aio_filenames (struct s_data_t* sjob,
+	const char* measurement);
+static int s_open (struct s_data_t* sjob, mode_t fmode,
+	bool backup);
 static void s_close (struct s_data_t* sjob);
-static int  s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode);
+static int  s_open_aiobuf (struct s_aiobuf_t* aiobuf,
+	mode_t fmode, bool backup);
 static void s_close_aiobuf (struct s_aiobuf_t* aiobuf);
 static int  s_conv_data (struct s_data_t* sjob);
+static int  s_conv_meas (struct s_data_t* sjob,
+	char* hdf5filename, char* measurement);
 static void s_send_err (struct s_data_t* sjob,
 	zsock_t* endpoint, uint8_t status);
 
 /* Statistics for a job. */
-static int s_stats_read (struct s_data_t* sjob);
-static int s_stats_write (struct s_data_t* sjob);
+#define STATS_READ  0
+#define STATS_WRITE 1
+static int s_stats_rdwr (struct s_data_t* sjo, int cmd);
 static int s_stats_send (struct s_data_t* sjob,
 	zsock_t* endpoint, uint8_t status);
 
@@ -348,14 +353,14 @@ s_is_req_valid (struct s_data_t* sjob)
 {
 	if (sjob->basefname == NULL)
 	{
-		logmsg (0, LOG_ERR, "Invalid request");
+		logmsg (0, LOG_INFO, "Invalid request");
 		return TES_CAP_REQ_EINV;
 	}
 
 	if (sjob->measurement == NULL)
 	{ /* The client did not send a frame for the measurement, default to
-		 * empty string. We free this later so it must be malloc'ed rather
-		 * than static. */
+		 * empty string so we don't worry about accessing the pointer. We
+		 * free this later so it must be malloc'ed rather than static. */
 		sjob->measurement = (char*) malloc (1);
 		if (sjob->measurement == NULL)
 		{
@@ -365,26 +370,31 @@ s_is_req_valid (struct s_data_t* sjob)
 		}
 		sjob->measurement[0] = '\0';
 	}
+	if (strchr (sjob->measurement, '/') != NULL)
+	{
+		logmsg (0, LOG_INFO, "Measurement name is invalid");
+		return TES_CAP_REQ_EINV;
+	}
 
 	switch (sjob->ovrwtmode)
 	{
-		case HDF5CONV_OVRWT_NONE:
-		case HDF5CONV_OVRWT_RELINK:
-		case HDF5CONV_OVRWT_FILE:
+		case TES_CAP_OVRWT_YES:
+		case TES_CAP_OVRWT_NO:
+		case TES_CAP_OVRWT_BKP:
 			break;
 		default:
-			logmsg (0, LOG_ERR, "Invalid overwrite mode");
+			logmsg (0, LOG_INFO, "Invalid overwrite mode");
 			return TES_CAP_REQ_EINV;
 	}
 
-	switch (sjob->capmode)
+	switch (sjob->convmode)
 	{
-		case TES_CAP_AUTO:
-		case TES_CAP_CAPONLY:
-		case TES_CAP_CONVONLY:
+		case TES_CAP_CONV_NONE:
+		case TES_CAP_CONV_ASYNC:
+		case TES_CAP_CONV_SYNC:
 			break;
 		default:
-			logmsg (0, LOG_ERR, "Invalid capture mode");
+			logmsg (0, LOG_INFO, "Invalid conversion mode");
 			return TES_CAP_REQ_EINV;
 	}
 
@@ -392,96 +402,71 @@ s_is_req_valid (struct s_data_t* sjob)
 	/* if min events was given, min ticks default to 1 */
 	if (sjob->min_events != 0 && sjob->min_ticks == 0)
 		sjob->min_ticks = 1;
-	sjob->nocapture = (sjob->min_ticks == 0);
-
-	if ( (sjob->capmode == TES_CAP_CONVONLY && ! sjob->nocapture) ||
-		(sjob->capmode == TES_CAP_CAPONLY && sjob->nocapture) )
-	{
-			logmsg (0, LOG_ERR, "Ambiguous request");
-			return TES_CAP_REQ_EINV;
-	}
-
-	bool statusonly = (sjob->nocapture &&
-		sjob->capmode != TES_CAP_CONVONLY);
+	sjob->capture = (sjob->min_ticks > 0);
 
 	/* Does it require conversion? */
-	sjob->noconvert = (statusonly || sjob->capmode == TES_CAP_CAPONLY);
+	sjob->convert = (sjob->convmode != TES_CAP_CONV_NONE);
 
-	/* Should we overwrite data files. */
-	sjob->nooverwrite = (sjob->ovrwtmode == HDF5CONV_OVRWT_NONE);
+	if (strlen (sjob->measurement) == 0)
+	{
+		if (sjob->capture)
+		{
+			logmsg (0, LOG_INFO, "Measurement is required");
+			return TES_CAP_REQ_EINV;
+		}
+	}
 
 	return TES_CAP_REQ_OK;
 }
 
 /*
- * Set the stats, hdf5, index and data filenames as well as the dataset
- * names.
+ * snprintf filename into buf. Canonicalizes it under DATAROOT.
+ * buf must be able to hold PATH_MAX chanracters.
+ * Returns TES_CAP_REQ_OK on success.
+ * Returns TES_CAP_REQ_EABORT/EPERM if filename resolution fails and
+ * must exist is true/false.
+ * Returns TES_CAP_REQ_EINIT on error.
+ */
+static int
+s_snprintfname (char* buf, bool mustexist, const char* format, ...)
+{
+	va_list args;
+	va_start (args, format);
+
+	char tmpfname[PATH_MAX] = {0};
+	int rc = vsnprintf (tmpfname, PATH_MAX, format, args);
+	if (rc < 0)
+	{
+		logmsg (errno, LOG_ERR, "Cannot print to stack buffer");
+		return TES_CAP_REQ_EINIT;
+	}
+	else if ((size_t)rc >= PATH_MAX)
+	{
+		errno = ENAMETOOLONG;
+		return mustexist ? TES_CAP_REQ_EABORT : TES_CAP_REQ_EPERM;
+	}
+
+	char* tmpfname_p = s_canonicalize_path (tmpfname, buf, mustexist);
+	if (tmpfname_p == NULL)
+		return mustexist ? TES_CAP_REQ_EABORT : TES_CAP_REQ_EPERM;
+
+	va_end (args);
+	return TES_CAP_REQ_OK;
+}
+
+/*
+ * Set the index and data filenames as well as the dataset names.
+ * Call only if capturing.
  * Returns TES_CAP_REQ_*
  */
 static int
-s_task_construct_filenames (struct s_data_t* sjob)
+s_construct_aio_filenames (struct s_data_t* sjob,
+	const char* measurement)
 {
 	assert (sjob != NULL);
 	assert (sjob->basefname != NULL);
-	assert (sjob->measurement != NULL);
-
-	char basedir[PATH_MAX] = {0};
-	int rc = snprintf (basedir, PATH_MAX, "%s%s%s",
-		sjob->basefname,
-		strlen (sjob->measurement) == 0 ? "" : "/",
-		sjob->measurement);
-	if (rc < 0 || (size_t)rc >= PATH_MAX)
-	{
-		logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
-			"Cannot construct filename for capture directory");
-		return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
-	}
-
-	/* Statistics file. */
-	char tmpfname[PATH_MAX] = {0};
-	rc = snprintf (tmpfname, PATH_MAX, "%s/stat",
-		basedir);
-	if (rc < 0 || (size_t)rc >= PATH_MAX)
-	{
-		logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
-			"Cannot construct filename for stat file");
-		return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
-	}
-	char* tmpfname_p = s_canonicalize_path (
-		tmpfname, sjob->statfilename, sjob->nocapture);
-	if (tmpfname_p == NULL)
-	{
-		if (sjob->nocapture)
-		{
-			logmsg (0, LOG_INFO, "Job not found");
-			return TES_CAP_REQ_EABORT;
-		}
-		else
-		{
-			logmsg (errno, LOG_INFO, "Filename is not valid");
-			return TES_CAP_REQ_EPERM;
-		}
-	}
-
-	/* HDF5 file. */
-	tmpfname_p = NULL;
-	if (strchr (sjob->measurement, '/') == NULL)
-	{ /* make sure measurement group does not contain a slash. */
-		rc = snprintf (tmpfname, PATH_MAX, "%s.hdf5", sjob->basefname);
-		if (rc < 0 || (size_t)rc >= PATH_MAX)
-		{
-			logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
-				"Cannot construct filename for hdf5 file");
-			return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
-		}
-		tmpfname_p = s_canonicalize_path (
-			tmpfname, sjob->hdf5filename, false);
-	}
-	if (tmpfname_p == NULL)
-	{ /* it had a slash or it was a symlink to outside DATAROOT */
-		logmsg (errno, LOG_INFO, "HDF5 filename is not valid");
-		return TES_CAP_REQ_EPERM;
-	}
+	assert (measurement != NULL);
+	assert (strlen (measurement) > 0);
 
 	/* Index and data files. */
 	for (int s = 0; s < NUM_DSETS ; s++)
@@ -489,22 +474,10 @@ s_task_construct_filenames (struct s_data_t* sjob)
 		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
 		aiobuf->dataset = s_dsets[s].dataset;
 
-		rc = snprintf (tmpfname, PATH_MAX, "%s/%s",
-			basedir, s_dsets[s].extension);
-		if (rc < 0 || (size_t)rc >= PATH_MAX)
-		{
-			logmsg (rc < 0 ? errno : ENAMETOOLONG, LOG_ERR,
-				"Cannot construct filename for dataset %s",
-				s_dsets[s].extension);
-			return (rc < 0 ? TES_CAP_REQ_EINIT : TES_CAP_REQ_EPERM);
-		}
-		tmpfname_p = s_canonicalize_path (
-			tmpfname, aiobuf->filename, false);
-		if (tmpfname_p == NULL)
-		{ /* it must have been a symlink to outside DATAROOT */
-			logmsg (errno, LOG_INFO, "Dataset filename is not valid");
-			return TES_CAP_REQ_EPERM;
-		}
+		int rc = s_snprintfname (aiobuf->filename, false, "%s/%s/%s",
+			sjob->basefname, measurement, s_dsets[s].extension);
+		if (rc != TES_CAP_REQ_OK)
+			return rc;
 	}
 
 	return TES_CAP_REQ_OK;
@@ -517,7 +490,7 @@ s_task_construct_filenames (struct s_data_t* sjob)
  * Returns TES_CAP_REQ_*
  */
 static int
-s_open (struct s_data_t* sjob, mode_t fmode)
+s_open (struct s_data_t* sjob, mode_t fmode, bool backup)
 {
 	assert (sjob != NULL);
 
@@ -538,10 +511,10 @@ s_open (struct s_data_t* sjob, mode_t fmode)
 	for (int s = 0; s < NUM_DSETS ; s++)
 	{
 		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
-		int rc = s_open_aiobuf (aiobuf, fmode);
+		int rc = s_open_aiobuf (aiobuf, fmode, backup);
 		if (rc == -1)
 		{
-			if (sjob->nooverwrite)
+			if (errno == EEXIST)
 			{
 				logmsg (0, LOG_INFO, "Not going to overwrite");
 				return TES_CAP_REQ_EABORT;
@@ -576,10 +549,10 @@ s_close (struct s_data_t* sjob)
  * Returns 0 on success, -1 on error.
  */
 static int
-s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode)
+s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode, bool backup)
 {
 	assert (aiobuf != NULL);
-	assert (aiobuf->filename != NULL);
+	assert (strlen (aiobuf->filename) > 0);
 
 	dbg_assert (aiobuf->aios.aio_fildes == -1);
 	dbg_assert (aiobuf->size == 0);
@@ -588,16 +561,28 @@ s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode)
 	dbg_assert (aiobuf->bufzone.waiting == 0);
 	dbg_assert (aiobuf->bufzone.enqueued == 0);
 
-	/* If overwriting, unlink the file first to prevent permission
-	 * errors if owned by another user. */
-	if (! (fmode & O_EXCL))
+	if (backup)
 	{
-		int fok = access (aiobuf->filename, F_OK);
-		if (fok == 0)
+		char tmpname[PATH_MAX] = {0};
+		if (gen_bkpname (aiobuf->filename, tmpname) == -1)
+			return -1;
+		if (rename (aiobuf->filename, tmpname) == -1)
 		{
-			int rc = unlink (aiobuf->filename);
-			if (rc == -1)
-				return -1;
+			logmsg (errno, LOG_ERR,
+				"Cannot rename capture file %s", aiobuf->filename);
+			return -1;
+		}
+	}
+	else if (! (fmode & O_EXCL))
+	{
+		/* If overwriting, unlink the file first to prevent permission
+		 * errors if owned by another user. */
+		int rc = unlink (aiobuf->filename);
+		if (rc == -1 && errno != ENOENT)
+		{
+			logmsg (errno, LOG_ERR,
+				"Cannot delete capture file %s", aiobuf->filename);
+			return -1;
 		}
 	}
 
@@ -610,8 +595,10 @@ s_open_aiobuf (struct s_aiobuf_t* aiobuf, mode_t fmode)
 }
 
 /*
- * Close a stream or index file. Reset cursor and tail of bufzone.
- * Zero the aiocb struct.
+ * Closes a stream or index file. Resets cursor and tail of bufzone.
+ * Zeroes the aiocb struct.
+ * Invalidates the filename, as the file should only be accessed
+ * once per job, after the filename is explicitly constructed.
  */
 static void
 s_close_aiobuf (struct s_aiobuf_t* aiobuf)
@@ -637,6 +624,7 @@ s_close_aiobuf (struct s_aiobuf_t* aiobuf)
 
 	aiobuf->bufzone.cur = aiobuf->bufzone.tail =
 		aiobuf->bufzone.base;
+	aiobuf->filename[0] = '\0';
 }
 
 /*
@@ -647,34 +635,122 @@ static int
 s_conv_data (struct s_data_t* sjob)
 {
 	assert (sjob != NULL);
+	assert (sjob->convmode != TES_CAP_CONV_NONE);
 
-	struct hdf5_dset_desc_t dsets[NUM_DSETS] = {0};
+	char hdf5filename[PATH_MAX] = {0};
+	int rc = s_snprintfname (hdf5filename, false,
+		"%s.hdf5", sjob->basefname);
+	if (rc != TES_CAP_REQ_OK)
+		return rc;
+
+	if (strlen (sjob->measurement) > 0)
+		return s_conv_meas (sjob, hdf5filename, sjob->measurement);
+
+	/*
+	 * *******************************************************
+	 * If no measurement, glob directory and iterate.
+	 */
+	char basedir[PATH_MAX] = {0};
+	rc = s_snprintfname (basedir, true, "%s", sjob->basefname);
+	if (rc != TES_CAP_REQ_OK)
+		return rc;
+
+	DIR* dir = opendir (basedir);
+	if (dir == NULL)
+	{
+		logmsg (errno, LOG_ERR, "Cannot open directory %s", basedir);
+		return TES_CAP_REQ_EINIT;
+	}
+
+	struct dirent* dirent;
+	errno = 0; /* reset it for readdir */
+	rc = TES_CAP_REQ_OK;
+	while ( (dirent = readdir (dir)) != NULL )
+	{
+		if ( strcmp (dirent->d_name, ".") == 0 )
+			continue;
+		if ( strcmp (dirent->d_name, "..") == 0 )
+			continue;
+
+		rc = s_conv_meas (sjob, hdf5filename, dirent->d_name);
+		if (rc == TES_CAP_REQ_EABORT && sjob->use_existing)
+			rc = TES_CAP_REQ_OK; /* ignore ABORT in bulk mode */
+		if (rc != TES_CAP_REQ_OK)
+			break;
+
+		sjob->use_existing = true; /* add rest to the same file */
+		errno = 0; /* reset it for readdir */
+	}
+	closedir (dir);
+
+	if (errno && rc == TES_CAP_REQ_OK)
+	{
+		logmsg (errno, LOG_ERR, "Cannot read directory %s", basedir);
+		return TES_CAP_REQ_EINIT;
+	}
+	return rc;
+}
+
+static int
+s_conv_meas (struct s_data_t* sjob,
+	char* hdf5filename, char* measurement)
+{
+	assert (hdf5filename != NULL);
+	assert (measurement != NULL);
+	dbg_assert (strlen (hdf5filename) > 0);
+	dbg_assert (strlen (measurement) > 0);
+
+	int rc = s_construct_aio_filenames (sjob, measurement);
+	if (rc != TES_CAP_REQ_OK)
+		return rc;
+
+	struct hdf5_dset_desc_t h5dsets[NUM_DSETS] = {0};
 	for (int s = 0; s < NUM_DSETS ; s++)
 	{
-		dsets[s].filename = sjob->aio[s].filename;
-		dsets[s].dsetname = sjob->aio[s].dataset;
-		dsets[s].length = -1;
+		struct s_aiobuf_t* aiobuf = &sjob->aio[s];
+		dbg_assert (strlen (aiobuf->filename) > 0);
+
+		h5dsets[s].filename = aiobuf->filename;
+		h5dsets[s].dsetname = aiobuf->dataset;
+		h5dsets[s].length = -1;
 	}
 
 	struct hdf5_conv_req_t creq = {
-		.filename = sjob->hdf5filename,
-		.group = sjob->measurement,
-		.dsets = dsets,
+		.filename = hdf5filename,
+		.group = measurement,
+		.dsets = h5dsets,
 		.num_dsets = NUM_DSETS,
-		.ovrwtmode = sjob->ovrwtmode,
-		.async = (sjob->async != 0),
+		.use_existing = sjob->use_existing,
+		.overwrite = (sjob->ovrwtmode != TES_CAP_OVRWT_NO),
+		.backup = (sjob->ovrwtmode == TES_CAP_OVRWT_BKP),
+		.async = (sjob->convmode == TES_CAP_CONV_ASYNC),
 	};
 
-	int rc = hdf5_conv (&creq);
-	if (rc == HDF5CONV_REQ_EFIN)
-		return TES_CAP_REQ_EFIN;
-	else if (rc != HDF5CONV_REQ_OK)
+	rc = TES_CAP_REQ_OK;
+	int convrc = hdf5_conv (&creq);
+	switch (convrc)
 	{
-		logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
-		return TES_CAP_REQ_ECONV;
+		case HDF5CONV_REQ_OK:
+			break;
+		case HDF5CONV_REQ_EINV:
+			assert (false); /* is_req_valid should have handled this */
+		case HDF5CONV_REQ_EABORT:
+			rc = TES_CAP_REQ_EABORT;
+			break;
+		case HDF5CONV_REQ_EINIT:
+			rc = TES_CAP_REQ_EINIT;
+			break;
+		case HDF5CONV_REQ_ECONV:
+			rc = TES_CAP_REQ_ECONV;
+			break;
+		case HDF5CONV_REQ_EFIN:
+			rc = TES_CAP_REQ_EFIN;
+			break;
 	}
 
-	return TES_CAP_REQ_OK;
+	if (rc != TES_CAP_REQ_OK)
+		logmsg (errno, LOG_ERR, "Could not convert data to hdf5");
+	return rc;
 }
 
 /*
@@ -691,66 +767,63 @@ s_send_err (struct s_data_t* sjob,
 }
 
 /*
- * Opens the stats file and reads stats. Closes it afterwards.
+ * For bulk conversion requests (measurement if empty, no capture),
+ * does nothing.
+ * Opens the stats file and reads/writes stats.
+ * Closes it afterwards.
  * Returns TES_CAP_REQ_*
  */
 static int
-s_stats_read (struct s_data_t* sjob)
+s_stats_rdwr (struct s_data_t* sjob, int cmd)
 {
 	assert (sjob != NULL);
-	assert (sjob->basefname != NULL);
-	dbg_assert (sjob->statfd == -1);
 
-	sjob->statfd = open (sjob->statfilename, O_RDONLY);
-	if (sjob->statfd == -1)
+	if (strlen (sjob->measurement) == 0)
+		return TES_CAP_REQ_OK;
+
+	char statfilename[PATH_MAX] = {0};
+	int rc = s_snprintfname (statfilename, (cmd == STATS_READ),
+		"%s/%s/stat", sjob->basefname, sjob->measurement);
+	if (rc != TES_CAP_REQ_OK)
+		return rc;
+
+	int flags = 0;
+	if (cmd == STATS_READ)
+		flags = O_RDONLY;
+	else
+	{
+		dbg_assert (cmd == STATS_WRITE);
+		/* Unlink stat file to prevent permission errors. */
+		rc = unlink (statfilename);
+		if (rc == -1 && errno != ENOENT)
+		{
+			logmsg (errno, LOG_ERR, "Could not delete stat file");
+			return TES_CAP_REQ_EFIN;
+		}
+		flags = O_WRONLY | O_CREAT | O_EXCL;
+	}
+	/* The stat file is ensured to be present at this point. */
+	int fd = open (statfilename, flags,
+		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (fd == -1)
 	{
 		logmsg (errno, LOG_ERR, "Could not open stats file");
-		/* The stat file is ensured to be present at this point. */
-		return TES_CAP_REQ_EINIT;
+		return (cmd == STATS_READ) ?
+			TES_CAP_REQ_EINIT : TES_CAP_REQ_EFIN;
 	}
 
-	off_t rc = read (sjob->statfd, &sjob->st, STAT_LEN);
-	close (sjob->statfd);
-	sjob->statfd = -1;
+	size_t rrc = 0;
+	if (cmd == STATS_READ)
+		rrc = read (fd, &sjob->st, STAT_LEN);
+	else
+		rrc = write (fd, &sjob->st, STAT_LEN);
 
-	if (rc != STAT_LEN)
+	close (fd);
+
+	if (rrc != STAT_LEN)
 	{
 		logmsg (errno, LOG_ERR, "Could not read stats");
 		return TES_CAP_REQ_EINIT;
-	}
-	
-	return TES_CAP_REQ_OK;
-}
-
-/*
- * Opens the stats file and writes stats. Closes it afterwards.
- * Returns TES_CAP_REQ_*
- */
-static int
-s_stats_write (struct s_data_t* sjob)
-{
-	assert (sjob != NULL);
-	assert (sjob->basefname != NULL);
-	dbg_assert (sjob->statfd == -1);
-
-	/* s_req_hn should unlink it, ensure this with O_EXCL */
-	sjob->statfd = open (sjob->statfilename,
-		O_WRONLY | O_CREAT | O_EXCL,
-		S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-	if (sjob->statfd == -1)
-	{
-		logmsg (errno, LOG_ERR, "Could not open stats file");
-		return TES_CAP_REQ_EFIN;
-	}
-
-	off_t rc = write (sjob->statfd, &sjob->st, STAT_LEN);
-	close (sjob->statfd);
-	sjob->statfd = -1;
-
-	if (rc != STAT_LEN)
-	{
-		logmsg (errno, LOG_ERR, "Could not write stats");
-		return TES_CAP_REQ_EFIN;
 	}
 	
 	return TES_CAP_REQ_OK;
@@ -765,8 +838,6 @@ s_stats_send (struct s_data_t* sjob,
 	zsock_t* endpoint, uint8_t status)
 {
 	assert (sjob != NULL);
-	assert (sjob->basefname != NULL);
-	dbg_assert (sjob->statfd == -1); /* _read and _write close it */
 
 	int rc = zsock_send (endpoint, TES_CAP_REP_PIC,
 		status,
@@ -1129,11 +1200,11 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 	int rc = zsock_recv (endpoint, TES_CAP_REQ_PIC,
 		&sjob->basefname,
 		&sjob->measurement,
+		&sjob->use_existing,
+		&sjob->ovrwtmode,
 		&sjob->min_ticks,
 		&sjob->min_events,
-		&sjob->ovrwtmode,
-		&sjob->async,
-		&sjob->capmode);
+		&sjob->convmode);
 	/* Would also return -1 if picture contained a pointer (p) or a null
 	 * frame (z) but message received did not match this signature; this
 	 * is irrelevant in this case; we don't get interrupted, this should
@@ -1148,44 +1219,38 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		return 0;
 	}
 
-	if (sjob->nocapture)
+	if (sjob->capture)
 	{
 		logmsg (0, LOG_INFO,
-				"Received request for %s of '%s' and measurement '%s'%s",
-				sjob->noconvert ? "status" : "conversion",
-				sjob->basefname,
-				sjob->measurement,
-				( ! sjob->noconvert && sjob->async ) ?
-				". Convering asynchronously" : "");
+			"Received request to write %lu ticks and "
+			"%lu events to '%s/%s'",
+			sjob->min_ticks,
+			sjob->min_events,
+			sjob->basefname,
+			sjob->measurement);
 	}
 	else
 	{
 		logmsg (0, LOG_INFO,
-				"Received request to write %lu ticks and "
-				"%lu events to '%s' and measurement '%s'%s",
-				sjob->min_ticks,
-				sjob->min_events,
-				sjob->basefname,
-				sjob->measurement,
-				sjob->async ? ". Convering asynchronously" : "");
+			"Received request for %s of '%s%s%s'",
+			sjob->convert ? "conversion" : "status",
+			sjob->basefname,
+			strlen (sjob->measurement) == 0 ? "" : "/",
+			sjob->measurement);
 	}
 
-	/* Set the filenames and dataset names, will detect if the stats file
-	 * is missing and we are not capturing, i.e. aborted job. */
-	rc = s_task_construct_filenames (sjob);
-	if (rc != TES_CAP_REQ_OK)
-	{
-		s_send_err (sjob, endpoint, rc);
-		return 0;
-	}
+	if (sjob->convmode != TES_CAP_CONV_NONE)
+		logmsg (0, LOG_INFO,
+			"Converting %ssynchronously",
+			(sjob->convmode == TES_CAP_CONV_SYNC) ? "" : "a");
 
 	/* -------------------------------------------------- */
-	/*              Status or convert query.              */
+	/*           Status or convert-only query.            */
 	/* -------------------------------------------------- */
 
-	if (sjob->nocapture)
+	if ( ! sjob->capture )
 	{
-		if ( ! sjob->noconvert )
+		if (sjob->convert)
 		{
 			rc = s_conv_data (sjob);
 			if (rc != TES_CAP_REQ_OK)
@@ -1196,7 +1261,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		}
 
 		/* Read in stats and send reply either way. */
-		rc = s_stats_read (sjob);
+		rc = s_stats_rdwr (sjob, STATS_READ);
 		if (rc != TES_CAP_REQ_OK)
 		{
 			s_send_err (sjob, endpoint, rc);
@@ -1205,25 +1270,35 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 
 		rc = s_stats_send (sjob, endpoint, TES_CAP_REQ_OK);
 		if (rc != TES_CAP_REQ_OK)
-		{
 			logmsg (0, LOG_NOTICE, "Could not send stats");
-		}
+
 		return 0;
 	}
 
-	dbg_assert ( ! sjob->nocapture ); /* forgot to return? */
+	dbg_assert (sjob->capture); /* forgot to return? */
 
 	/* -------------------------------------------------- */
 	/*                    Write query.                    */
 	/* -------------------------------------------------- */
 
+	assert (sjob->min_ticks > 0);
+	assert (strlen (sjob->measurement) > 0);
+
+	/* Set the filenames and dataset names. */
+	rc = s_construct_aio_filenames (sjob, sjob->measurement);
+	if (rc != TES_CAP_REQ_OK)
+	{
+		s_send_err (sjob, endpoint, rc);
+		return 0;
+	}
+
 	/* If not overwriting add O_EXCL, s_open_aiobuf will then
 	 * not unlink the data files and the open call will fail. */
 	mode_t fmode = O_RDWR | O_CREAT;
-	if (sjob->nooverwrite)
+	if (sjob->ovrwtmode != TES_CAP_OVRWT_YES)
 		fmode |= O_EXCL;
 
-	rc = s_open (sjob, fmode);
+	rc = s_open (sjob, fmode, sjob->ovrwtmode == TES_CAP_OVRWT_BKP);
 	if (rc != TES_CAP_REQ_OK)
 	{
 		s_send_err (sjob, endpoint, rc);
@@ -1231,23 +1306,7 @@ task_cap_req_hn (zloop_t* loop, zsock_t* endpoint, void* self_)
 		return 0;
 	}
 
-	logmsg (0, LOG_INFO, "Opened files '%s.*' for writing",
-		sjob->statfilename);
-
-	/* Unlink stat file to prevent permission errors later when writing */
-	int fok = access (sjob->statfilename, F_OK);
-	if (fok == 0)
-	{
-		rc = unlink (sjob->statfilename);
-		if (rc == -1)
-		{
-			logmsg (errno, LOG_ERR, "Could not delete stat file");
-			s_send_err (sjob, endpoint, TES_CAP_REQ_EINIT);
-
-			s_close (sjob);
-			return 0;
-		}
-	}
+	logmsg (0, LOG_INFO, "Opened capture files for writing");
 
 	/* Disable polling on the endpoint until the job is done. Wakeup
 	 * packet handler. */
@@ -1592,13 +1651,20 @@ done:
 			TES_CAP_REQ_EWRT : TES_CAP_REQ_OK );
 
 		/* Write stats regardless of errors. */
-		int rc = s_stats_write (sjob);
+		int rc = s_stats_rdwr (sjob, STATS_WRITE);
 		if (status == TES_CAP_REQ_OK)
 			status = rc;
 
-		/* Convert them to hdf5, only if all is ok until now. */
-		if ( status == TES_CAP_REQ_OK && ! sjob->noconvert )
-			status = s_conv_data (sjob);
+		/* Convert them to hdf5, only if all is ok until now.
+		   Only return ECONV/EFIN, since capture succeeded. */
+		if ( status == TES_CAP_REQ_OK && sjob->convert )
+		{
+			rc = s_conv_data (sjob);
+			if (rc == TES_CAP_REQ_EFIN || TES_CAP_REQ_OK)
+				status = rc;
+			else
+				status = TES_CAP_REQ_ECONV;
+		}
 
 		/* Send reply. */
 		s_stats_send (sjob, self->endpoints[0].sock, status);
@@ -1653,7 +1719,6 @@ task_cap_init (task_t* self)
 
 	static struct s_data_t sjob;
 	self->data = &sjob;
-	sjob.statfd = -1;
 
 	int rc = 0;
 	for (int s = 0; s < NUM_DSETS ; s++)
@@ -1691,7 +1756,7 @@ task_cap_fin (task_t* self)
 	{ /* A job is in progress. _stats_send nullifies this. */
 		s_flush (sjob);
 		s_close (sjob);
-		rc  = s_stats_write (sjob);
+		rc  = s_stats_rdwr (sjob, STATS_WRITE);
 		rc |= s_stats_send  (
 			sjob, self->endpoints[0].sock, TES_CAP_REQ_EWRT);
 	}

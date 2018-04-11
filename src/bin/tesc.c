@@ -34,7 +34,8 @@ static cmd_hn s_local_save_trace;
 static cmd_hn s_local_save_mca;
 static cmd_hn s_local_save_jitter;
 static cmd_hn s_local_save_coinc;
-static int s_local_save_generic (const char*, const char*, int, char*[], size_t);
+static int s_local_save_generic (const char*, const char*,
+	int, char*[], size_t);
 
 static char s_prog_name[PATH_MAX];
 #define OPTS_G       "Z:F:" /* processed by main */
@@ -45,10 +46,9 @@ static char s_prog_name[PATH_MAX];
 #define OPTS_J_CONF   "t:R:"
 #define OPTS_C_CONF   "w:m:"
 #define OPTS_CTH_CONF "m:n:t:"
-#define OPTS_R_ALL    "m:w:t:e:rocCa"
+#define OPTS_R_ALL    "m:t:e:ibocas"
 #define OPTS_L_TRACE  "w:"
-#define OPTS_L_HIST   "n:" /* both jitter and mca */
-#define OPTS_L_COINC  "" /* FIXME */
+#define OPTS_L_GENERIC "n:"
 
 static void
 s_usage (void)
@@ -84,20 +84,21 @@ s_usage (void)
 		              "                       "            "with thresholds in ascending order.\n\n"
 		ANSI_FG_GREEN "remote_all" ANSI_RESET ": Save frames to a remote file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
-		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Remote filename.\n"
+		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Basename for the capture.\n"
 		ANSI_FG_RED   "    -m <measurement>   " ANSI_RESET "Measurement name. Default is empty.\n"
 		ANSI_FG_RED   "    -t <ticks>         " ANSI_RESET "Save at least that many ticks.\n"
 		              "                       "            "Default is 0.\n"
 		ANSI_FG_RED   "    -e <evens>         " ANSI_RESET "Save at least that many non-tick\n"
 		              "                       "            "events. Default is 0.\n"
-		ANSI_FG_RED   "    -r                 " ANSI_RESET "Rename any existing measurement\n"
-		              "                       "            "group of that name.\n"
-		ANSI_FG_RED   "    -o                 " ANSI_RESET "Overwrite entire hdf5 file.\n"
-		ANSI_FG_RED   "    -c                 " ANSI_RESET "Capture only, no conversion.\n"
-		ANSI_FG_RED   "    -C                 " ANSI_RESET "Convert only, no capture.\n"
+		ANSI_FG_RED   "    -i                 " ANSI_RESET "Insert measurement into existing basename.\n"
+		ANSI_FG_RED   "    -b                 " ANSI_RESET "Rename any existing measurement\n"
+		              "                       "            "directory/group of that name.\n"
+		ANSI_FG_RED   "    -o                 " ANSI_RESET "Overwrite any existing measurement\n"
+		              "                       "            "directory/group of that name.\n"
 		ANSI_FG_RED   "    -a                 " ANSI_RESET "Asynchronous hdf5 conversion.\n"
-		"Only one of -o and -r can be given.\n"
-		"For status requests (-s) only measurement (-m) can be specified.\n\n"
+		ANSI_FG_RED   "    -s                 " ANSI_RESET "Synchronous hdf5 conversion.\n"
+		"Only one of -o and -b can be given. If none given, will abort on existing directory/group.\n"
+		"Only one of -a and -s can be given. If none given, will not convert.\n\n"
 		ANSI_FG_GREEN "local_trace" ANSI_RESET ": Save average traces to a local file.\n"
 		ANSI_BOLD     "  Options:\n" ANSI_RESET
 		ANSI_FG_RED   "    -F <filename>      " ANSI_RESET "Local filename.\n"
@@ -459,7 +460,7 @@ s_coinc_conf (const char* server, const char* filename,
 	if (window > 0)
 	{
 		printf ("Configuring coincidence to measure %s over "
-				"a window of %hu\n", measurement, window);
+			"a window of %hu\n", measurement, window);
 		if ( s_prompt () )
 			return -1;
 	}
@@ -782,6 +783,11 @@ s_local_save_trace (const char* server, const char* filename,
 
 /* ----------------------- GENERIC ---------------------- */
 
+/*
+ * TODO:
+ *  - command-line option for file, max_size is default
+ *  - check ZMQ_MORE flag, treat -n as no. of messages, not frames
+ */
 static int
 s_local_save_generic (const char* server, const char* filename,
 	int argc, char* argv[], size_t max_size)
@@ -797,7 +803,7 @@ s_local_save_generic (const char* server, const char* filename,
 #endif
 	while (optind < argc)
 	{
-		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_L_HIST);
+		int opt = getopt (argc, argv, "+:" OPTS_G OPTS_L_GENERIC);
 		if (opt == -1)
 		{
 			optind++;
@@ -966,7 +972,9 @@ s_remote_save_all (const char* server, const char* filename,
 {
 	char measurement[1024] = {0};
 	uint64_t min_ticks = 0, min_events = 0;
-	uint8_t ovrwtmode = 0, async = 0, capmode = 0;
+	uint8_t ovrwtmode = TES_CAP_OVRWT_NO, convmode = TES_CAP_CONV_NONE, use_existing = 0;
+	bool conv_selected = false;
+	bool ovrwt_selected = false;
 
 	/* Command-line */
 	char* buf = NULL;
@@ -1005,34 +1013,36 @@ s_remote_save_all (const char* server, const char* filename,
 					return -1;
 				}
 				break;
-			case 'r':
-			case 'o':
-				if (ovrwtmode)
-				{
-					s_conflicting_opt ();
-					return -1;
-				}
-
-				if (opt == 'r')
-					ovrwtmode = HDF5CONV_OVRWT_RELINK;
-				else
-					ovrwtmode = HDF5CONV_OVRWT_FILE;
+			case 'i':
+				use_existing = 1;
 				break;
-			case 'c':
-			case 'C':
-				if (capmode)
+			case 'b':
+			case 'o':
+				if (ovrwt_selected)
 				{
 					s_conflicting_opt ();
 					return -1;
 				}
+				ovrwt_selected = true;
 
-				if (opt == 'c')
-					capmode = TES_CAP_CAPONLY;
+				if (opt == 'b')
+					ovrwtmode = TES_CAP_OVRWT_BKP;
 				else
-					capmode = TES_CAP_CONVONLY;
+					ovrwtmode = TES_CAP_OVRWT_YES;
 				break;
 			case 'a':
-				async = 1;
+			case 's':
+				if (conv_selected)
+				{
+					s_conflicting_opt ();
+					return -1;
+				}
+				conv_selected = true;
+
+				if (opt == 'a')
+					convmode = TES_CAP_CONV_ASYNC;
+				else
+					convmode = TES_CAP_CONV_SYNC;
 				break;
 			case '?':
 				s_invalid_opt (optopt);
@@ -1048,28 +1058,44 @@ s_remote_save_all (const char* server, const char* filename,
 	}
 
 	/* Proceed? */
-	if (capmode == TES_CAP_AUTO && ! min_ticks && ! min_events)
+	bool capture = (min_ticks > 0 || min_events > 0);
+	bool convert = (convmode != TES_CAP_CONV_NONE);
+	bool overwrite = (ovrwtmode != TES_CAP_OVRWT_NO);
+	bool status = ( ! convert && ! capture );
+	if (status)
 	{
-		printf ("Sending a status request for remote filename "
+		printf ("Sending a status request for remote basename "
 			"'%s' and measurement group '%s'.\n",
 			filename, measurement);
 	}
 	else
 	{
-		printf ("Sending a%s %s request for remote filename "
-			"'%s' and measurement group '%s'.\n"
-			"%sWill terminate after at least "
-			"%lu ticks and %lu events.\n",
-			async ? "n asynchronous" : "",
-			capmode == TES_CAP_CONVONLY ? "conversion only" :
-				(capmode == TES_CAP_CAPONLY ? "capture only" :
-				"capture"),
-			filename, measurement,
-			(ovrwtmode == HDF5CONV_OVRWT_FILE) ?
-				"Will overwrite file.\n" :
-				(ovrwtmode == HDF5CONV_OVRWT_RELINK) ?
-					"Will backup measurement group.\n" : "",
-			min_ticks, min_events);
+		if (capture)
+		{
+			printf ("Sending a capture request for remote basename "
+				"'%s' and measurement group '%s'.\n"
+				"Will terminate after at least %lu ticks and %lu events.\n",
+				filename, measurement, min_ticks, min_events);
+		}
+		else
+		{
+			printf ("Sending a conversion request for remote basename "
+				"'%s' and measurement group '%s'.\n",
+				filename, measurement);
+		}
+
+		if (convert)
+		{
+			printf ("Converting in %s.\n",
+				(convmode == TES_CAP_CONV_ASYNC) ? "background" : "foreground");
+		}
+
+		if (overwrite)
+		{
+			printf ("Will %s %s.\n",
+				(ovrwtmode == TES_CAP_OVRWT_BKP) ? "backup" : "overwrite",
+				use_existing ? "subdirectory/group" : "directory/hdf5 file");
+		}
 	}
 	if ( s_prompt () )
 		return -1;
@@ -1090,11 +1116,11 @@ s_remote_save_all (const char* server, const char* filename,
 	zsock_send (sock, TES_CAP_REQ_PIC,
 		filename,
 		measurement,
+		use_existing,
+		ovrwtmode,
 		min_ticks,
 		min_events,
-		ovrwtmode,
-		async,
-		capmode);
+		convmode);
 	puts ("Waiting for reply");
 
 	uint8_t fstat;
@@ -1121,8 +1147,8 @@ s_remote_save_all (const char* server, const char* filename,
 			printf ("Request was not understood\n");
 			break;
 		case TES_CAP_REQ_EABORT:
-			printf ("File %s\n", min_ticks ?
-				"exists" : "does not exist");
+			printf ("File %s\n", status ?
+				"does not exist" : "exists");
 			break;
 		case TES_CAP_REQ_EPERM:
 			printf ("Filename is not allowed\n");
@@ -1183,7 +1209,7 @@ main (int argc, char* argv[])
 			printf ("Processing option at index %d\n", optind);
 #endif
 		int opt = getopt (argc, argv,
-			"+:h" OPTS_G OPTS_S_INFO OPTS_J_CONF OPTS_L_TRACE OPTS_L_HIST OPTS_R_ALL);
+			"+:h" OPTS_G OPTS_S_INFO OPTS_J_CONF OPTS_L_TRACE OPTS_L_GENERIC OPTS_R_ALL);
 		if (opt == -1)
 		{
 #ifdef GETOPT_DEBUG

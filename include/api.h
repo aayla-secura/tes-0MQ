@@ -33,15 +33,19 @@
 #define TES_CAP_REQ_EFIN   7 // conversion ok, error deleting data
                              // files or writing stats
 
-#define TES_CAP_REQ_PIC "ss88111"
+#define TES_CAP_REQ_PIC "ss11881"
 #define TES_CAP_REP_PIC "18888888"
 
-/* Capture/conversion mode. Keep in mind status requests should default
- * to all 0 and require only a filename and group, and that setting
- * min_ticks or min_events should be enough to indicate capture. */
-#define TES_CAP_AUTO     0 // capture and convert unless status
-#define TES_CAP_CAPONLY  1 // capture only
-#define TES_CAP_CONVONLY 2 // convert only
+/* Backup mode if entity exists. By default we should not overwrite
+ * (0 should either backup or abort). */
+#define TES_CAP_OVRWT_BKP     0 // rename
+#define TES_CAP_OVRWT_YES     1 // delete
+#define TES_CAP_OVRWT_NO      2 // abort
+
+/* Conversion mode. */
+#define TES_CAP_CONV_NONE  0 // capture only
+#define TES_CAP_CONV_ASYNC 1 // asynchronous
+#define TES_CAP_CONV_SYNC  2 // synchronous
 
 /* Get average trace */
 #define TES_AVGTR_LPORT "55556"
