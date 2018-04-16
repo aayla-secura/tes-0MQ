@@ -149,6 +149,9 @@ $ modprobe -r netmap
 # TO DO
 
 * test with big-endian FPGA byte order
+* `PATH_MAX` (see realpath(3))
+
+* any way to make sure README and api.h are consistent?
 
 * replace `<type>* <pt>` with `<type> *<pt>`
 * remove cast of `malloc`/`mmap`
