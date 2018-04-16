@@ -31,6 +31,25 @@
 #endif
 #define DBG_VERBOSE 1
 
+int
+gen_bkpname (const char* name, char* buf)
+{
+	int rc = snprintf (buf, PATH_MAX, "%s_%lu", name, time (NULL));
+	if (rc >= PATH_MAX)
+	{
+		logmsg (0, LOG_ERR,
+			"Filename too long, cannot append timestamp");
+		return -1;
+	}
+	else if (rc < 0)
+	{
+		logmsg (errno, LOG_ERR,
+			"Cannot write to stack buffer");
+		return -1;
+	}
+	return 0;
+}
+
 void
 tic (struct timespec* ts)
 {
@@ -238,7 +257,7 @@ canonicalize_path (const char* root, const char* path,
 	int rc = snprintf (buf, PATH_MAX, "%s%s", realroot, path);
 	if (rc >= PATH_MAX)
 	{
-		logmsg (0, LOG_ERR, "Filename too long");
+		logmsg (0, LOG_INFO, "Filename too long");
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
@@ -307,7 +326,7 @@ canonicalize_path (const char* root, const char* path,
 	len += snprintf (finalpath + len, PATH_MAX - len, "%s", basename);
 	if (len >= PATH_MAX)
 	{
-		logmsg (0, LOG_ERR, "Filename too long");
+		logmsg (0, LOG_INFO, "Filename too long");
 		errno = ENAMETOOLONG;
 		return NULL;
 	}

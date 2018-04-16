@@ -19,6 +19,15 @@
 #define NSEC_IN_SEC 1000000000
 
 /*
+ * Append a timestamp to name. Result is saved in buf.
+ * buf needs to be able to hold PATH_MAX characters (including
+ * terminating null byte).
+ * Returns 0 on success, -1 on error.
+ * On error contents of buf are undefined.
+ */
+int gen_bkpname (const char* name, char* buf);
+
+/*
  * Start/stop a timer. toc returns nanosecond difference.
  */
 void tic (struct timespec* ts);

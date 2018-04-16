@@ -1,5 +1,6 @@
 #include "hdf5conv.h"
 #include "daemon_ng.h"
+#include "cutil.h"
 
 #ifdef linux
 // is it there only on Debian?
@@ -9,7 +10,6 @@
 #endif
 
 #include <string.h>
-#include <time.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -26,7 +26,6 @@
 /* #define DATATYPE H5T_NATIVE_UINT_FAST8 */
 /* #define DATATYPE H5T_NATIVE_UINT8 */
 
-static int s_gen_bkpname (const char* name, char* buf);
 static int s_del_grp (hid_t lid, const char* group);
 static int s_grp_exists (hid_t lid, const char* group);
 static hid_t s_open_grp (hid_t lid, const char* group,
@@ -47,31 +46,6 @@ struct s_creq_data_t
 /* -------------------------------------------------------------- */
 /* --------------------------- HELPERS -------------------------- */
 /* -------------------------------------------------------------- */
-
-/*
- * TODO: move to cutil
- * Append a timestamp. buf needs to be able to hold PATH_MAX
- * characters (including terminating null byte).
- * Returns 0 on success, -1 on error.
- * On error contents of buf are undefined.
- */
-static int s_gen_bkpname (const char* name, char* buf)
-{
-	int rc = snprintf (buf, PATH_MAX, "%s_%lu", name, time (NULL));
-	if (rc >= PATH_MAX)
-	{
-		logmsg (0, LOG_ERR,
-				"Filename too long, cannot append timestamp");
-		return -1;
-	}
-	else if (rc < 0)
-	{
-		logmsg (errno, LOG_ERR,
-				"Cannot write to stack buffer");
-		return -1;
-	}
-	return 0;
-}
 
 /*
  * Delete group. Checks to make sure the link is gone.
@@ -156,7 +130,7 @@ s_open_grp (hid_t lid, const char* group, hid_t bkp_lid,
 		if (bkp_lid > 0)
 		{ /* rename the group */
 			char bkpgroup[PATH_MAX] = {0};
-			if (s_gen_bkpname (group, bkpgroup) == -1)
+			if (gen_bkpname (group, bkpgroup) == -1)
 				return -1;
 
 			/* FIXME: make sure backup destination does not exist? */
@@ -394,7 +368,7 @@ s_hdf5_init (void* creq_data_)
 			else if (creq->backup)
 			{ /* rename it */
 				char tmpfname[PATH_MAX] = {0};
-				if (s_gen_bkpname (creq->filename, tmpfname) == -1)
+				if (gen_bkpname (creq->filename, tmpfname) == -1)
 					goto err;
 
 				if (rename (creq->filename, tmpfname) == -1)
