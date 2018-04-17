@@ -46,7 +46,7 @@ static char s_prog_name[PATH_MAX];
 #define OPTS_J_CONF   "t:R:"
 #define OPTS_C_CONF   "w:m:"
 #define OPTS_CTH_CONF "m:n:t:"
-#define OPTS_R_ALL    "m:t:e:ibocas"
+#define OPTS_R_ALL    "m:t:e:iboas"
 #define OPTS_L_TRACE  "w:"
 #define OPTS_L_GENERIC "n:"
 
