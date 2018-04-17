@@ -84,22 +84,16 @@ s_get_max_fd (void)
 static int
 s_close_open_fds (rlim_t max_fd)
 {
-	DIR* self_fds_dir = NULL;
-	struct dirent* self_fds_dirent;
-	int dir_no;
-	int dirent_no;
-	int rc;
-
 	/* /dev/fd should exist on both Linux and FreeBSD, otherwise
 	 * check if procfs is enabled and provides it. */
-	self_fds_dir = opendir ("/dev/fd");
-	if (!self_fds_dir)
+	DIR* self_fds_dir = opendir ("/dev/fd");
+	if (self_fds_dir == NULL)
 	{
 		logmsg (0, LOG_DEBUG,
 			"/dev/fd does not exist, trying /proc/self/fd");
 		self_fds_dir = opendir ("/proc/self/fd");
 	}
-	if (!self_fds_dir)
+	if (self_fds_dir == NULL)
 	{
 		logmsg (0, LOG_DEBUG, "/proc/self/fd does not exist");
 		return -1;
@@ -107,16 +101,17 @@ s_close_open_fds (rlim_t max_fd)
 
 	/* Iterate through all fds in the directory and close all but
 	 * stdin, stdout, stderr and the directory's fd. */
-	dir_no = dirfd (self_fds_dir);
+	int dir_no = dirfd (self_fds_dir);
 	errno = 0; /* reset for readdir */
 
-	while ( (self_fds_dirent = readdir (self_fds_dir)) )
+	struct dirent* self_fds_dirent;
+	while ( (self_fds_dirent = readdir (self_fds_dir)) != NULL )
 	{
-		dirent_no = atoi (self_fds_dirent->d_name);
+		int dirent_no = atoi (self_fds_dirent->d_name);
 
-		if ( !strcmp (self_fds_dirent->d_name, ".") )
+		if ( strcmp (self_fds_dirent->d_name, ".") == 0 )
 			continue;
-		if ( !strcmp (self_fds_dirent->d_name, "..") )
+		if ( strcmp (self_fds_dirent->d_name, "..") == 0 )
 			continue;
 		if (dirent_no == dir_no)
 			continue;
@@ -132,7 +127,7 @@ s_close_open_fds (rlim_t max_fd)
 
 		// logmsg (0, LOG_DEBUG,
 		//     "Closing fd = %d", dirent_no);
-		rc = close (dirent_no);
+		int rc = close (dirent_no);
 		/* Should we return on error? */
 		if (rc == -1) 
 		{
@@ -160,10 +155,7 @@ s_close_open_fds (rlim_t max_fd)
 static void
 s_close_nonstd_fds (void)
 {
-	rlim_t max_fd;
-	rlim_t cur_fd;
-
-	max_fd = s_get_max_fd ();
+	rlim_t max_fd = s_get_max_fd ();
 	logmsg (0, LOG_DEBUG,
 		"s_get_max_fd () returned %li", max_fd);
 	if (max_fd == 0)
@@ -180,7 +172,7 @@ s_close_nonstd_fds (void)
 	/* A fallback method: try to close all fd numbers up to some
 	 * maximum. */
 	logmsg (0, LOG_DEBUG, "Using fallback method");
-	for (cur_fd = 0; cur_fd < max_fd; cur_fd++)
+	for (rlim_t cur_fd = 0; cur_fd < max_fd; cur_fd++)
 	{
 		if (cur_fd == STDIN_FILENO)
 			continue;
