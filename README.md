@@ -150,9 +150,9 @@ added by server) and `<measurement>` refers to hdf5 group.
    Name of capture subdirectory and/or hdf5 group. The hdf5 group is
    relative to a hardcoded subgroup of the root group.
 
-	 It must be non-empty if capture is to be done. If empty and
-	 conversion is requested, the entire `<basename>` directory is
-	 converted to hdf5 format.
+   It must be non-empty if capture is to be done. If empty and
+   conversion is requested, the entire `<basename>` directory is
+   converted to hdf5 format.
 
 3. **Use existing directory/HDF5 file**
 
@@ -162,14 +162,14 @@ added by server) and `<measurement>` refers to hdf5 group.
         renamed/removed
 
  * "1": if `<basename>` directory and/or hdf5 file exists, it is not
-				removed; if `<measurement>` is an existing subdirectory it is
-				renamed/removed
+        removed; if `<measurement>` is an existing subdirectory it is
+        renamed/removed
 
-	 If `<use existing>` is false, in what follows `<entity>` refers to
-	 `<basename>`.
+   If `<use existing>` is false, in what follows `<entity>` refers to
+   `<basename>`.
 
-	 If `<use existing>` is true, in what follows `<entity>` refers to
-	 `<measurement>`.
+   If `<use existing>` is true, in what follows `<entity>` refers to
+   `<measurement>`.
 
    The value is read as an **unsigned** int8.
 
@@ -230,14 +230,15 @@ missing, only the `<error status>` is returned (rest of frames are 0).
 If converting an entire directory (i.e. no capture is done and
 `<measurement>` is not given), `<use existing>` applies only to the
 first iteration. Subsequent measurement are always inserted in the
-same fileso that:
-	* if `<use existing>` is false: If `<access mode>` is abort,
-		entire operation is aborted. Otherwise the hdf5 file will be
-		renamed/deleted depending on `<access mode>` before starting.
-	* if `<use existing>` is true: If `<access mode>` is abort,
-		measurements present in the directory will be skipped if there's
-		already a group by that name in the hdf5 file. Otherwise the hdf5
-		group will be renamed/deleted depending on `<access mode>`.
+same file, so that:
+
+ * if `<use existing>` is false: If `<access mode>` is abort,
+   entire operation is aborted. Otherwise the hdf5 file will be
+   renamed/deleted depending on `<access mode>` before starting.
+ * if `<use existing>` is true: If `<access mode>` is abort,
+   measurements present in the directory will be skipped if there's
+   already a group by that name in the hdf5 file. Otherwise the hdf5
+   group will be renamed/deleted depending on `<access mode>`.
 
 #### Message frames in a reply
 
@@ -271,8 +272,8 @@ conversion was performed, the corresponding error code is returned.
 
 2. **No. of ticks written**
 
-	 May be less than requested in case of an error during write.
-	 `<Error status>` will be "5" in this case.
+   May be less than requested in case of an error during write.
+   `<Error status>` will be "5" in this case.
 
 
 3. **No. of non-tick events written**
