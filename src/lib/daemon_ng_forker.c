@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <time.h>
 #include <poll.h>
 #include <signal.h>
 #include <syslog.h>
@@ -25,26 +24,16 @@
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <string.h>
-#include <stdarg.h>
 #include <paths.h>
 #include <dirent.h>
 #include <errno.h>
 #include <assert.h>
-
-#define MAX_MSG_LEN         512
-#define MIN_ERR_LEN          10
-#define MAX_LOG_ID_LEN       32
-#define MAX_LOG_TIMEFMT_LEN  16
-#define MAX_LOG_TIME_LEN     64
 
 #define DAEMON_OK_MSG  "0"
 #define DAEMON_ERR_MSG "1"
 #define DAEMON_TIMEOUT 3000 /* default */
 
 static bool is_daemon;
-static int verbose_level;
-static char time_fmt[MAX_LOG_TIMEFMT_LEN];
-static __thread char log_id[MAX_LOG_ID_LEN];
 
 static rlim_t s_get_max_fd (void);
 static void s_close_nonstd_fds (void);
@@ -269,102 +258,6 @@ s_send_sig (int pipe_fd, char* sig)
 /* -------------------------------------------------------------- */
 /* ----------------------------- API ---------------------------- */
 /* -------------------------------------------------------------- */
-
-void
-logmsg (int errnum, int priority, const char* format, ...)
-{
-	if ( verbose_level <= priority - LOG_DEBUG )
-		return;
-
-	if (priority > LOG_DEBUG)
-		priority = LOG_DEBUG;
-
-	va_list args;
-	va_start (args, format);
-	char msg[MAX_MSG_LEN] = {0};
-	int len = vsnprintf (msg, MAX_MSG_LEN, format, args);
-
-	if (len < 0)
-		return;
-
-	if ( (len < MAX_MSG_LEN - 2 - MIN_ERR_LEN)  && errnum != 0 )
-	{
-		len += snprintf (msg + len, MAX_MSG_LEN - len, ": ");
-		/* Thread-safe version of strerror. */
-#if ((_POSIX_C_SOURCE >= 200112L) && !  _GNU_SOURCE) || ! linux
-		/* POSIX compliant, returns int, saves it in msg */
-		strerror_r (errnum, msg + len, MAX_MSG_LEN - len);
-#else
-		/* GNU version, returns it and MAY save it in msg */
-		char* err = strerror_r (errnum,
-			msg + len, MAX_MSG_LEN - len);
-		if (err != NULL && err != msg + len)
-			strncpy (msg + len, err, MAX_MSG_LEN - len);
-#endif
-	}
-
-	char curtime[MAX_LOG_TIME_LEN] = {0};
-	if (strlen (time_fmt) != 0)
-	{
-		time_t now = time(NULL);
-		struct tm tm_now;
-		struct tm* tm_now_p = localtime_r (&now, &tm_now);
-		if (tm_now_p != NULL)
-		{
-			size_t wrc = strftime (curtime, MAX_LOG_TIME_LEN - 2,
-				time_fmt, &tm_now);
-			if (wrc == 0)
-				curtime[0] = '\0'; /* error */
-			else
-				strncpy (curtime + wrc, ": ", MAX_LOG_TIME_LEN - wrc);
-		}
-	}
-	if (is_daemon)
-		syslog (priority, "%s%s%s", curtime, log_id, msg);
-	else
-	{
-		FILE* outbuf;
-		if ((priority == LOG_DEBUG) ||
-			( verbose_level == 0 && priority < LOG_NOTICE ))
-			outbuf = stderr;
-		else
-			outbuf = stdout;
-
-		fprintf (outbuf, "%s%s%s\n", curtime, log_id, msg);
-	}
-	va_end (args);
-}
-
-char*
-set_time_fmt (const char* fmt)
-{
-	if (fmt != NULL)
-	{
-		int rc = snprintf (time_fmt, MAX_LOG_TIMEFMT_LEN, "%s", fmt);
-		if (rc >= MAX_LOG_TIMEFMT_LEN &&
-			time_fmt[MAX_LOG_TIMEFMT_LEN - 1] == '%')
-		{ /* got truncated in the middle of a format specifier */
-			time_fmt[MAX_LOG_TIMEFMT_LEN - 1] = '\0';
-		}
-	}
-	return time_fmt;
-}
-
-char*
-set_logid (char* id)
-{
-	if (id != NULL)
-		strncpy (log_id, id, MAX_LOG_ID_LEN);
-	return log_id;
-}
-
-int
-set_verbose (int level)
-{
-	if (level >= 0)
-		verbose_level = level;
-	return verbose_level;
-}
 
 bool
 ami_daemon (void)
@@ -658,4 +551,28 @@ fork_and_run (daemon_fn* initializer, daemon_fn* action,
 		}
 	}
 	_exit (EXIT_SUCCESS);
+}
+
+int
+run_as (uid_t uid, gid_t gid)
+{
+	/* Drop privileges, group first, then user, then check */
+	uid_t oldeuid = geteuid ();
+	gid_t oldegid = getegid ();
+	int rc = setgid (gid);
+	if (rc == 0)
+	{
+		rc = setuid (uid);
+		/* Check if we can regain user privilege, when we shouldn't. */
+		if (rc == 0 && oldeuid == 0 && uid != 0 && gid != 0 &&
+			setuid (0) != -1)
+			rc = -1;
+	}
+
+	/* Check if we can regain group privilege, when we shouldn't. */
+	if (rc == 0 && oldegid == 0 && uid != 0 && gid != 0 &&
+		setgid (0) != -1)
+		rc = -1;
+
+	return rc;
 }

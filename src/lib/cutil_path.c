@@ -1,23 +1,14 @@
-/* pthread_[sg]etaffinity_np, CPU_SET and friends */
 #ifdef linux
 /* _GNU_SOURCE needed for pthread_[sg]etaffinity_np and strchrnul */
 #  define _GNU_SOURCE
-#  include <sched.h>
-#  define cpuset_t cpu_set_t
-#else
-#  include <pthread_np.h>
-#  include <sys/_cpuset.h>
-#  include <sys/cpuset.h>
 #endif
 
 #include "cutil.h"
 #include "daemon_ng.h"
 
 #include <unistd.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
-#include <limits.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -25,10 +16,6 @@
 #include <assert.h>
 #include <errno.h>
 
-#ifndef NUMCPUS
-#  define NUMCPUS 4L // fallback if sysconf
-                     // (_SC_NPROCESSORS_ONLN) fails
-#endif
 #define DBG_VERBOSE 1
 
 int
@@ -48,88 +35,6 @@ gen_bkpname (const char* name, char* buf)
 		return -1;
 	}
 	return 0;
-}
-
-void
-tic (struct timespec* ts)
-{
-	clock_gettime (CLOCK_REALTIME, ts);
-}
-
-long long
-toc (struct timespec* ts)
-{
-	struct timespec te;
-	int rc = clock_gettime (CLOCK_REALTIME, &te);
-	if (rc == -1)
-	{
-		logmsg (errno, LOG_ERR, "Cannot get CLOCK_REALTIME");
-		return -1;
-	}
-	te.tv_sec -= ts->tv_sec;
-	te.tv_nsec -= ts->tv_nsec;
-
-	return (long long)te.tv_sec * NSEC_IN_SEC + te.tv_nsec;
-}
-
-int
-pth_set_cpuaff (int cpu)
-{
-	pthread_t pt = pthread_self ();
-	cpuset_t cpus;
-	CPU_ZERO (&cpus);
-	long ncpus = sysconf (_SC_NPROCESSORS_ONLN);
-	if (ncpus == -1)
-	{
-		logmsg (errno, LOG_WARNING,
-			"Cannot determine number of online cpus, "
-			"using a fallback value of %ld", NUMCPUS);
-		ncpus = NUMCPUS;
-	}
-	CPU_SET (cpu % (ncpus - 1), &cpus);
-	int rc = pthread_setaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc == 0)
-		rc = pthread_getaffinity_np (pt, sizeof(cpuset_t), &cpus);
-	if (rc == 0)
-	{
-		for (long c = 0; c < ncpus; c++)
-		{
-			if ((CPU_ISSET (c, &cpus) && c != cpu) ||
-				 (! CPU_ISSET (c, &cpus) && c == cpu))
-			{
-				rc = -1; /* unknown error */
-				break;
-			}
-		}
-	}
-	/* errno is not set by pthread_*etaffinity_np, rc is the error */
-	if (rc > 0)
-		errno = rc;
-	return (rc == 0 ? 0 : -1);
-}
-
-int
-run_as (uid_t uid, gid_t gid)
-{
-	/* Drop privileges, group first, then user, then check */
-	uid_t oldeuid = geteuid ();
-	gid_t oldegid = getegid ();
-	int rc = setgid (gid);
-	if (rc == 0)
-	{
-		rc = setuid (uid);
-		/* Check if we can regain user privilege, when we shouldn't. */
-		if (rc == 0 && oldeuid == 0 && uid != 0 && gid != 0 &&
-			setuid (0) != -1)
-			rc = -1;
-	}
-
-	/* Check if we can regain group privilege, when we shouldn't. */
-	if (rc == 0 && oldegid == 0 && uid != 0 && gid != 0 &&
-		setgid (0) != -1)
-		rc = -1;
-
-	return rc;
 }
 
 int

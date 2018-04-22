@@ -8,7 +8,8 @@ LIB_DEST := $(abspath lib)
 BIN_DEST := $(abspath bin)
 
 PROGS      := tesd tesc
-LIBS       := $(patsubst %.c,%,$(notdir $(wildcard $(LIB_SRC)/*.c)))
+# LIBS       := $(patsubst %.c,%,$(notdir $(wildcard $(LIB_SRC)/*.c)))
+LIBS       := tesif hdf5conv daemon_ng cutil
 HEADERS    := $(wildcard $(CPATH)/*.h $(CPATH)/net/*.h)
 TEST_PROGS := $(patsubst %.c,%,$(notdir $(wildcard $(TEST_SRC)/*.c)))
 TASKS_OBJ  := $(patsubst %.c,%.o,$(wildcard $(BIN_SRC)/tesd_task_*.c))
@@ -45,6 +46,8 @@ task_%:
 	@touch $(BIN_SRC)/tesd_task_$*.c
 	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) tesd
 
+libs: $(LIBS:%=$(LIB_DEST)/lib%.a)
+
 main: tesd tesc
 	@echo
 	@echo
@@ -62,8 +65,19 @@ $(BIN_DEST)/tesc: $(BIN_SRC)/tesc.c $(HEADERS) \
 $(BIN_DEST)/tesd: $(BIN_SRC)/tesd.o $(BIN_SRC)/tesd_tasks.o \
 	$(TASKS_OBJ) $(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
 	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(filter %.o %.a,$^) \
+	$(CC) $(CFLAGS) $(LDFLAGS) $(filter %.o,$^) \
+		-Wl,--start-group $(filter %.a,$^) -Wl,--end-group \
 		$(HDF5LIB) $(LDLIBS) -o $@
+
+$(LIB_DEST)/libcutil.a: $(LIB_SRC)/cutil_time.o \
+	$(LIB_SRC)/cutil_thread.o $(LIB_SRC)/cutil_path.o $(HEADERS) \
+	| $(LIB_DEST)
+	ar rcs $@ $(filter %.o,$^)
+
+$(LIB_DEST)/libdaemon_ng.a: $(LIB_SRC)/daemon_ng_forker.o \
+	$(LIB_SRC)/daemon_ng_logger.o $(HEADERS) \
+	| $(LIB_DEST)
+	ar rcs $@ $(filter %.o,$^)
 
 $(LIB_DEST)/lib%.a: $(LIB_SRC)/%.o $(HEADERS) \
 	| $(LIB_DEST)
@@ -80,7 +94,8 @@ tests: $(TEST_PROGS:%=$(BIN_DEST)/%)
 $(BIN_DEST)/%: $(TEST_SRC)/%.o \
 	$(LIBS:%=$(LIB_DEST)/lib%.a) $(HEADERS) \
 	| $(BIN_DEST)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(filter-out %.h,$^) \
+	$(CC) $(CFLAGS) $(LDFLAGS) $< \
+		-Wl,--start-group $(filter %.a,$^) -Wl,--end-group \
 		$(foreach lib, \
 			$(findstring czmq,$*) \
 			$(findstring zmq,$*) \

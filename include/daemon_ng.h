@@ -1,14 +1,11 @@
 #ifndef __DAEMON_NG_H_INCLUDED__
 #define __DAEMON_NG_H_INCLUDED__
 
+#include <sys/types.h>
 #include <stdbool.h>
 
 /*
  * Forking and logging functions.
- *
- * Only tested on:
- *   - Linux > 4.8
- *   - FreeBSD 11.0
  */
 
 typedef int (daemon_fn)(void*);
@@ -72,6 +69,14 @@ int daemonize (const char* pidfile, daemon_fn* initializer,
  */
 int fork_and_run (daemon_fn* initializer, daemon_fn* action,
 		void* arg, int timeout_sec);
+
+/*
+ * Drop privileges of the current process. It calls setuid and setgid
+ * and if the calling process was privileged, makes sure it is not
+ * able to regain privileges.
+ * Returns 0 on success, -1 on error.
+ */
+int run_as (uid_t uid, gid_t gid);
 
 /* -------------------------------------------------------------- */
 
